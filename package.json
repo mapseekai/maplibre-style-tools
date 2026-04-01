@@ -1,0 +1,18 @@
+{
+  "name": "@ai-dropdown-demo/maplibre-style-tools",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "maplibre-gl": "^5.21.1"
+  },
+  "dependencies": {
+    "ai": "^6.0.141",
+    "zod": "^4.3.6"
+  }
+}
