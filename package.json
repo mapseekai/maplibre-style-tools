@@ -28,7 +28,7 @@
     "prepack": "pnpm run build"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "packageManager": "pnpm@10.10.0",
   "peerDependencies": {
