@@ -3,3 +3,5 @@ dist/
 .tmp/
 *.tsbuildinfo
 *.tgz
+docs/superpowers/
+.superpowers/sdd/
