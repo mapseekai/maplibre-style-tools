@@ -5,3 +5,4 @@ dist/
 *.tgz
 docs/superpowers/
 .superpowers/sdd/
+.worktrees/
