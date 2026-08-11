@@ -22,12 +22,13 @@
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
+    "pretest": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/test-dist', { recursive: true, force: true });\"",
     "test": "tsc -p tsconfig.test.json",
     "posttest": "node --test .tmp/test-dist/engine/style-context.test.js .tmp/test-dist/engine/style-operations.test.js",
     "prepack": "pnpm run build"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "packageManager": "pnpm@10.10.0",
   "peerDependencies": {

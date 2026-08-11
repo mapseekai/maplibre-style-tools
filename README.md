@@ -6,7 +6,7 @@ The package exposes a compact tool set for token-efficient workflows and a full 
 
 ## Requirements
 
-- Node.js 18 or newer
+- Node.js 22 or newer
 - `maplibre-gl` 5.21 or a compatible release
 - An AI SDK 6 tool consumer
 
