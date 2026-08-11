@@ -35,7 +35,7 @@
 
 **Interfaces:**
 - Consumes: the unchanged `src/index.ts` ESM root entry and its existing `.js` relative specifiers.
-- Produces: `dist/index.js`, `dist/index.d.ts`, package root export `.`, and scripts `lint`, `typecheck`, `build`, `test`, and `prepack`.
+- Produces: `dist/index.js`, `dist/index.d.ts`, package root export `.`, and scripts `clean`, `lint`, `typecheck`, `build`, `test`, and `prepack`.
 
 - [ ] **Step 1: Record the expected pre-configuration failure**
 
@@ -72,7 +72,8 @@ Replace `package.json` with:
     "dist"
   ],
   "scripts": {
-    "prebuild": "tsc -b tsconfig.build.json --clean",
+    "clean": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp/tsconfig.build.tsbuildinfo', { force: true });\"",
+    "prebuild": "pnpm run clean",
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
@@ -260,12 +261,13 @@ The full factory exposes detailed tools for layers, sources, paint and layout pr
 pnpm install
 pnpm run lint
 pnpm run typecheck
+pnpm run clean
 pnpm run build
 pnpm test
 npm pack --dry-run
 ```
 
-Build output is written to `dist/`. Tests use Node's built-in test runner and compile into `.tmp/test-dist/`.
+Build output is written to `dist/`. Before every build, the cross-platform `clean` script uses Node's built-in `fs.rmSync` to remove the complete `dist/` tree and `.tmp/tsconfig.build.tsbuildinfo`; this prevents stale outputs for removed or renamed source files from reaching `prepack`. Tests use Node's built-in test runner and compile into `.tmp/test-dist/`.
 ````
 
 - [ ] **Step 6: Install dependencies and generate the standalone lockfile**
@@ -299,6 +301,8 @@ pnpm test
 
 Expected: all commands exit successfully; `dist/index.js` and `dist/index.d.ts` exist; Node reports four passing unit tests and zero failures.
 
+Before the build command, create a sentinel with `node --input-type=module --eval "import { mkdirSync, writeFileSync } from 'node:fs'; mkdirSync('dist', { recursive: true }); writeFileSync('dist/stale.js', 'stale')"`. After `pnpm run build`, assert that `dist/stale.js` does not exist. This demonstrates that the explicit clean removes stale output that TypeScript's incremental clean alone could retain after a source deletion or rename.
+
 - [ ] **Step 8: Verify the generated public entry point and package contents**
 
 Run:
@@ -308,6 +312,8 @@ node --input-type=module --eval "const m = await import('./dist/index.js'); if (
 ```
 
 Expected: exit code 0 with no output.
+
+Create `dist/stale.js` again, then run `npm pack --dry-run --json`. Expected: `prepack` invokes `build` and its `prebuild` clean, so the stale file is absent from both `dist/` and the tarball JSON; the JSON lists only package metadata, README, and current `dist` artifacts, never `src/` files.
 
 Run:
 

@@ -18,7 +18,8 @@
     "dist"
   ],
   "scripts": {
-    "prebuild": "tsc -b tsconfig.build.json --clean",
+    "clean": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp/tsconfig.build.tsbuildinfo', { force: true });\"",
+    "prebuild": "pnpm run clean",
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",

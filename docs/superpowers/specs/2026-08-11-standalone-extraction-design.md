@@ -76,7 +76,7 @@ Development dependencies provide TypeScript 5.9, Node types, ESLint, and TypeScr
 
 TypeScript uses `NodeNext` module and module resolution, matching the package's existing ESM `.js` relative import specifiers. Production compilation reads `src/`, excludes `*.test.ts`, writes JavaScript and declarations to `dist/`, and emits source maps and declaration maps.
 
-`typecheck` performs strict no-emit checking. `build` removes stale output through the compiler's configured output and produces the distributable package. `prepack` runs the verified build so an npm tarball cannot contain stale artifacts.
+`typecheck` performs strict no-emit checking. The cross-platform `clean` script uses Node's built-in `fs.rmSync` to remove all of `dist/` and the exact production TypeScript build-info file `.tmp/tsconfig.build.tsbuildinfo`. `prebuild` invokes `clean`, then `build` produces the distributable package. `prepack` invokes `build` (and therefore `prebuild`) so an npm tarball cannot contain stale artifacts, including outputs for removed or renamed source files.
 
 ## Testing and Linting
 
@@ -91,7 +91,7 @@ The extraction is accepted only when all of the following pass:
 3. strict type checking;
 4. production build and declaration generation;
 5. existing unit tests;
-6. `npm pack --dry-run` inspection showing `dist` entry points and no source-only package entry;
+6. a stale-output regression check showing that `pnpm run build` and `npm pack --dry-run --json` remove a deliberately created `dist/stale.js`, while the package listing contains `dist` entry points and no source-only or stale package entry;
 7. a clean Git worktree after the intended project commit.
 
 ## Documentation

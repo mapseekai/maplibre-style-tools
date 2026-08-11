@@ -57,6 +57,7 @@ The full factory exposes detailed tools for layers, sources, paint and layout pr
 pnpm install
 pnpm run lint
 pnpm run typecheck
+pnpm run clean
 pnpm run build
 pnpm test
 npm pack --dry-run
