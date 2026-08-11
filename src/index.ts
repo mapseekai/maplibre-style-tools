@@ -31,6 +31,37 @@ export interface CreateMapLibreStyleToolsOptions<TStyle = unknown> {
 
 type JsonObject = Record<string, unknown>;
 
+type PaintPropertyName = Parameters<MapLibreMap['setPaintProperty']>[1];
+type PaintPropertyValue = Parameters<MapLibreMap['setPaintProperty']>[2];
+type LayoutPropertyName = Parameters<MapLibreMap['setLayoutProperty']>[1];
+type LayoutPropertyValue = Parameters<MapLibreMap['setLayoutProperty']>[2];
+
+const setDynamicPaintProperty = (
+  map: MapLibreMap,
+  layerId: string,
+  property: string,
+  value: unknown
+): void => {
+  map.setPaintProperty(
+    layerId,
+    property as PaintPropertyName,
+    value as PaintPropertyValue
+  );
+};
+
+const setDynamicLayoutProperty = (
+  map: MapLibreMap,
+  layerId: string,
+  property: string,
+  value: unknown
+): void => {
+  map.setLayoutProperty(
+    layerId,
+    property as LayoutPropertyName,
+    value as LayoutPropertyValue
+  );
+};
+
 const parseStyleValue = (rawValue: string): unknown => {
   try {
     return JSON.parse(rawValue);
@@ -373,7 +404,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const parsedValue = parseStyleValue(valueJson);
 
         try {
-          map.setPaintProperty(layerId, property, parsedValue);
+          setDynamicPaintProperty(map, layerId, property, parsedValue);
           return buildResult(
             `Updated paint property: ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
             style
@@ -415,7 +446,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const parsedValue = parseStyleValue(valueJson);
 
         try {
-          map.setLayoutProperty(layerId, property, parsedValue);
+          setDynamicLayoutProperty(map, layerId, property, parsedValue);
           return buildResult(
             `Updated layout property: ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
             style
@@ -466,7 +497,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
         const parsedValue = parseStyleValue(valueJson);
         try {
-          map.setPaintProperty(layerId, property, parsedValue);
+          setDynamicPaintProperty(map, layerId, property, parsedValue);
           return buildResult(
             `Updated paint property (smart): ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
             style
@@ -517,7 +548,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
         const parsedValue = parseStyleValue(valueJson);
         try {
-          map.setLayoutProperty(layerId, property, parsedValue);
+          setDynamicLayoutProperty(map, layerId, property, parsedValue);
           return buildResult(
             `Updated layout property (smart): ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
             style
@@ -583,7 +614,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
         try {
           for (const [property, value] of entries) {
-            map.setPaintProperty(layerId, property, value);
+            setDynamicPaintProperty(map, layerId, property, value);
           }
           return buildResult(
             `Updated ${entries.length} paint properties for layer "${layerId}" (smart).`,
@@ -650,7 +681,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
         try {
           for (const [property, value] of entries) {
-            map.setLayoutProperty(layerId, property, value);
+            setDynamicLayoutProperty(map, layerId, property, value);
           }
           return buildResult(
             `Updated ${entries.length} layout properties for layer "${layerId}" (smart).`,
@@ -697,7 +728,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
         try {
           for (const [property, value] of entries) {
-            map.setPaintProperty(layerId, property, value);
+            setDynamicPaintProperty(map, layerId, property, value);
           }
           return buildResult(
             `Updated ${entries.length} paint properties for layer "${layerId}".`,
@@ -744,7 +775,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
         try {
           for (const [property, value] of entries) {
-            map.setLayoutProperty(layerId, property, value);
+            setDynamicLayoutProperty(map, layerId, property, value);
           }
           return buildResult(
             `Updated ${entries.length} layout properties for layer "${layerId}".`,
@@ -779,7 +810,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         }
 
         try {
-          map.setPaintProperty(layerId, property, null);
+          setDynamicPaintProperty(map, layerId, property, null);
           return buildResult(`Cleared paint property: ${layerId}.${property}`, style);
         } catch (error) {
           return buildResult(
@@ -811,7 +842,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         }
 
         try {
-          map.setLayoutProperty(layerId, property, null);
+          setDynamicLayoutProperty(map, layerId, property, null);
           return buildResult(`Cleared layout property: ${layerId}.${property}`, style);
         } catch (error) {
           return buildResult(
