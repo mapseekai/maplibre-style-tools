@@ -1,13 +1,35 @@
 {
-  "name": "@ai-dropdown-demo/maplibre-style-tools",
+  "name": "maplibre-style-tools",
   "version": "0.0.0",
+  "description": "AI SDK tools for inspecting and editing MapLibre styles.",
   "type": "module",
-  "main": "./src/index.ts",
-  "module": "./src/index.ts",
-  "types": "./src/index.ts",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prebuild": "tsc -b tsconfig.build.json --clean",
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "tsc -p tsconfig.test.json",
+    "posttest": "node --test .tmp/test-dist/engine/style-context.test.js .tmp/test-dist/engine/style-operations.test.js",
+    "prepack": "pnpm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@10.10.0",
   "peerDependencies": {
     "maplibre-gl": "^5.21.1"
   },
@@ -15,5 +37,13 @@
     "@maplibre/maplibre-gl-style-spec": "^24.7.0",
     "ai": "^6.0.141",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.0",
+    "eslint": "^9.39.4",
+    "maplibre-gl": "^5.21.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.57.0"
   }
 }
