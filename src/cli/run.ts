@@ -1,4 +1,4 @@
-import { validateStyleDocument } from '../core/index.js';
+import { applyStyleTransaction, validateStyleDocument } from '../core/index.js';
 import { parseCliArgs } from './args.js';
 import { CliInputError, readJsonInput } from './input.js';
 import { inspectStyle } from './inspect.js';
@@ -117,6 +117,33 @@ export async function runCli(
     }
   }
 
-  await writeDiagnosticBestEffort(io, `Internal error: ${command.kind} is not implemented.`);
+  if (command.kind === 'apply') {
+    try {
+      const styleRead = await readJsonInput(command.styleInput, io);
+      const operationsRead = await readJsonInput(command.operationsInput, io);
+      const validated = validateStyleDocument(styleRead.value);
+      if (!validated.ok) {
+        return writeResult(io, {
+          ok: false,
+          errors: validated.errors,
+          warnings: validated.warnings,
+        }, 1);
+      }
+      const result = applyStyleTransaction(validated.style, {
+        operations: operationsRead.value,
+        validate: true,
+      });
+      return writeResult(io, result, result.ok ? 0 : 1);
+    } catch (error) {
+      if (error instanceof CliInputError) {
+        await writeDiagnosticBestEffort(io, error.message);
+        return 2;
+      }
+      await writeDiagnosticBestEffort(io, `Internal error: ${messageOf(error)}`);
+      return 3;
+    }
+  }
+
+  await writeDiagnosticBestEffort(io, 'Internal error: command is not implemented.');
   return 3;
 }

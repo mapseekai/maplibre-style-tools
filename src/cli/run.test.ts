@@ -7,9 +7,10 @@ import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { after, describe, it } from 'node:test';
 import {
-  analyzeGeoJson, DEFAULT_MAX_STYLE_BYTES,
+  analyzeGeoJson, applyStyleTransaction, DEFAULT_MAX_DIFF_BYTES,
+  DEFAULT_MAX_STYLE_BYTES,
 } from '../core/index.js';
-import type { JsonValue } from '../core/index.js';
+import type { JsonValue, StyleDocument } from '../core/index.js';
 import { readJsonInput } from './input.js';
 import { runCli } from './run.js';
 
@@ -377,5 +378,191 @@ describe('runCli inspect', () => {
       assert.equal(result.stderr, '');
     }
 
+  });
+});
+
+describe('runCli apply', () => {
+  const baseStyle: StyleDocument = {
+    version: 8,
+    sources: {
+      base: { type: 'vector', tiles: ['https://example.com/{z}/{x}/{y}.pbf'] },
+    },
+    layers: [{
+      id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads',
+      paint: { 'line-color': '#000000' },
+    }],
+  };
+
+  const invokeApply = async (
+    cwd: string,
+    argv: readonly string[],
+    stdinText: string | Buffer = '',
+  ): Promise<{ code: number; stdout: string; stderr: string; json?: JsonValue }> => {
+    const io = makeIo(cwd, stdinText);
+    const code = await runCli(argv, io);
+    const stdout = (io.stdout as BufferWriter).text;
+    return {
+      code,
+      stdout,
+      stderr: (io.stderr as BufferWriter).text,
+      ...(stdout.length === 0 ? {} : { json: JSON.parse(stdout) as JsonValue }),
+    };
+  };
+
+  const writeApplyInputs = async (
+    style: StyleDocument,
+    operations: JsonValue,
+  ): Promise<{ cwd: string; stylePath: string; operationsPath: string }> => {
+    const cwd = await makeDirectory();
+    const stylePath = join(cwd, 'style.json');
+    const operationsPath = join(cwd, 'operations.json');
+    await writeFile(stylePath, JSON.stringify(style));
+    await writeFile(operationsPath, JSON.stringify(operations));
+    return { cwd, stylePath, operationsPath };
+  };
+
+  it('applies a successful dry run from files and stdin without changing input bytes', async () => {
+    const operations = [{
+      op: 'setLayerProperties', layerId: 'roads',
+      paint: { 'line-color': '#ff0000' },
+    }];
+    const { cwd, stylePath, operationsPath } = await writeApplyInputs(baseStyle, operations);
+    const before = await readFile(stylePath, 'utf8');
+    const result = await invokeApply(cwd, [
+      'apply', stylePath, '--operations', operationsPath, '--dry-run',
+    ]);
+    assert.equal(result.code, 0);
+    assert.equal((result.json as { ok: boolean }).ok, true);
+    assert.equal(
+      (result.json as { style: { layers: Array<{ paint: { 'line-color': string } }> } })
+        .style.layers[0]?.paint['line-color'],
+      '#ff0000',
+    );
+    assert.equal(await readFile(stylePath, 'utf8'), before);
+    assert.equal(result.stderr, '');
+
+    const stdinResult = await invokeApply(cwd, [
+      'apply', '-', '--operations', operationsPath, '--dry-run',
+    ], JSON.stringify(baseStyle));
+    assert.equal(stdinResult.code, 0);
+    assert.equal(stdinResult.stdout, result.stdout);
+  });
+
+  it('passes invalid transaction semantics through and keeps malformed JSON at exit 2', async () => {
+    const invalidInputs: JsonValue[] = [
+      { not: 'an array' },
+      [{
+        op: 'setLayerProperties', layerId: 'roads', minzoom: 10, maxzoom: 5,
+      }],
+    ];
+    for (const operations of invalidInputs) {
+      const { cwd, stylePath, operationsPath } = await writeApplyInputs(baseStyle, operations);
+      const result = await invokeApply(cwd, [
+        'apply', stylePath, '--operations', operationsPath, '--dry-run',
+      ]);
+      const expected = applyStyleTransaction(baseStyle, { operations, validate: true });
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, `${JSON.stringify(expected)}\n`);
+      assert.equal((result.json as { error: { code: string } }).error.code, 'INVALID_INPUT');
+      assert.deepEqual((result.json as { changedLayers: string[] }).changedLayers, []);
+      assert.deepEqual((result.json as { changedSources: string[] }).changedSources, []);
+      assert.deepEqual((result.json as { diff: JsonValue[] }).diff, []);
+      assert.deepEqual((result.json as { style: JsonValue }).style, baseStyle);
+      assert.equal(result.stderr, '');
+    }
+
+    const { cwd, stylePath } = await writeApplyInputs(baseStyle, []);
+    await writeFile(join(cwd, 'malformed.json'), '{');
+    const malformed = await invokeApply(cwd, [
+      'apply', stylePath, '--operations', 'malformed.json', '--dry-run',
+    ]);
+    assert.equal(malformed.code, 2);
+    assert.equal(malformed.stdout, '');
+    assert.match(malformed.stderr, /Invalid JSON/);
+  });
+
+  it('preserves escaped IDs, semantic diff targets, no-ops, and atomic rollback', async () => {
+    const unusualStyle: StyleDocument = {
+      ...baseStyle,
+      layers: [{ ...baseStyle.layers[0] as object, id: 'road/~primary' }] as StyleDocument['layers'],
+    };
+    const unusualOperations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'road/~primary', paint: { 'line-width': 3 },
+    }];
+    const unusual = await writeApplyInputs(unusualStyle, unusualOperations);
+    const unusualResult = await invokeApply(unusual.cwd, [
+      'apply', unusual.stylePath, '--operations', unusual.operationsPath, '--dry-run',
+    ]);
+    const unusualExpected = applyStyleTransaction(unusualStyle, {
+      operations: unusualOperations, validate: true,
+    });
+    assert.equal(unusualResult.stdout, `${JSON.stringify(unusualExpected)}\n`);
+    assert.deepEqual((unusualResult.json as { changedLayers: string[] }).changedLayers, ['road/~primary']);
+    assert.equal(
+      (unusualResult.json as { diff: Array<{ path: string }> }).diff[0]?.path,
+      '/layers/0/paint/line-width',
+    );
+    assert.deepEqual(
+      (unusualResult.json as { diff: Array<{ target: JsonValue }> }).diff[0]?.target,
+      { kind: 'layer', id: 'road/~primary' },
+    );
+
+    for (const operations of [
+      [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#000000' } }],
+      [
+        { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } },
+        { op: 'setLayerProperties', layerId: 'missing', paint: { 'line-width': 3 } },
+      ],
+    ] satisfies JsonValue[]) {
+      const inputs = await writeApplyInputs(baseStyle, operations);
+      const result = await invokeApply(inputs.cwd, [
+        'apply', inputs.stylePath, '--operations', inputs.operationsPath, '--dry-run',
+      ]);
+      const expected = applyStyleTransaction(baseStyle, { operations, validate: true });
+      assert.equal(result.stdout, `${JSON.stringify(expected)}\n`);
+      assert.deepEqual((result.json as { changedLayers: string[] }).changedLayers, []);
+      assert.deepEqual((result.json as { changedSources: string[] }).changedSources, []);
+      assert.deepEqual((result.json as { diff: JsonValue[] }).diff, []);
+    }
+  });
+
+  it('passes candidate-style and diff-limit failures through without CLI sizing', async () => {
+    const nearLimitText = styleTextAtBytes('a', DEFAULT_MAX_STYLE_BYTES - 16);
+    const nearLimitStyle = JSON.parse(nearLimitText) as StyleDocument;
+    const candidateOperations: JsonValue = [{
+      op: 'setStyleRootProperties', properties: { name: 'candidate-overflow' },
+    }];
+    const candidate = await writeApplyInputs(nearLimitStyle, candidateOperations);
+    await writeFile(candidate.stylePath, nearLimitText);
+    const candidateResult = await invokeApply(candidate.cwd, [
+      'apply', candidate.stylePath, '--operations', candidate.operationsPath, '--dry-run',
+    ]);
+    const candidateExpected = applyStyleTransaction(nearLimitStyle, {
+      operations: candidateOperations, validate: true,
+    });
+    assert.equal(candidateResult.code, 1);
+    assert.equal(candidateResult.stdout, `${JSON.stringify(candidateExpected)}\n`);
+    assert.equal(
+      (candidateResult.json as { error: { details: { reason: string } } }).error.details.reason,
+      'maxStyleBytes',
+    );
+
+    const diffOperations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'roads',
+      metadata: { padding: 'a'.repeat(DEFAULT_MAX_DIFF_BYTES) },
+    }];
+    const diff = await writeApplyInputs(baseStyle, diffOperations);
+    const diffResult = await invokeApply(diff.cwd, [
+      'apply', diff.stylePath, '--operations', diff.operationsPath, '--dry-run',
+    ]);
+    const diffExpected = applyStyleTransaction(baseStyle, {
+      operations: diffOperations, validate: true,
+    });
+    assert.equal(diffResult.code, 1);
+    assert.equal(diffResult.stdout, `${JSON.stringify(diffExpected)}\n`);
+    assert.equal(
+      (diffResult.json as { error: { details: { reason: string } } }).error.details.reason,
+      'maxDiffBytes',
+    );
   });
 });
