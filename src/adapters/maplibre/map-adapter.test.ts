@@ -387,6 +387,64 @@ test('failed rollback returns last validated current Style or saved pre-operatio
   assert.equal(preOperation.style.layers[0]?.paint?.['line-color'], '#000');
 });
 
+test('rollback listener setup failures use a stable fresh live authority when budget remains', async () => {
+  for (const kind of ['prepared', 'object', 'url'] as const) {
+    for (const freshState of ['valid', 'invalid', 'changes', 'throws'] as const) {
+      const fake = new FakeMap(rawStyle());
+      const prepared = kind === 'prepared'
+        ? await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'))
+        : undefined;
+      if (prepared !== undefined && 'styleAuthority' in prepared) {
+        assert.fail('expected prepared handle');
+      }
+      let errorListeners = 0;
+      let fallbackReads = 0;
+      fake.onListenerAdded = (type) => {
+        if (type !== 'error') return;
+        errorListeners += 1;
+        if (errorListeners !== 2) return;
+        if (freshState === 'invalid') {
+          fake.style = {
+            version: 8,
+            sources: {},
+            layers: [{ id: '', type: 'background' }],
+          };
+        } else if (freshState === 'changes') {
+          fake.onGetStyle = () => {
+            fallbackReads += 1;
+            return fallbackReads === 1 ? rawStyle('#fff') : rawStyle('#123');
+          };
+        } else if (freshState === 'throws') {
+          fake.onGetStyle = () => { throw new Error('rollback authority unavailable'); };
+        }
+        throw new Error('rollback error listener setup failed');
+      };
+      fake.onSetStyle = (input) => {
+        if (fake.setStyleCalls.length !== 1) assert.fail('rollback setStyle must not run');
+        fake.style = typeof input === 'string' ? rawStyle('#fff') : input;
+        fake.emit('error', new Error('candidate failed'));
+      };
+      const deadline = { expiresAt: Date.now() + 500 };
+      const result = kind === 'prepared'
+        ? await applyPreparedStyleToMap(fake.asMap(), prepared!, { deadline })
+        : await applyStyleDocumentOrUrlToMap(
+          fake.asMap(),
+          kind === 'object' ? strictStyle('#fff') : 'https://example.test/rollback.json',
+          { deadline },
+        );
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'INTERNAL');
+      assert.equal(result.rollbackError?.code, 'INTERNAL');
+      assert.equal(result.rolledBack, false);
+      assert.equal(result.styleAuthority, freshState === 'valid' ? 'current' : 'pre-operation');
+      assert.equal(result.style.layers[0]?.paint?.['line-color'],
+        freshState === 'valid' ? '#fff' : '#000');
+      assert.equal(fake.setStyleCalls.length, 1);
+      assert.equal(errorListeners, 2);
+    }
+  }
+});
+
 test('prepared handles are opaque, recursively frozen snapshots and forgeries touch no Map state', async () => {
   const fake = new FakeMap(rawStyle());
   const transaction = colorTransaction('#fff');
@@ -508,6 +566,70 @@ test('completion never exposes a Style snapshot that changed while its hash was 
     assert.equal(result.ok, true);
     assert.equal(result.styleAuthority, 'current');
     assert.equal(result.style.layers[0]?.paint?.['line-color'], '#fff');
+  }
+});
+
+test('completion drains every pending generation before accepting the final Style', async () => {
+  for (const scenario of ['three-generations', 'five-generations', 'stable-unexpected'] as const) {
+    const fake = new FakeMap(rawStyle());
+    const prepared = await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'));
+    assert.equal('styleAuthority' in prepared, false);
+    if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+    fake.onSetStyle = (input) => {
+      assert.notEqual(typeof input, 'string');
+      fake.install(input as StyleSpecification);
+    };
+
+    const releases: Array<(hash: string) => void> = [];
+    let activeHashes = 0;
+    let maxActiveHashes = 0;
+    const hash = async (style: StyleDocument): Promise<string> => {
+      if (fake.setStyleCalls.length === 1) {
+        activeHashes += 1;
+        maxActiveHashes = Math.max(maxActiveHashes, activeHashes);
+        const hashValue = await new Promise<string>((resolve) => {
+          releases.push(resolve);
+        });
+        activeHashes -= 1;
+        return hashValue;
+      }
+      return hashStyle(style);
+    };
+    const deadlineMs = scenario === 'stable-unexpected' ? 40 : 500;
+    const resultPromise = applyPreparedStyleToMap(fake.asMap(), prepared, {
+      deadline: { expiresAt: Date.now() + deadlineMs }, hashStyle: hash,
+    });
+    await flushUntil(() => releases.length === 1);
+
+    const generations = scenario === 'five-generations'
+      ? ['#123', '#234', '#345', '#456']
+      : ['#123'];
+    for (const [index, color] of generations.entries()) {
+      fake.install(rawStyle(color));
+      releases.shift()!(await hashStyle(strictStyle(
+        index === 0 ? '#fff' : generations[index - 1]!,
+      )));
+      await flushUntil(() => releases.length === 1);
+    }
+
+    if (scenario === 'stable-unexpected') {
+      releases.shift()!(await hashStyle(strictStyle('#123')));
+      const result = await resultPromise;
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'TIMEOUT');
+      assert.equal(result.styleAuthority, 'pre-operation');
+    } else {
+      fake.install(rawStyle('#fff'));
+      releases.shift()!(await hashStyle(strictStyle(generations.at(-1)!)));
+      await flushUntil(() => releases.length === 1);
+      releases.shift()!(await hashStyle(strictStyle('#fff')));
+      const result = await resultPromise;
+      assert.equal(result.ok, true);
+      assert.equal(result.styleAuthority, 'current');
+      assert.equal(result.style.layers[0]?.paint?.['line-color'], '#fff');
+    }
+    assert.equal(maxActiveHashes, 1);
+    assert.equal(activeHashes, 0);
   }
 });
 

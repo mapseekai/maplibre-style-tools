@@ -575,7 +575,8 @@ async function waitForStyle(
             return;
           }
           const freshCanonical = canonicalizeJson(fresh.style);
-          if (generation !== completionGeneration || canonical !== freshCanonical) {
+          if (generation !== completionGeneration) continue;
+          if (canonical !== freshCanonical) {
             if (retryUnsignaledChange) {
               retryUnsignaledChange = false;
               continue;
@@ -709,8 +710,7 @@ async function rollbackAfterFailure(
     rollbackError = error instanceof MapWaitFailure
       ? error.styleToolError
       : normalizeFailure(error, 'Map style rollback failed.');
-    if (rollbackError.code === 'TIMEOUT'
-      || (error instanceof MapWaitFailure && !error.mutationStarted)) {
+    if (rollbackError.code === 'TIMEOUT') {
       return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
     }
   }
