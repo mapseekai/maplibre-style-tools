@@ -2127,3 +2127,260 @@ test('addGeoJsonLayer polluted fallback matches clean descriptor and authority c
     else Object.defineProperty(Object.prototype, key, originalDescriptor);
   }
 });
+
+test('addGeoJsonLayer fallback preserves complete native pairwise diagnostics', () => {
+  type InvalidDimension = {
+    name: string;
+    paths: readonly string[];
+    apply(operation: Record<string, unknown>): void;
+  };
+  const base: Record<string, unknown> = {
+    op: 'addGeoJsonLayer', sourceId: 'incidents', layerId: 'incidents-circle',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+  };
+  const dimensions: readonly InvalidDimension[] = [
+    {
+      name: 'sourceId', paths: ['sourceId'],
+      apply(operation) { operation.sourceId = 1; },
+    },
+    {
+      name: 'layerId', paths: ['layerId'],
+      apply(operation) { operation.layerId = 1; },
+    },
+    {
+      name: 'data', paths: ['data'],
+      apply(operation) { operation.data = 1; },
+    },
+    {
+      name: 'type', paths: ['type'],
+      apply(operation) { operation.type = 'raster'; },
+    },
+    {
+      name: 'paint', paths: ['paint'],
+      apply(operation) { operation.paint = []; },
+    },
+    {
+      name: 'layout', paths: ['layout'],
+      apply(operation) { operation.layout = []; },
+    },
+    {
+      name: 'filter', paths: ['filter'],
+      apply(operation) { operation.filter = {}; },
+    },
+    {
+      name: 'minzoom', paths: ['minzoom'],
+      apply(operation) { operation.minzoom = 'low'; },
+    },
+    {
+      name: 'maxzoom', paths: ['maxzoom'],
+      apply(operation) { operation.maxzoom = 'high'; },
+    },
+    {
+      name: 'metadata', paths: ['metadata'],
+      apply(operation) { operation.metadata = []; },
+    },
+    {
+      name: 'sourceOptions', paths: ['sourceOptions'],
+      apply(operation) { operation.sourceOptions = []; },
+    },
+    {
+      name: 'beforeId', paths: ['beforeId'],
+      apply(operation) { operation.beforeId = 1; },
+    },
+    {
+      name: 'afterId', paths: ['afterId'],
+      apply(operation) { operation.afterId = 1; },
+    },
+    {
+      name: 'unknown', paths: ['unexpected'],
+      apply(operation) { operation.unexpected = true; },
+    },
+    {
+      name: 'authority type', paths: ['sourceOptions.type'],
+      apply(operation) {
+        operation.sourceOptions = {
+          ...(operation.sourceOptions as Record<string, unknown> | undefined),
+          type: 'geojson',
+        };
+      },
+    },
+    {
+      name: 'authority data', paths: ['sourceOptions.data'],
+      apply(operation) {
+        operation.sourceOptions = {
+          ...(operation.sourceOptions as Record<string, unknown> | undefined),
+          data: 'stolen',
+        };
+      },
+    },
+    {
+      name: 'zoom order', paths: ['minzoom', 'maxzoom'],
+      apply(operation) { operation.minzoom = 3; operation.maxzoom = 2; },
+    },
+    {
+      name: 'dual placement', paths: ['beforeId', 'afterId'],
+      apply(operation) { operation.beforeId = 'a'; operation.afterId = 'b'; },
+    },
+  ];
+  const pathsConflict = (
+    left: readonly string[], right: readonly string[],
+  ): boolean => left.some((leftPath) => right.some((rightPath) => (
+    leftPath === rightPath
+      || leftPath.startsWith(`${rightPath}.`)
+      || rightPath.startsWith(`${leftPath}.`)
+  )));
+  const pairs: Array<{
+    name: string;
+    operation: Record<string, unknown>;
+  }> = [];
+  for (let leftIndex = 0; leftIndex < dimensions.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < dimensions.length; rightIndex += 1) {
+      const left = dimensions[leftIndex]!;
+      const right = dimensions[rightIndex]!;
+      if (pathsConflict(left.paths, right.paths)) continue;
+      const operation = structuredClone(base);
+      left.apply(operation);
+      right.apply(operation);
+      pairs.push({ name: `${left.name} + ${right.name}`, operation });
+    }
+  }
+  assert.equal(pairs.length, 147);
+
+  const transactionSchema = createStyleTransactionSchema(5);
+  const issues = (result: {
+    success: boolean;
+    error?: { issues: unknown[] };
+  }): unknown[] => {
+    assert.equal(result.success, false);
+    if (result.success || result.error === undefined) assert.fail('expected schema failure');
+    return result.error.issues;
+  };
+  const prefixed = (nativeIssues: readonly unknown[]): unknown[] => nativeIssues.map((issue) => {
+    const completeIssue = issue as Record<string, unknown> & { path: unknown[] };
+    return { ...completeIssue, path: ['operations', 0, ...completeIssue.path] };
+  });
+  const exactTypeIssue = {
+    code: 'invalid_value',
+    values: ['fill', 'line', 'symbol', 'circle', 'heatmap', 'fill-extrusion'],
+    path: ['type'],
+    message: 'Invalid option: expected one of '
+      + '"fill"|"line"|"symbol"|"circle"|"heatmap"|"fill-extrusion"',
+  };
+  const exactAuthorityIssues = [
+    {
+      code: 'custom',
+      message: 'sourceOptions cannot include the authority key type',
+      path: ['sourceOptions', 'type'],
+    },
+    {
+      code: 'custom',
+      message: 'sourceOptions cannot include the authority key data',
+      path: ['sourceOptions', 'data'],
+    },
+  ];
+  const exactAuthorityTypeIssue = exactAuthorityIssues[0]!;
+  const authorityAndRaster = {
+    ...base, sourceOptions: { type: 'geojson' }, type: 'raster',
+  };
+  const bothAuthority = {
+    ...base, sourceOptions: { type: 'geojson', data: 'stolen' },
+  };
+  const assertExactAuthorityOrder = (): void => {
+    assert.deepEqual(
+      issues(addGeoJsonLayerOperationSchema.safeParse(authorityAndRaster)),
+      [exactTypeIssue],
+    );
+    assert.deepEqual(
+      issues(styleOperationSchema.safeParse(authorityAndRaster)),
+      [exactAuthorityTypeIssue],
+    );
+    assert.deepEqual(
+      issues(transactionSchema.safeParse({ operations: [authorityAndRaster] })),
+      prefixed([exactTypeIssue]),
+    );
+    assert.deepEqual(
+      issues(addGeoJsonLayerOperationSchema.safeParse(bothAuthority)),
+      exactAuthorityIssues,
+    );
+    assert.deepEqual(
+      issues(styleOperationSchema.safeParse(bothAuthority)),
+      [exactAuthorityTypeIssue],
+    );
+    assert.deepEqual(
+      issues(transactionSchema.safeParse({ operations: [bothAuthority] })),
+      prefixed(exactAuthorityIssues),
+    );
+  };
+
+  const cleanIssues = pairs.map(({ operation }) => {
+    const direct = issues(addGeoJsonLayerOperationSchema.safeParse(operation));
+    const union = issues(styleOperationSchema.safeParse(operation));
+    const transaction = issues(transactionSchema.safeParse({ operations: [operation] }));
+    return { direct, union, transaction };
+  });
+  assertExactAuthorityOrder();
+
+  let inputGetterCalls = 0;
+  let inputSetterCalls = 0;
+  const accessorOperation = structuredClone(base);
+  Object.defineProperty(accessorOperation, 'paint', {
+    enumerable: true,
+    get() { inputGetterCalls += 1; throw new Error('must not run'); },
+    set() { inputSetterCalls += 1; throw new Error('must not run'); },
+  });
+  const accessorIssues = {
+    direct: issues(addGeoJsonLayerOperationSchema.safeParse(accessorOperation)),
+    union: issues(styleOperationSchema.safeParse(accessorOperation)),
+    transaction: issues(transactionSchema.safeParse({ operations: [accessorOperation] })),
+  };
+  assert.equal(inputGetterCalls, 0);
+  assert.equal(inputSetterCalls, 0);
+
+  const pollutionKey = 'addGeoJsonLayerCompleteIssueFallbackProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  let prototypeGetterCalls = 0;
+  let prototypeSetterCalls = 0;
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true,
+      get() { prototypeGetterCalls += 1; return 'must not run'; },
+      set() { prototypeSetterCalls += 1; throw new Error('must not run'); },
+    });
+    for (let index = 0; index < pairs.length; index += 1) {
+      const { name, operation } = pairs[index]!;
+      const expected = cleanIssues[index]!;
+      assert.deepEqual(
+        issues(addGeoJsonLayerOperationSchema.safeParse(operation)), expected.direct,
+        `polluted direct: ${name}`,
+      );
+      assert.deepEqual(
+        issues(styleOperationSchema.safeParse(operation)), expected.union,
+        `polluted union: ${name}`,
+      );
+      assert.deepEqual(
+        issues(transactionSchema.safeParse({ operations: [operation] })), expected.transaction,
+        `polluted transaction: ${name}`,
+      );
+    }
+    assertExactAuthorityOrder();
+    assert.deepEqual(
+      issues(addGeoJsonLayerOperationSchema.safeParse(accessorOperation)),
+      accessorIssues.direct,
+    );
+    assert.deepEqual(
+      issues(styleOperationSchema.safeParse(accessorOperation)),
+      accessorIssues.union,
+    );
+    assert.deepEqual(
+      issues(transactionSchema.safeParse({ operations: [accessorOperation] })),
+      accessorIssues.transaction,
+    );
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, pollutionKey);
+    else Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+  }
+  assert.equal(inputGetterCalls, 0);
+  assert.equal(inputSetterCalls, 0);
+  assert.equal(prototypeGetterCalls, 0);
+  assert.equal(prototypeSetterCalls, 0);
+});

@@ -58,7 +58,8 @@ type SnapshotResult =
 type SanitizedIssue = z.core.$ZodIssue;
 type SanitizedCheck = (value: JsonValue) => SanitizedIssue | undefined;
 type FallbackValidator = (value: JsonValue) => JsonValue | undefined;
-type FallbackIssue = (value: JsonValue) => z.core.$ZodIssue | undefined;
+type FallbackIssueResult = z.core.$ZodIssue | readonly z.core.$ZodIssue[] | undefined;
+type FallbackIssue = (value: JsonValue) => FallbackIssueResult;
 
 function appendOwn<T>(values: T[], value: T): boolean {
   return Reflect.defineProperty(values, values.length, {
@@ -73,6 +74,13 @@ function oneItem<T>(value: T): T[] {
   const values: T[] = [];
   appendOwn(values, value);
   return values;
+}
+
+function issueItems(value: Exclude<FallbackIssueResult, undefined>): z.core.$ZodIssue[] {
+  if (!Array.isArray(value)) return oneItem(value as z.core.$ZodIssue);
+  const issues: z.core.$ZodIssue[] = [];
+  for (const issue of value) appendOwn(issues, issue);
+  return issues;
 }
 
 function isJsonPrimitive(value: unknown): value is JsonPrimitive {
@@ -761,11 +769,111 @@ function fallbackGeoJsonLayerDataIssue(
 
 function fallbackAddGeoJsonLayerIssue(
   value: JsonObject,
+): readonly LayerLifecycleIssue[] | undefined {
+  const issues: LayerLifecycleIssue[] = [];
+  let blocking = false;
+  for (const field of ['sourceId', 'layerId'] as const) {
+    const issue = requiredNonEmptyStringIssue(value, field);
+    if (issue !== undefined) {
+      appendOwn(issues, issue);
+      if (issue.code === 'invalid_type') blocking = true;
+    }
+  }
+  const dataIssue = fallbackGeoJsonLayerDataIssue(
+    ownValue(value, 'data') as JsonValue | undefined,
+  );
+  if (dataIssue !== undefined) {
+    appendOwn(issues, dataIssue);
+    blocking = true;
+  }
+
+  const sourceOptions = ownValue(value, 'sourceOptions');
+  if (sourceOptions !== undefined && !isJsonObject(sourceOptions)) {
+    appendOwn(issues, invalidTypeIssue('record', sourceOptions, ['sourceOptions']));
+    blocking = true;
+  }
+
+  const typeIssue = geoJsonLayerTypeIssue(ownValue(value, 'type'));
+  if (typeIssue !== undefined) {
+    appendOwn(issues, typeIssue);
+    blocking = true;
+  }
+  for (const field of ['paint', 'layout'] as const) {
+    const issue = optionalObjectIssue(value, field);
+    if (issue !== undefined) {
+      appendOwn(issues, issue);
+      blocking = true;
+    }
+  }
+  const filter = ownValue(value, 'filter');
+  if (filter !== undefined && !Array.isArray(filter)) {
+    appendOwn(issues, invalidTypeIssue('array', filter, ['filter']));
+    blocking = true;
+  }
+  for (const field of ['minzoom', 'maxzoom'] as const) {
+    const issue = optionalZoomIssue(value, field);
+    if (issue !== undefined) {
+      appendOwn(issues, issue);
+      if (issue.code === 'invalid_type') blocking = true;
+    }
+  }
+  const metadataIssue = optionalObjectIssue(value, 'metadata');
+  if (metadataIssue !== undefined) {
+    appendOwn(issues, metadataIssue);
+    blocking = true;
+  }
+  for (const field of ['beforeId', 'afterId'] as const) {
+    const issue = optionalNonEmptyStringIssue(value, field);
+    if (issue !== undefined) {
+      appendOwn(issues, issue);
+      if (issue.code === 'invalid_type') blocking = true;
+    }
+  }
+
+  const unknownKeysIssue = unrecognizedKeysIssue(value, ADD_GEOJSON_LAYER_OPERATION_KEYS);
+  if (unknownKeysIssue !== undefined) appendOwn(issues, unknownKeysIssue);
+
+  if (!blocking && unknownKeysIssue === undefined) {
+    if (isJsonObject(sourceOptions)) {
+      if (Object.hasOwn(sourceOptions, 'type')) {
+        appendOwn(issues, {
+          code: 'custom', path: ['sourceOptions', 'type'],
+          message: 'sourceOptions cannot include the authority key type',
+        });
+      }
+      if (Object.hasOwn(sourceOptions, 'data')) {
+        appendOwn(issues, {
+          code: 'custom', path: ['sourceOptions', 'data'],
+          message: 'sourceOptions cannot include the authority key data',
+        });
+      }
+    }
+    if (ownValue(value, 'beforeId') !== undefined
+      && ownValue(value, 'afterId') !== undefined) {
+      appendOwn(issues, {
+        code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+        path: ['afterId'],
+      });
+    }
+    const minzoom = ownValue(value, 'minzoom');
+    const maxzoom = ownValue(value, 'maxzoom');
+    if (typeof minzoom === 'number' && typeof maxzoom === 'number'
+      && minzoom > maxzoom) {
+      appendOwn(issues, {
+        code: 'custom', message: 'minzoom must be less than or equal to maxzoom',
+        path: ['maxzoom'],
+      });
+    }
+  }
+  return issues.length === 0 ? undefined : issues;
+}
+
+function fallbackAddGeoJsonLayerFirstIssue(
+  value: JsonObject,
 ): LayerLifecycleIssue | undefined {
   const fieldIssue = requiredNonEmptyStringIssue(value, 'sourceId')
     ?? requiredNonEmptyStringIssue(value, 'layerId');
   if (fieldIssue !== undefined) return fieldIssue;
-
   const dataIssue = fallbackGeoJsonLayerDataIssue(
     ownValue(value, 'data') as JsonValue | undefined,
   );
@@ -807,28 +915,14 @@ function fallbackAddGeoJsonLayerIssue(
 
   const unknownKeysIssue = unrecognizedKeysIssue(value, ADD_GEOJSON_LAYER_OPERATION_KEYS);
   if (unknownKeysIssue !== undefined) return unknownKeysIssue;
-  if (ownValue(value, 'beforeId') !== undefined
-    && ownValue(value, 'afterId') !== undefined) {
-    return {
-      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
-      path: ['afterId'],
-    };
-  }
-  const minzoom = ownValue(value, 'minzoom');
-  const maxzoom = ownValue(value, 'maxzoom');
-  return typeof minzoom === 'number' && typeof maxzoom === 'number'
-    && minzoom > maxzoom
-    ? {
-        code: 'custom', message: 'minzoom must be less than or equal to maxzoom',
-        path: ['maxzoom'],
-      }
-    : undefined;
+  const completeIssues = fallbackAddGeoJsonLayerIssue(value);
+  return completeIssues?.[0];
 }
 
 function fallbackLayerLifecycleOperationIssue(
   value: JsonValue,
   expectedOperation?: LayerLifecycleOperation['op'],
-): LayerLifecycleIssue | undefined {
+): LayerLifecycleIssue | readonly LayerLifecycleIssue[] | undefined {
   if (!isJsonObject(value)) return undefined;
   const operation = ownValue(value, 'op');
   if (expectedOperation !== undefined && operation !== expectedOperation) {
@@ -994,7 +1088,11 @@ function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | un
 function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
   if (!isJsonObject(value)) return undefined;
   const operation = ownValue(value, 'op');
-  const lifecycleIssue = fallbackLayerLifecycleOperationIssue(value);
+  if (operation === 'addGeoJsonLayer') return fallbackAddGeoJsonLayerFirstIssue(value);
+  const lifecycleIssueResult = fallbackLayerLifecycleOperationIssue(value);
+  const lifecycleIssue = Array.isArray(lifecycleIssueResult)
+    ? lifecycleIssueResult[0]
+    : lifecycleIssueResult as z.core.$ZodIssue | undefined;
   if (lifecycleIssue !== undefined) return lifecycleIssue;
   const sourceIssue = fallbackSourceOperationIssue(value);
   if (sourceIssue !== undefined) return sourceIssue;
@@ -1020,6 +1118,15 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     : fallbackSetLayerOperationIssue(value);
 }
 
+function fallbackOperationIssues(value: JsonValue): readonly z.core.$ZodIssue[] | undefined {
+  if (isJsonObject(value) && ownValue(value, 'op') === 'addGeoJsonLayer') {
+    const issues = fallbackAddGeoJsonLayerIssue(value);
+    return issues === undefined ? undefined : issues;
+  }
+  const issue = fallbackOperationIssue(value);
+  return issue === undefined ? undefined : oneItem(issue);
+}
+
 function fallbackTransaction(maxOperations: number): FallbackValidator {
   return (value) => {
     if (!isJsonObject(value) || !hasOnlyKeys(value, new Set(['operations', 'validate']))) {
@@ -1043,7 +1150,7 @@ function fallbackTransaction(maxOperations: number): FallbackValidator {
   };
 }
 
-function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefined {
+function fallbackTransactionIssue(value: JsonValue): FallbackIssueResult {
   if (isJsonObject(value)) {
     const operations = ownValue(value, 'operations');
     if (Array.isArray(operations) && operations.length === 0) {
@@ -1056,24 +1163,28 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
       for (let index = 0; index < operations.length; index += 1) {
         const operation = ownValue(operations, String(index)) as JsonValue;
         if (fallbackOperation(operation) !== undefined) continue;
-        const issue = fallbackOperationIssue(operation);
-        if (issue !== undefined) {
-          const prefixedIssue: Record<string, unknown> = {};
-          for (const key of Reflect.ownKeys(issue)) {
-            if (typeof key !== 'string') continue;
-            const descriptor = Object.getOwnPropertyDescriptor(issue, key);
-            if (descriptor === undefined || !('value' in descriptor)) continue;
-            const issueValue = key === 'path'
-              ? ['operations', index, ...(descriptor.value as PathToken[])]
-              : descriptor.value;
-            Reflect.defineProperty(prefixedIssue, key, {
-              configurable: true,
-              enumerable: true,
-              value: issueValue,
-              writable: true,
-            });
+        const issues = fallbackOperationIssues(operation);
+        if (issues !== undefined) {
+          const prefixedIssues: z.core.$ZodIssue[] = [];
+          for (const issue of issues) {
+            const prefixedIssue: Record<string, unknown> = {};
+            for (const key of Reflect.ownKeys(issue)) {
+              if (typeof key !== 'string') continue;
+              const descriptor = Object.getOwnPropertyDescriptor(issue, key);
+              if (descriptor === undefined || !('value' in descriptor)) continue;
+              const issueValue = key === 'path'
+                ? ['operations', index, ...(descriptor.value as PathToken[])]
+                : descriptor.value;
+              Reflect.defineProperty(prefixedIssue, key, {
+                configurable: true,
+                enumerable: true,
+                value: issueValue,
+                writable: true,
+              });
+            }
+            appendOwn(prefixedIssues, prefixedIssue as unknown as z.core.$ZodIssue);
           }
-          return prefixedIssue as unknown as z.core.$ZodIssue;
+          return prefixedIssues;
         }
         return undefined;
       }
@@ -1082,10 +1193,11 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
   return undefined;
 }
 
-function safeFailure<Output = unknown>(issue: z.core.$ZodIssue = {
-  code: 'custom', message: INVALID_JSON_MESSAGE, path: [],
-}): z.ZodSafeParseError<Output> {
-  const error = new z.ZodError(oneItem(issue)) as z.ZodError<Output>;
+function safeFailure<Output = unknown>(issue: FallbackIssueResult): z.ZodSafeParseError<Output> {
+  const fallback = issue ?? {
+    code: 'custom', message: INVALID_JSON_MESSAGE, path: [],
+  };
+  const error = new z.ZodError(issueItems(fallback)) as z.ZodError<Output>;
   return { success: false as const, error };
 }
 
