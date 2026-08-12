@@ -46,6 +46,8 @@ class FakeMap {
   readonly setStyleCalls: SetStyleCall[] = [];
   onSetStyle?: (style: StyleSpecification | string, options: { diff?: boolean } | undefined) => void;
   onGetStyle?: () => StyleSpecification;
+  onListenerAdded?: (type: EventName, listener: Listener) => void;
+  onListenerRemoved?: (type: EventName, listener: Listener) => void;
   private readonly listeners = new Map<EventName, Set<Listener>>();
 
   constructor(style: StyleSpecification) {
@@ -60,11 +62,13 @@ class FakeMap {
       this.listeners.set(type, listeners);
     }
     listeners.add(listener);
+    this.onListenerAdded?.(type, listener);
     return { unsubscribe: () => { listeners!.delete(listener); } };
   }
 
   off(type: EventName, listener: Listener): this {
     this.calls.push({ method: 'off', value: type });
+    this.onListenerRemoved?.(type, listener);
     this.listeners.get(type)?.delete(listener);
     return this;
   }
@@ -145,6 +149,46 @@ function assertEmptyCommit(result: MapStyleApplyResult): void {
   assert.deepEqual(result.changedLayers, []);
   assert.deepEqual(result.changedSources, []);
   assert.deepEqual(result.diff, []);
+}
+
+async function flushUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20 && !predicate(); attempt += 1) {
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
+  }
+  assert.equal(predicate(), true, 'expected asynchronous test state was not reached');
+}
+
+function styleColor(style: StyleDocument): JsonValue | undefined {
+  return style.layers[0]?.paint?.['line-color'];
+}
+
+function specificationColor(style: StyleSpecification): unknown {
+  const layer = style.layers?.[0];
+  if (layer === undefined) return undefined;
+  const paint = Reflect.get(layer, 'paint');
+  return typeof paint === 'object' && paint !== null
+    ? Reflect.get(paint, 'line-color')
+    : undefined;
+}
+
+function isDeeplyFrozen(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return true;
+  const work: object[] = [value];
+  const seen = new WeakSet<object>();
+  while (work.length > 0) {
+    const current = work.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (!Object.isFrozen(current)) return false;
+    for (const key of Reflect.ownKeys(current)) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key);
+      if (descriptor !== undefined && 'value' in descriptor
+        && typeof descriptor.value === 'object' && descriptor.value !== null) {
+        work.push(descriptor.value);
+      }
+    }
+  }
+  return true;
 }
 
 test('result union locks authoritative branch narrowing and authentic errors', () => {
@@ -400,6 +444,9 @@ test('prepared handles are opaque, recursively frozen snapshots and forgeries to
     phaseTwoOptions.maxStyleBytes = 1;
     // @ts-expect-error phase two cannot restart a timeout
     phaseTwoOptions.timeoutMs = 1;
+    const fullOptions: ApplyTransactionToMapOptions = {};
+    // @ts-expect-error a full phase-one options variable cannot enter phase two
+    applyPreparedStyleToMap(fake.asMap(), prepared, fullOptions);
   }
 });
 
@@ -415,6 +462,376 @@ test('prepared apply detects revision conflict before setStyle', async () => {
   assert.equal(result.error.code, 'REVISION_CONFLICT');
   assert.equal(result.style.layers[0]?.paint?.['line-color'], '#123');
   assert.equal(fake.setStyleCalls.length, 0);
+});
+
+test('completion never exposes a Style snapshot that changed while its hash was pending', async () => {
+  for (const emitDuringHash of [false, true]) {
+    const fake = new FakeMap(rawStyle());
+    const prepared = await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'));
+    assert.equal('styleAuthority' in prepared, false);
+    if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+
+    let releaseHash!: (hash: string) => void;
+    const pendingHash = new Promise<string>((resolve) => { releaseHash = resolve; });
+    let blocked = false;
+    let blockNextCompletion = true;
+    let candidateHashes = 0;
+    fake.onSetStyle = (input) => {
+      assert.notEqual(typeof input, 'string');
+      fake.install(input as StyleSpecification);
+    };
+    const applyPromise = applyPreparedStyleToMap(fake.asMap(), prepared, {
+      deadline: { expiresAt: Date.now() + 1_000 },
+      hashStyle: async (style) => {
+        if (styleColor(style) === '#fff') candidateHashes += 1;
+        if (candidateHashes === 2 && blockNextCompletion) {
+          blockNextCompletion = false;
+          blocked = true;
+          return pendingHash;
+        }
+        return hashStyle(style);
+      },
+    });
+    await flushUntil(() => blocked);
+
+    let settled = false;
+    void applyPromise.then(() => { settled = true; });
+    fake.style = rawStyle('#123');
+    if (emitDuringHash) fake.emit('style.load');
+    releaseHash(await hashStyle(strictStyle('#fff')));
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(settled, false, 'a stale hashed snapshot must not become current authority');
+
+    fake.install(rawStyle('#fff'));
+    const result = await applyPromise;
+    assert.equal(result.ok, true);
+    assert.equal(result.styleAuthority, 'current');
+    assert.equal(result.style.layers[0]?.paint?.['line-color'], '#fff');
+  }
+});
+
+test('URL completion ignores pre-invocation loads and handles sync, no-event no-op, and pending states', async () => {
+  const staleRegistration = new FakeMap(rawStyle());
+  staleRegistration.onListenerAdded = (type, listener) => {
+    if (type === 'style.load') listener({ type });
+  };
+  staleRegistration.onSetStyle = () => {
+    queueMicrotask(() => staleRegistration.install(rawStyle('#fff')));
+  };
+  const staleResult = await applyStyleDocumentOrUrlToMap(
+    staleRegistration.asMap(), 'https://example.test/stale.json',
+  );
+  assert.equal(staleResult.ok, true);
+  assert.equal(staleResult.style.layers[0]?.paint?.['line-color'], '#fff');
+
+  const syncBeforeState = new FakeMap(rawStyle());
+  syncBeforeState.onSetStyle = () => {
+    syncBeforeState.emit('style.load');
+    queueMicrotask(() => {
+      syncBeforeState.style = rawStyle('#fff');
+      syncBeforeState.loaded = true;
+    });
+  };
+  const syncResult = await applyStyleDocumentOrUrlToMap(
+    syncBeforeState.asMap(), 'https://example.test/sync.json',
+  );
+  assert.equal(syncResult.ok, true);
+  assert.equal(syncResult.style.layers[0]?.paint?.['line-color'], '#fff');
+
+  const sameNoEvent = new FakeMap(rawStyle());
+  sameNoEvent.loaded = true;
+  sameNoEvent.onSetStyle = () => { sameNoEvent.loaded = true; };
+  const sameResult = await applyStyleDocumentOrUrlToMap(
+    sameNoEvent.asMap(), 'https://example.test/same.json', {
+      deadline: { expiresAt: Date.now() + 100 },
+    },
+  );
+  assert.equal(sameResult.ok, true);
+  assert.equal(sameResult.applied, true);
+  assert.deepEqual(sameResult.diff, []);
+  assert.equal(sameNoEvent.setStyleCalls.length, 1);
+
+  const pending = new FakeMap(rawStyle());
+  pending.loaded = true;
+  const pendingResult = await applyStyleDocumentOrUrlToMap(
+    pending.asMap(), 'https://example.test/pending.json', {
+      deadline: { expiresAt: Date.now() + 20 },
+    },
+  );
+  assert.equal(pendingResult.ok, false);
+  assert.equal(pendingResult.styleAuthority, 'pre-operation');
+  assert.equal(pendingResult.rolledBack, false);
+  assert.equal(pendingResult.rollbackError?.code, 'TIMEOUT');
+  assert.equal(pending.setStyleCalls.length, 1);
+});
+
+test('listener setup and promise settlement honor the deadline before mutation and clean up independently', async () => {
+  for (const mode of ['abort', 'expire'] as const) {
+    const fake = new FakeMap(rawStyle());
+    const prepared = await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'));
+    assert.equal('styleAuthority' in prepared, false);
+    if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+    const controller = new AbortController();
+    let now = 0;
+    fake.onListenerAdded = (type) => {
+      if (type !== 'style.load') return;
+      if (mode === 'abort') controller.abort();
+      else now = 10;
+    };
+    const result = await applyPreparedStyleToMap(fake.asMap(), prepared, {
+      deadline: {
+        expiresAt: mode === 'abort' ? 10_000 : 10,
+        signal: controller.signal,
+        now: () => now,
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'TIMEOUT');
+    assert.equal(fake.setStyleCalls.length, 0);
+  }
+
+  for (const settlement of ['resolve', 'reject'] as const) {
+    const fake = new FakeMap(rawStyle());
+    const prepared = await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'));
+    assert.equal('styleAuthority' in prepared, false);
+    if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+    let now = 0;
+    fake.onSetStyle = (input) => {
+      assert.notEqual(typeof input, 'string');
+      fake.install(input as StyleSpecification);
+    };
+    const result = await applyPreparedStyleToMap(fake.asMap(), prepared, {
+      deadline: { expiresAt: 10, now: () => now },
+      hashStyle: async (style) => {
+        if (fake.setStyleCalls.length === 1) {
+          now = 10;
+          if (settlement === 'reject') throw new Error('late hash rejection');
+        }
+        return hashStyle(style);
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'TIMEOUT');
+    assert.equal(result.styleAuthority, 'pre-operation');
+  }
+
+  const cleanup = new FakeMap(rawStyle());
+  const cleanupPrepared = await prepareTransactionForMap(
+    cleanup.asMap(), colorTransaction('#fff'),
+  );
+  assert.equal('styleAuthority' in cleanupPrepared, false);
+  if ('styleAuthority' in cleanupPrepared) assert.fail('expected prepared handle');
+  automaticInstall(cleanup);
+  cleanup.onListenerRemoved = (type) => {
+    if (type === 'style.load') throw new Error('first off failed');
+  };
+  const cleanupResult = await applyPreparedStyleToMap(cleanup.asMap(), cleanupPrepared, {
+    deadline: { expiresAt: Date.now() + 100 },
+  });
+  assert.equal(cleanupResult.ok, true);
+  assert.deepEqual(
+    cleanup.calls.filter((call) => call.method === 'off').map((call) => call.value),
+    ['style.load', 'error'],
+  );
+});
+
+test('pre-invoke guard catches listener reentrancy for prepared, object, and URL mutations', async () => {
+  const preparedMap = new FakeMap(rawStyle());
+  const prepared = await prepareTransactionForMap(
+    preparedMap.asMap(), colorTransaction('#fff'),
+  );
+  assert.equal('styleAuthority' in prepared, false);
+  if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+  preparedMap.onListenerAdded = (type) => {
+    if (type === 'error') preparedMap.style = rawStyle('#123');
+  };
+  const preparedResult = await applyPreparedStyleToMap(preparedMap.asMap(), prepared, {
+    deadline: { expiresAt: Date.now() + 100 },
+  });
+
+  const objectMap = new FakeMap(rawStyle());
+  objectMap.onListenerAdded = (type) => {
+    if (type === 'error') objectMap.style = rawStyle('#123');
+  };
+  const objectResult = await applyStyleDocumentOrUrlToMap(
+    objectMap.asMap(), strictStyle('#fff'), { deadline: { expiresAt: Date.now() + 100 } },
+  );
+
+  const urlMap = new FakeMap(rawStyle());
+  urlMap.onListenerAdded = (type) => {
+    if (type === 'error') urlMap.style = rawStyle('#123');
+  };
+  const urlResult = await applyStyleDocumentOrUrlToMap(
+    urlMap.asMap(), 'https://example.test/reentrant.json', {
+      deadline: { expiresAt: Date.now() + 100 },
+    },
+  );
+
+  for (const [fake, result] of [
+    [preparedMap, preparedResult], [objectMap, objectResult], [urlMap, urlResult],
+  ] as const) {
+    assert.equal(result.ok, false);
+    assert.equal(result.styleAuthority, 'current');
+    assert.equal(result.error.code, 'REVISION_CONFLICT');
+    assert.equal(result.style.layers[0]?.paint?.['line-color'], '#123');
+    assert.equal(fake.setStyleCalls.length, 0);
+    const errorOn = fake.calls.findIndex(
+      (call) => call.method === 'on' && call.value === 'error',
+    );
+    const guardedRead = fake.calls.findIndex(
+      (call, index) => index > errorOn && call.method === 'getStyle',
+    );
+    assert.equal(errorOn >= 0 && guardedRead > errorOn, true);
+  }
+
+  const unreadable = new FakeMap(rawStyle());
+  const unreadablePrepared = await prepareTransactionForMap(
+    unreadable.asMap(), colorTransaction('#fff'),
+  );
+  assert.equal('styleAuthority' in unreadablePrepared, false);
+  if ('styleAuthority' in unreadablePrepared) assert.fail('expected prepared handle');
+  unreadable.onListenerAdded = (type) => {
+    if (type === 'error') {
+      unreadable.onGetStyle = () => { throw new Error('reentrant unreadable state'); };
+    }
+  };
+  const unreadableResult = await applyPreparedStyleToMap(
+    unreadable.asMap(), unreadablePrepared, {
+      deadline: { expiresAt: Date.now() + 100 },
+    },
+  );
+  assert.equal(unreadableResult.styleAuthority, 'pre-operation');
+  assert.equal(unreadable.setStyleCalls.length, 0);
+});
+
+test('pre-invoke listener failure never starts candidate mutation or rollback', async () => {
+  const fake = new FakeMap(rawStyle());
+  const prepared = await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'));
+  assert.equal('styleAuthority' in prepared, false);
+  if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+  fake.onListenerAdded = (type) => {
+    if (type === 'error') throw new Error('listener setup failed');
+  };
+  const result = await applyPreparedStyleToMap(fake.asMap(), prepared, {
+    deadline: { expiresAt: Date.now() + 100 },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'current');
+  assert.equal(result.error.code, 'INTERNAL');
+  assert.equal(Object.hasOwn(result, 'rolledBack'), false);
+  assert.equal(fake.setStyleCalls.length, 0);
+});
+
+test('whole-style async hashing and preparation failures return freshly guarded authority', async () => {
+  for (const kind of ['object', 'url'] as const) {
+    const fake = new FakeMap(rawStyle());
+    let hashes = 0;
+    fake.onSetStyle = (input) => {
+      if (typeof input === 'string') fake.install(rawStyle('#fff'));
+      else fake.install(input);
+    };
+    const result = await applyStyleDocumentOrUrlToMap(
+      fake.asMap(),
+      kind === 'object' ? strictStyle('#fff') : 'https://example.test/concurrent.json',
+      {
+        hashStyle: async (style) => {
+          hashes += 1;
+          if ((kind === 'object' && hashes === 2) || kind === 'url') {
+            fake.style = rawStyle('#123');
+          }
+          return hashStyle(style);
+        },
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.styleAuthority, 'current');
+    assert.equal(result.error.code, 'REVISION_CONFLICT');
+    assert.equal(result.style.layers[0]?.paint?.['line-color'], '#123');
+    assert.equal(fake.setStyleCalls.length, 0);
+  }
+
+  const prepareMap = new FakeMap(rawStyle());
+  const prepareResult = await prepareTransactionForMap(
+    prepareMap.asMap(), colorTransaction('#fff'), {
+      hashStyle: async () => {
+        prepareMap.style = rawStyle('#123');
+        throw new Error('hash failed');
+      },
+    },
+  );
+  assert.equal('styleAuthority' in prepareResult, true);
+  if (!('styleAuthority' in prepareResult)) assert.fail('expected preparation failure');
+  assert.equal(prepareResult.styleAuthority, 'current');
+  assert.equal(prepareResult.style.layers[0]?.paint?.['line-color'], '#123');
+});
+
+test('injected hashers receive frozen disjoint snapshots and phase-two hashing confirms rollback', async () => {
+  const fake = new FakeMap({ ...rawStyle(), metadata: { nested: { flag: true } } });
+  const seen: StyleDocument[] = [];
+  let setCalls = 0;
+  fake.onSetStyle = (input) => {
+    setCalls += 1;
+    if (setCalls === 1) fake.emit('error', new Error('candidate failed'));
+    else {
+      assert.notEqual(typeof input, 'string');
+      fake.install(input as StyleSpecification);
+    }
+  };
+  const maliciousHash = async (style: StyleDocument): Promise<string> => {
+    seen.push(style);
+    assert.equal(isDeeplyFrozen(style), true);
+    const paint = style.layers[0]?.paint;
+    if (paint !== undefined) assert.equal(Reflect.set(paint, 'line-color', '#evil'), false);
+    const metadata = style.metadata;
+    if (typeof metadata === 'object' && metadata !== null) {
+      const nested = Reflect.get(metadata, 'nested');
+      if (typeof nested === 'object' && nested !== null) {
+        assert.equal(Reflect.set(nested, 'flag', false), false);
+      }
+    }
+    return hashStyle(style);
+  };
+  const result = await applyTransactionToMap(
+    fake.asMap(), colorTransaction('#fff'), { hashStyle: maliciousHash },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.rolledBack, true);
+  assert.deepEqual(result.style.metadata, { nested: { flag: true } });
+  assert.equal(new Set(seen).size, seen.length);
+  assert.equal(specificationColor(
+    fake.setStyleCalls[0]?.style as StyleSpecification,
+  ), '#fff');
+  assert.equal(specificationColor(
+    fake.setStyleCalls[1]?.style as StyleSpecification,
+  ), '#000');
+
+  const consistencyMap = new FakeMap(rawStyle());
+  const prepared = await prepareTransactionForMap(
+    consistencyMap.asMap(), colorTransaction('#fff'), {
+      hashStyle: async (style) => `A:${canonicalizeJson(style)}`,
+    },
+  );
+  assert.equal('styleAuthority' in prepared, false);
+  if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+  let calls = 0;
+  consistencyMap.onSetStyle = (input) => {
+    calls += 1;
+    if (calls === 1) consistencyMap.emit('error', new Error('candidate failed'));
+    else {
+      assert.notEqual(typeof input, 'string');
+      consistencyMap.install(input as StyleSpecification);
+    }
+  };
+  const consistencyResult = await applyPreparedStyleToMap(
+    consistencyMap.asMap(), prepared, {
+      deadline: { expiresAt: Date.now() + 100 },
+      hashStyle: async (style) => `B:${canonicalizeJson(style)}`,
+    },
+  );
+  assert.equal(consistencyResult.ok, false);
+  assert.equal(consistencyResult.styleAuthority, 'current');
+  assert.equal(consistencyResult.rolledBack, true);
 });
 
 test('slow hashes time out or abort on the shared deadline and late settlement is discarded', async () => {

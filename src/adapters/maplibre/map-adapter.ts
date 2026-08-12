@@ -58,6 +58,28 @@ type ValidatedMapStyle =
   | { ok: true; style: StyleDocument; warnings: StyleWarning[] }
   | { ok: false; error: StyleToolError; warnings: StyleWarning[] };
 
+type PreInvokeGuardResult =
+  | { ok: true }
+  | { ok: false; authority: 'current'; style: StyleDocument; error: StyleToolError }
+  | { ok: false; authority: 'pre-operation'; error: StyleToolError };
+
+class MapWaitFailure extends Error {
+  readonly styleToolError: StyleToolError;
+  readonly mutationStarted: boolean;
+  readonly guardFailure?: Extract<PreInvokeGuardResult, { ok: false }>;
+
+  constructor(
+    styleToolError: StyleToolError,
+    mutationStarted: boolean,
+    guardFailure?: Extract<PreInvokeGuardResult, { ok: false }>,
+  ) {
+    super(styleToolError.message);
+    this.styleToolError = styleToolError;
+    this.mutationStarted = mutationStarted;
+    this.guardFailure = guardFailure;
+  }
+}
+
 type SuccessResultLike = {
   readonly style: unknown;
   readonly changedLayers: unknown;
@@ -305,6 +327,25 @@ function currentSuccess(
   };
 }
 
+function nonMutationFailureResult(
+  failure: MapWaitFailure,
+  fallbackCurrent: StyleDocument,
+  baselineStyle: StyleDocument,
+  warnings: StyleWarning[],
+): MapStyleApplyResult {
+  if (failure.guardFailure?.authority === 'current') {
+    return currentFailure(
+      failure.guardFailure.style, failure.guardFailure.error, warnings,
+    );
+  }
+  if (failure.guardFailure?.authority === 'pre-operation') {
+    return preOperationFailure(
+      baselineStyle, failure.guardFailure.error, warnings,
+    );
+  }
+  return currentFailure(fallbackCurrent, failure.styleToolError, warnings);
+}
+
 function normalizeFailure(error: unknown, message: string): StyleToolError {
   return isStyleToolError(error)
     ? error
@@ -406,8 +447,14 @@ function raceWithMapDeadline<Value>(
     signal?.addEventListener('abort', onAbort, { once: true });
     if (signal?.aborted === true) onAbort();
     work.then(
-      (value) => finish(() => resolve(value)),
-      (error: unknown) => finish(() => reject(error)),
+      (value) => {
+        const failed = deadlineFailure(deadline);
+        finish(() => failed === undefined ? resolve(value) : reject(failed));
+      },
+      (error: unknown) => {
+        const failed = deadlineFailure(deadline);
+        finish(() => reject(failed ?? error));
+      },
     );
   });
 }
@@ -419,8 +466,50 @@ async function hashWithDeadline(
 ): Promise<string> {
   const failed = deadlineFailure(deadline);
   if (failed !== undefined) throw failed;
-  const work = Promise.resolve().then(() => hash(style));
+  const snapshot = frozenJson<StyleDocument>(deepFreeze(
+    clonePreparedJson<StyleDocument>(style),
+  ));
+  const work = Promise.resolve().then(() => hash(snapshot));
   return raceWithMapDeadline(work, deadline);
+}
+
+function guardBaselineBeforeInvoke(
+  map: Map,
+  maxStyleBytes: number | undefined,
+  baselineCanonical: string,
+): PreInvokeGuardResult {
+  const current = readValidatedMapStyle(map, maxStyleBytes);
+  if (!current.ok) {
+    return {
+      ok: false,
+      authority: 'pre-operation',
+      error: firstValidationError(current),
+    };
+  }
+  let canonical: string;
+  try {
+    canonical = canonicalizeJson(current.style);
+  } catch {
+    return {
+      ok: false,
+      authority: 'current',
+      style: current.style,
+      error: createStyleToolError(
+        'INTERNAL', 'Validated Map style could not be canonicalized.',
+      ),
+    };
+  }
+  if (canonical !== baselineCanonical) {
+    return {
+      ok: false,
+      authority: 'current',
+      style: current.style,
+      error: createStyleToolError(
+        'REVISION_CONFLICT', 'Map style changed before live mutation.',
+      ),
+    };
+  }
+  return { ok: true };
 }
 
 async function waitForStyle(
@@ -431,15 +520,21 @@ async function waitForStyle(
   hash: (style: StyleDocument) => Promise<string>,
   deadline: MapOperationDeadline,
   allowPostCallLoaded: boolean,
+  preInvokeGuard: () => PreInvokeGuardResult,
 ): Promise<StyleDocument> {
   const failed = deadlineFailure(deadline);
-  if (failed !== undefined) throw failed;
+  if (failed !== undefined) throw new MapWaitFailure(failed, false);
 
   let resolveWork!: (style: StyleDocument) => void;
   let rejectWork!: (error: unknown) => void;
   let settled = false;
   let inspecting = false;
   let inspectAgain = false;
+  let invoked = false;
+  let invoking = false;
+  let pendingInvokeLoad = false;
+  let completionGeneration = 0;
+  let mutationStarted = false;
   const work = new Promise<StyleDocument>((resolve, reject) => {
     resolveWork = resolve;
     rejectWork = reject;
@@ -464,18 +559,40 @@ async function waitForStyle(
     try {
       do {
         inspectAgain = false;
-        const current = readValidatedMapStyle(map, maxStyleBytes);
-        if (!current.ok) {
-          settleFailure(firstValidationError(current));
-          return;
-        }
-        if (expectedHash === undefined) {
-          settleSuccess(current.style);
-          return;
-        }
-        const actualHash = await hashWithDeadline(current.style, hash, deadline);
-        if (actualHash === expectedHash) {
-          settleSuccess(current.style);
+        let retryUnsignaledChange = true;
+        while (!settled) {
+          const generation = completionGeneration;
+          const current = readValidatedMapStyle(map, maxStyleBytes);
+          if (!current.ok) {
+            settleFailure(firstValidationError(current));
+            return;
+          }
+          const canonical = canonicalizeJson(current.style);
+          const actualHash = expectedHash === undefined
+            ? undefined
+            : await hashWithDeadline(current.style, hash, deadline);
+          if (expectedHash === undefined) await Promise.resolve();
+          const afterHashFailure = deadlineFailure(deadline);
+          if (afterHashFailure !== undefined) {
+            settleFailure(afterHashFailure);
+            return;
+          }
+          const fresh = readValidatedMapStyle(map, maxStyleBytes);
+          if (!fresh.ok) {
+            settleFailure(firstValidationError(fresh));
+            return;
+          }
+          const freshCanonical = canonicalizeJson(fresh.style);
+          if (generation !== completionGeneration || canonical !== freshCanonical) {
+            if (retryUnsignaledChange) {
+              retryUnsignaledChange = false;
+              continue;
+            }
+            return;
+          }
+          if (expectedHash === undefined || actualHash === expectedHash) {
+            settleSuccess(fresh.style);
+          }
           return;
         }
       } while (inspectAgain && !settled);
@@ -486,9 +603,16 @@ async function waitForStyle(
     }
   };
   const onLoad = (): void => {
+    if (invoking) {
+      pendingInvokeLoad = true;
+      return;
+    }
+    if (!invoked) return;
+    completionGeneration += 1;
     void inspect();
   };
   const onError = (): void => {
+    if (!invoking && !invoked) return;
     settleFailure(createStyleToolError('INTERNAL', 'Map style application failed.'));
   };
 
@@ -496,36 +620,71 @@ async function waitForStyle(
     map.on('style.load', onLoad);
     map.on('error', onError);
   } catch {
-    try {
-      map.off('style.load', onLoad);
-      map.off('error', onError);
-    } catch {
-      // The normalized listener-registration failure remains authoritative.
-    }
-    throw createStyleToolError('INTERNAL', 'Map style listeners could not be installed.');
+    try { map.off('style.load', onLoad); } catch { /* Best effort. */ }
+    try { map.off('error', onError); } catch { /* Best effort. */ }
+    throw new MapWaitFailure(
+      createStyleToolError('INTERNAL', 'Map style listeners could not be installed.'),
+      false,
+    );
   }
 
+  let cleaned = false;
   const cleanup = (): void => {
-    try {
-      map.off('style.load', onLoad);
-      map.off('error', onError);
-    } catch {
-      // Cleanup is best effort after the result has already settled.
-    }
+    if (cleaned) return;
+    cleaned = true;
+    try { map.off('style.load', onLoad); } catch { /* Best effort. */ }
+    try { map.off('error', onError); } catch { /* Best effort. */ }
   };
-  const raced = raceWithMapDeadline(work, deadline).finally(cleanup);
+  const raced = raceWithMapDeadline(work, deadline)
+    .catch((error: unknown) => {
+      if (error instanceof MapWaitFailure) throw error;
+      throw new MapWaitFailure(
+        normalizeFailure(error, 'Map style completion failed.'), mutationStarted,
+      );
+    })
+    .finally(cleanup);
+
+  const setupFailure = deadlineFailure(deadline);
+  if (setupFailure !== undefined) {
+    settleFailure(new MapWaitFailure(setupFailure, false));
+    return raced;
+  }
+  const guard = preInvokeGuard();
+  if (!guard.ok) {
+    settleFailure(new MapWaitFailure(guard.error, false, guard));
+    return raced;
+  }
+  const guardedDeadlineFailure = deadlineFailure(deadline);
+  if (guardedDeadlineFailure !== undefined) {
+    settleFailure(new MapWaitFailure(guardedDeadlineFailure, false));
+    return raced;
+  }
+
   try {
+    invoking = true;
+    mutationStarted = true;
     invoke();
   } catch {
     settleFailure(createStyleToolError('INTERNAL', 'Map style application failed.'));
+  } finally {
+    invoking = false;
+    invoked = true;
   }
-  if (allowPostCallLoaded && !settled) {
+  if (pendingInvokeLoad && !settled) {
+    completionGeneration += 1;
+    queueMicrotask(() => { void inspect(); });
+  }
+  if (allowPostCallLoaded && !settled) queueMicrotask(() => {
+    if (settled) return;
     try {
-      if (map.isStyleLoaded() === true) void inspect();
+      if (map.isStyleLoaded() === true) {
+        completionGeneration += 1;
+        void inspect();
+      }
     } catch {
       settleFailure(createStyleToolError('INTERNAL', 'Map style state could not be read.'));
     }
-  }
+  });
   return raced;
 }
 
@@ -551,16 +710,46 @@ async function rollbackAfterFailure(
       hash,
       deadline,
       true,
+      () => ({ ok: true }),
     );
     return currentFailure(restored, primaryError, warnings, true);
   } catch (error) {
-    rollbackError = normalizeFailure(error, 'Map style rollback failed.');
+    rollbackError = error instanceof MapWaitFailure
+      ? error.styleToolError
+      : normalizeFailure(error, 'Map style rollback failed.');
+    if (rollbackError.code === 'TIMEOUT'
+      || (error instanceof MapWaitFailure && !error.mutationStarted)) {
+      return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
+    }
   }
 
-  const lastState = readValidatedMapStyle(map, maxStyleBytes);
-  if (lastState.ok) {
+  const firstState = readValidatedMapStyle(map, maxStyleBytes);
+  if (firstState.ok) {
+    let firstCanonical: string;
+    try {
+      firstCanonical = canonicalizeJson(firstState.style);
+      await Promise.resolve();
+    } catch {
+      return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
+    }
+    if (deadlineFailure(deadline) !== undefined) {
+      return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
+    }
+    const secondState = readValidatedMapStyle(map, maxStyleBytes);
+    if (!secondState.ok) {
+      return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
+    }
+    let secondCanonical: string;
+    try {
+      secondCanonical = canonicalizeJson(secondState.style);
+    } catch {
+      return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
+    }
+    if (firstCanonical !== secondCanonical) {
+      return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
+    }
     return currentFailure(
-      lastState.style, primaryError, warnings, false, rollbackError,
+      secondState.style, primaryError, warnings, false, rollbackError,
     );
   }
   return preOperationFailure(baselineStyle, primaryError, warnings, rollbackError);
@@ -617,9 +806,11 @@ export async function prepareTransactionForMap(
   try {
     baselineHash = await hashWithDeadline(baseline, hash, deadline);
   } catch (error) {
-    return currentFailure(
-      baseline, normalizeFailure(error, 'Map style hashing failed.'), preflight.warnings,
-    );
+    const hashError = normalizeFailure(error, 'Map style hashing failed.');
+    const latestRead = readValidatedMapStyle(map, limitOptions.maxStyleBytes);
+    return latestRead.ok
+      ? currentFailure(latestRead.style, hashError, preflight.warnings)
+      : preOperationFailure(baseline, hashError, preflight.warnings);
   }
   const beforeTransaction = deadlineFailure(deadline);
   if (beforeTransaction !== undefined) {
@@ -725,8 +916,10 @@ export async function applyPreparedStyleToMap(
   }
 
   const candidateStyle = frozenJson<StyleDocument>(authority.candidateStyle);
+  let baselineHash: string;
   let candidateHash: string;
   try {
+    baselineHash = await hashWithDeadline(baselineStyle, hash, deadline);
     candidateHash = await hashWithDeadline(candidateStyle, hash, deadline);
   } catch (error) {
     const hashError = normalizeFailure(error, 'Map style hashing failed.');
@@ -791,14 +984,27 @@ export async function applyPreparedStyleToMap(
       hash,
       deadline,
       true,
+      () => guardBaselineBeforeInvoke(
+        map, maxStyleBytes, authority.baselineCanonical,
+      ),
     );
     return currentSuccess(confirmed, authority.transactionResult, true);
   } catch (error) {
-    const primaryError = normalizeFailure(error, 'Map style application failed.');
+    if (error instanceof MapWaitFailure && !error.mutationStarted) {
+      return nonMutationFailureResult(
+        error,
+        immediateCurrent,
+        baselineStyle,
+        cloneWarnings(authority.transactionResult.warnings),
+      );
+    }
+    const primaryError = error instanceof MapWaitFailure
+      ? error.styleToolError
+      : normalizeFailure(error, 'Map style application failed.');
     return rollbackAfterFailure(
       map,
       baselineStyle,
-      authority.baselineHash,
+      baselineHash,
       maxStyleBytes,
       diff,
       deadline,
@@ -848,6 +1054,16 @@ export async function applyStyleDocumentOrUrlToMap(
     return unavailableResult(firstValidationError(baselineRead), baselineRead.warnings);
   }
   const baseline = baselineRead.style;
+  let baselineCanonical: string;
+  try {
+    baselineCanonical = canonicalizeJson(baseline);
+  } catch {
+    return currentFailure(
+      baseline,
+      createStyleToolError('INTERNAL', 'Validated Map style could not be canonicalized.'),
+      baselineRead.warnings,
+    );
+  }
   const preflight = finalizeStyleReplacement(baseline, baseline, {
     maxStyleBytes,
     maxDiffBytes,
@@ -882,13 +1098,11 @@ export async function applyStyleDocumentOrUrlToMap(
       baselineHash = await hashWithDeadline(baseline, hash, deadline);
       candidateHash = await hashWithDeadline(finalizer.style, hash, deadline);
     } catch (error) {
-      return currentFailure(
-        baseline, normalizeFailure(error, 'Map style hashing failed.'), finalizer.warnings,
-      );
-    }
-    const beforeMutation = deadlineFailure(deadline);
-    if (beforeMutation !== undefined) {
-      return currentFailure(baseline, beforeMutation, finalizer.warnings);
+      const hashError = normalizeFailure(error, 'Map style hashing failed.');
+      const latestRead = readValidatedMapStyle(map, maxStyleBytes);
+      return latestRead.ok
+        ? currentFailure(latestRead.style, hashError, finalizer.warnings)
+        : preOperationFailure(baseline, hashError, finalizer.warnings);
     }
     try {
       const compatibleCandidate = toMapLibreStyleSpecification(finalizer.style);
@@ -900,9 +1114,15 @@ export async function applyStyleDocumentOrUrlToMap(
         hash,
         deadline,
         true,
+        () => guardBaselineBeforeInvoke(map, maxStyleBytes, baselineCanonical),
       );
       return currentSuccess(confirmed, finalizer, true);
     } catch (error) {
+      if (error instanceof MapWaitFailure && !error.mutationStarted) {
+        return nonMutationFailureResult(
+          error, baseline, baseline, finalizer.warnings,
+        );
+      }
       return rollbackAfterFailure(
         map,
         baseline,
@@ -911,7 +1131,9 @@ export async function applyStyleDocumentOrUrlToMap(
         diff,
         deadline,
         hash,
-        normalizeFailure(error, 'Map style application failed.'),
+        error instanceof MapWaitFailure
+          ? error.styleToolError
+          : normalizeFailure(error, 'Map style application failed.'),
         finalizer.warnings,
       );
     }
@@ -928,13 +1150,11 @@ export async function applyStyleDocumentOrUrlToMap(
   try {
     baselineHash = await hashWithDeadline(baseline, hash, deadline);
   } catch (error) {
-    return currentFailure(
-      baseline, normalizeFailure(error, 'Map style hashing failed.'), preflight.warnings,
-    );
-  }
-  const beforeUrlMutation = deadlineFailure(deadline);
-  if (beforeUrlMutation !== undefined) {
-    return currentFailure(baseline, beforeUrlMutation, preflight.warnings);
+    const hashError = normalizeFailure(error, 'Map style hashing failed.');
+    const latestRead = readValidatedMapStyle(map, maxStyleBytes);
+    return latestRead.ok
+      ? currentFailure(latestRead.style, hashError, preflight.warnings)
+      : preOperationFailure(baseline, hashError, preflight.warnings);
   }
 
   let resolvedStyle: StyleDocument;
@@ -946,9 +1166,13 @@ export async function applyStyleDocumentOrUrlToMap(
       maxStyleBytes,
       hash,
       deadline,
-      false,
+      true,
+      () => guardBaselineBeforeInvoke(map, maxStyleBytes, baselineCanonical),
     );
   } catch (error) {
+    if (error instanceof MapWaitFailure && !error.mutationStarted) {
+      return nonMutationFailureResult(error, baseline, baseline, preflight.warnings);
+    }
     return rollbackAfterFailure(
       map,
       baseline,
@@ -957,7 +1181,9 @@ export async function applyStyleDocumentOrUrlToMap(
       diff,
       deadline,
       hash,
-      normalizeFailure(error, 'Map style URL loading failed.'),
+      error instanceof MapWaitFailure
+        ? error.styleToolError
+        : normalizeFailure(error, 'Map style URL loading failed.'),
       preflight.warnings,
     );
   }

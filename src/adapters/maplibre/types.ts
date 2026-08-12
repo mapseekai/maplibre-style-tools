@@ -30,7 +30,12 @@ export interface WholeStyleApplyOptions extends StyleReplacementOptions {
 export type PreparedStyleApplyOptions = Pick<
   ApplyTransactionToMapOptions,
   'diff' | 'deadline' | 'hashStyle'
->;
+> & {
+  maxStyleBytes?: never;
+  maxDiffBytes?: never;
+  maxOperations?: never;
+  timeoutMs?: never;
+};
 
 export type MapStyleCurrentResult = StyleTransactionResult & {
   styleAuthority: 'current';
