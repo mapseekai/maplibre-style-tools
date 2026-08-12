@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  JsonPrimitive, JsonValue, SetLayerPropertiesOperation,
+  JsonPrimitive, JsonValue, SetGeoJsonSourceFilterOperation,
+  SetLayerFilterOperation, SetLayerPropertiesOperation,
   SetStyleRootPropertiesOperation, StyleOperation, StyleTransaction,
 } from './types.js';
 
@@ -258,6 +259,8 @@ const OPERATION_KEYS = new Set([
   'op', 'layerId', 'paint', 'layout', 'metadata', 'minzoom', 'maxzoom',
 ]);
 const ROOT_OPERATION_KEYS = new Set(['op', 'properties']);
+const LAYER_FILTER_OPERATION_KEYS = new Set(['op', 'layerId', 'mode', 'filter']);
+const SOURCE_FILTER_OPERATION_KEYS = new Set(['op', 'sourceId', 'mode', 'filter']);
 const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
 
 function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
@@ -287,8 +290,33 @@ function fallbackRootOperation(value: JsonValue): JsonValue | undefined {
   return value;
 }
 
+function fallbackFilterOperation(
+  value: JsonValue,
+  op: 'setLayerFilter' | 'setGeoJsonSourceFilter',
+): JsonValue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const isLayer = op === 'setLayerFilter';
+  if (!hasOnlyKeys(value, isLayer
+    ? LAYER_FILTER_OPERATION_KEYS
+    : SOURCE_FILTER_OPERATION_KEYS)) return undefined;
+  if (ownValue(value, 'op') !== op) return undefined;
+  const id = ownValue(value, isLayer ? 'layerId' : 'sourceId');
+  if (typeof id !== 'string' || id.length === 0) return undefined;
+  const mode = ownValue(value, 'mode');
+  if (mode === 'clear') {
+    return ownValue(value, 'filter') === undefined ? value : undefined;
+  }
+  const validMode = isLayer
+    ? mode === 'replace' || mode === 'and' || mode === 'or'
+    : mode === 'replace';
+  return validMode && Array.isArray(ownValue(value, 'filter')) ? value : undefined;
+}
+
 function fallbackOperation(value: JsonValue): JsonValue | undefined {
-  return fallbackSetLayerOperation(value) ?? fallbackRootOperation(value);
+  return fallbackSetLayerOperation(value)
+    ?? fallbackRootOperation(value)
+    ?? fallbackFilterOperation(value, 'setLayerFilter')
+    ?? fallbackFilterOperation(value, 'setGeoJsonSourceFilter');
 }
 
 function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
@@ -314,7 +342,10 @@ function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | un
 function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
   if (!isJsonObject(value)) return undefined;
   const operation = ownValue(value, 'op');
-  return operation === 'setLayerProperties' || operation === 'setStyleRootProperties'
+  return operation === 'setLayerProperties'
+    || operation === 'setStyleRootProperties'
+    || operation === 'setLayerFilter'
+    || operation === 'setGeoJsonSourceFilter'
     ? undefined
     : fallbackSetLayerOperationIssue(value);
 }
@@ -461,6 +492,7 @@ export const styleDocumentSchema = sanitizeBefore(
 );
 
 const zoomSchema = z.number().finite().min(0).max(24).nullable();
+const filterArrayInnerSchema = z.array(jsonValueInnerSchema);
 const setLayerPropertiesOperationInnerSchema = z.object({
   op: z.literal('setLayerProperties'),
   layerId: z.string().min(1),
@@ -501,9 +533,51 @@ export const setStyleRootPropertiesOperationSchema = sanitizeBefore(
   fallbackRootOperation,
 );
 
+const setLayerFilterOperationInnerSchema = z.discriminatedUnion('mode', [
+  z.object({
+    op: z.literal('setLayerFilter'),
+    layerId: z.string().min(1),
+    mode: z.enum(['replace', 'and', 'or']),
+    filter: filterArrayInnerSchema,
+  }).strict(),
+  z.object({
+    op: z.literal('setLayerFilter'),
+    layerId: z.string().min(1),
+    mode: z.literal('clear'),
+  }).strict(),
+]) satisfies z.ZodType<SetLayerFilterOperation>;
+
+export const setLayerFilterOperationSchema = sanitizeBefore(
+  setLayerFilterOperationInnerSchema,
+  undefined,
+  (value) => fallbackFilterOperation(value, 'setLayerFilter'),
+);
+
+const setGeoJsonSourceFilterOperationInnerSchema = z.discriminatedUnion('mode', [
+  z.object({
+    op: z.literal('setGeoJsonSourceFilter'),
+    sourceId: z.string().min(1),
+    mode: z.literal('replace'),
+    filter: filterArrayInnerSchema,
+  }).strict(),
+  z.object({
+    op: z.literal('setGeoJsonSourceFilter'),
+    sourceId: z.string().min(1),
+    mode: z.literal('clear'),
+  }).strict(),
+]) satisfies z.ZodType<SetGeoJsonSourceFilterOperation>;
+
+export const setGeoJsonSourceFilterOperationSchema = sanitizeBefore(
+  setGeoJsonSourceFilterOperationInnerSchema,
+  undefined,
+  (value) => fallbackFilterOperation(value, 'setGeoJsonSourceFilter'),
+);
+
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
   setStyleRootPropertiesOperationInnerSchema,
+  setLayerFilterOperationInnerSchema,
+  setGeoJsonSourceFilterOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
 type StyleOperationSchemaOutput = StyleOperation & Pick<

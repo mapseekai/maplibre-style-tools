@@ -1,35 +1,19 @@
 import { applyStyleTransaction } from '../core/transaction.js';
-import { diffStyleDocuments, jsonValuesEqual } from '../core/diff.js';
-import { applySetLayerProperties } from '../core/operations/layers.js';
 import type {
-  CoreExecutionLimits,
   JsonValue as CoreJsonValue,
   JsonObject as CoreJsonObject,
-  OperationContext,
+  SetLayerFilterOperation,
   SetLayerPropertiesOperation,
   StyleDiffEntry as CoreStyleDiffEntry,
   StyleDocument as CoreStyleDocument,
 } from '../core/types.js';
-import {
-  DEFAULT_MAX_DIFF_BYTES,
-  DEFAULT_MAX_OPERATIONS,
-  DEFAULT_MAX_STYLE_BYTES,
-} from '../core/utf8.js';
 import { validateStyleDocument } from '../core/validation.js';
 import type {
   StyleDiffEntry,
   StyleDocument,
-  StyleLayer,
   StyleOperation,
   StyleOperationResult,
 } from '../types.js';
-
-const findLayer = (
-  style: StyleDocument | CoreStyleDocument,
-  layerId: string
-): StyleLayer | undefined => style.layers.find(
-  (layer) => layer.id === layerId
-) as StyleLayer | undefined;
 
 const legacyPropertyValidationMessage = (
   style: StyleDocument,
@@ -104,6 +88,34 @@ const toCoreOperation = (
   ...(operation.maxzoom === undefined ? {} : { maxzoom: operation.maxzoom }),
 });
 
+const toCoreFilterOperation = (
+  operation: StyleOperation
+): SetLayerFilterOperation | undefined => {
+  if (!Object.hasOwn(operation, 'filter')) {
+    return undefined;
+  }
+  if (operation.filter === null) {
+    return { op: 'setLayerFilter', layerId: operation.layerId, mode: 'clear' };
+  }
+  return {
+    op: 'setLayerFilter',
+    layerId: operation.layerId,
+    mode: 'replace',
+    filter: operation.filter as CoreJsonValue[],
+  };
+};
+
+const toCoreOperations = (
+  operation: StyleOperation
+): Array<SetLayerPropertiesOperation | SetLayerFilterOperation> => {
+  const normalized: Array<SetLayerPropertiesOperation | SetLayerFilterOperation> = [
+    toCoreOperation(operation),
+  ];
+  const filter = toCoreFilterOperation(operation);
+  if (filter !== undefined) normalized.push(filter);
+  return normalized;
+};
+
 const decodePointer = (pointer: string): string[] => pointer
   .slice(1)
   .split('/')
@@ -155,18 +167,24 @@ const toLegacyCoreDiff = (
       after: entry.after,
     }];
   }
+  if (section === 'filter' && tokens.length === 3) {
+    return [{
+      path: `layers.${entry.target.id}.filter`,
+      before: entry.before,
+      after: entry.after,
+    }];
+  }
   return [];
 });
 
 const orderDiffSummary = (
   operations: StyleOperation[],
-  coreDiff: StyleDiffEntry[],
-  filterDiffByOperation: ReadonlyMap<number, StyleDiffEntry>
+  coreDiff: StyleDiffEntry[]
 ): StyleDiffEntry[] => {
   const remaining = new Map(coreDiff.map((entry) => [entry.path, entry]));
   const ordered: StyleDiffEntry[] = [];
 
-  operations.forEach((operation, index) => {
+  operations.forEach((operation) => {
     for (const section of ['paint', 'layout'] as const) {
       for (const property of Object.keys(operation[section] ?? {})) {
         const path = `layers.${operation.layerId}.${section}.${property}`;
@@ -178,9 +196,13 @@ const orderDiffSummary = (
       }
     }
 
-    const filterEntry = filterDiffByOperation.get(index);
-    if (filterEntry) {
-      ordered.push(filterEntry);
+    if (Object.hasOwn(operation, 'filter')) {
+      const path = `layers.${operation.layerId}.filter`;
+      const entry = remaining.get(path);
+      if (entry) {
+        ordered.push(entry);
+        remaining.delete(path);
+      }
     }
 
     for (const property of ['minzoom', 'maxzoom'] as const) {
@@ -208,67 +230,6 @@ const failure = (style: StyleDocument, message: string): StyleOperationResult =>
   diffSummary: [],
 });
 
-type LegacyFilterCompatibilityResult = {
-  diff?: StyleDiffEntry;
-};
-
-// Temporary legacy exception: Layer/Data Task 3 replaces this with setLayerFilter.
-const applyLegacyFilterCompatibility = (
-  workingStyle: CoreStyleDocument,
-  operation: StyleOperation
-): LegacyFilterCompatibilityResult => {
-  if (!Object.hasOwn(operation, 'filter')) {
-    return {};
-  }
-  const layer = findLayer(workingStyle, operation.layerId);
-  if (!layer) {
-    return {};
-  }
-
-  const before = layer.filter;
-  if (operation.filter === null) {
-    if (!Object.hasOwn(layer, 'filter')) {
-      return {};
-    }
-    delete layer.filter;
-  } else {
-    if (
-      Object.is(before, operation.filter)
-      || (
-        before !== undefined
-        && operation.filter !== undefined
-        && jsonValuesEqual(
-          before as CoreJsonValue,
-          operation.filter as CoreJsonValue
-        )
-      )
-    ) {
-      return {};
-    }
-    layer.filter = operation.filter;
-  }
-  return {
-    diff: {
-      path: `layers.${operation.layerId}.filter`,
-      before,
-      after: operation.filter === null ? undefined : operation.filter,
-    },
-  };
-};
-
-const executionLimits: Readonly<CoreExecutionLimits> = Object.freeze({
-  maxStyleBytes: DEFAULT_MAX_STYLE_BYTES,
-  maxDiffBytes: DEFAULT_MAX_DIFF_BYTES,
-  maxOperations: DEFAULT_MAX_OPERATIONS,
-});
-
-const operationContext = (): OperationContext => ({
-  limits: executionLimits,
-  changedLayerIds: new Set<string>(),
-  changedSourceIds: new Set<string>(),
-  warnings: [],
-});
-
 type LegacyOperationHistory = {
   changedLayers: string[];
   diffSummary: StyleDiffEntry[];
@@ -278,44 +239,31 @@ const reconstructLegacyOperationHistory = (
   original: CoreStyleDocument,
   operations: StyleOperation[]
 ): LegacyOperationHistory => {
-  const workingStyle = structuredClone(original);
+  let workingStyle = structuredClone(original);
   const changedLayers: string[] = [];
   const changedLayerSet = new Set<string>();
   const diffSummary: StyleDiffEntry[] = [];
 
   for (const operation of operations) {
-    const before = structuredClone(workingStyle);
-    const context = operationContext();
-    const result = applySetLayerProperties(
+    const result = applyStyleTransaction(
       workingStyle,
-      toCoreOperation(operation),
-      context
+      { operations: toCoreOperations(operation) }
     );
     if (!result.ok) {
       continue;
     }
 
-    const coreDiff = toLegacyCoreDiff(
-      diffStyleDocuments(before, workingStyle, context)
-    );
-    const filterCompatibility = applyLegacyFilterCompatibility(
-      workingStyle,
-      operation
-    );
-    const filterDiff = new Map<number, StyleDiffEntry>();
-    if (filterCompatibility.diff) {
-      filterDiff.set(0, filterCompatibility.diff);
-    }
+    const coreDiff = toLegacyCoreDiff(result.diff);
     const operationDiff = orderDiffSummary(
       [operation],
-      coreDiff,
-      filterDiff
+      coreDiff
     );
     if (operationDiff.length > 0 && !changedLayerSet.has(operation.layerId)) {
       changedLayerSet.add(operation.layerId);
       changedLayers.push(operation.layerId);
     }
     diffSummary.push(...operationDiff);
+    workingStyle = result.style;
   }
 
   return { changedLayers, diffSummary };
@@ -344,7 +292,7 @@ export const applyStyleOperations = (
 
   const coreResult = applyStyleTransaction(
     style as unknown as CoreStyleDocument,
-    { operations: operations.map(toCoreOperation) }
+    { operations: operations.flatMap(toCoreOperations) }
   );
   if (!coreResult.ok) {
     if (coreResult.error.code === 'NOT_FOUND') {
@@ -365,19 +313,6 @@ export const applyStyleOperations = (
     return failure(style, coreResult.error.message);
   }
 
-  const workingStyle = coreResult.style;
-  for (const operation of operations) {
-    applyLegacyFilterCompatibility(workingStyle, operation);
-  }
-
-  const finalValidation = validateStyleDocument(workingStyle);
-  if (!finalValidation.ok) {
-    return failure(
-      style,
-      finalValidation.errors[0]?.message ?? 'MapLibre style validation failed.'
-    );
-  }
-
   const originalValidation = validateStyleDocument(style);
   if (!originalValidation.ok) {
     return failure(
@@ -393,7 +328,7 @@ export const applyStyleOperations = (
   return {
     success: true,
     message: `Applied ${operations.length} style operation${operations.length === 1 ? '' : 's'}.`,
-    style: finalValidation.style as unknown as StyleDocument,
+    style: coreResult.style as unknown as StyleDocument,
     changedLayers: legacyHistory.changedLayers,
     diffSummary: legacyHistory.diffSummary,
   };

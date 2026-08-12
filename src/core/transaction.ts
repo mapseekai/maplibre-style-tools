@@ -1,6 +1,10 @@
 import { diffStyleDocuments } from './diff.js';
 import { createStyleToolError } from './errors.js';
 import { toJsonPointer } from './json-pointer.js';
+import {
+  applySetGeoJsonSourceFilter,
+  applySetLayerFilter,
+} from './operations/filters.js';
 import { applySetLayerProperties } from './operations/layers.js';
 import { applyRootOperation } from './operations/root.js';
 import { createStyleTransactionSchema } from './schemas.js';
@@ -318,7 +322,13 @@ function assertNever(value: never): never {
 }
 
 type HandledStyleOperation = Extract<
-  StyleOperation, { op: 'setLayerProperties' | 'setStyleRootProperties' }
+  StyleOperation, {
+    op:
+      | 'setLayerProperties'
+      | 'setStyleRootProperties'
+      | 'setLayerFilter'
+      | 'setGeoJsonSourceFilter';
+  }
 >;
 type UnhandledStyleOperation = Exclude<StyleOperation, HandledStyleOperation>;
 
@@ -332,6 +342,10 @@ function applyOperation(
       return applySetLayerProperties(style, operation, context);
     case 'setStyleRootProperties':
       return applyRootOperation(style, operation, context);
+    case 'setLayerFilter':
+      return applySetLayerFilter(style, operation, context);
+    case 'setGeoJsonSourceFilter':
+      return applySetGeoJsonSourceFilter(style, operation, context);
     default:
       return assertNever(operation as UnhandledStyleOperation);
   }

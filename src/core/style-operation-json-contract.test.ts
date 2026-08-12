@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import type { JsonObject, StyleOperation } from './types.js';
 
+const setLayerFilterJsonContract = {
+  op: 'setLayerFilter',
+  layerId: 'roads',
+  mode: 'clear',
+} satisfies StyleOperation;
+
 type AssertTrue<T extends true> = T;
 type StyleOperationIsJsonObject = AssertTrue<
   StyleOperation extends JsonObject ? true : false
@@ -10,4 +16,5 @@ type StyleOperationIsJsonObject = AssertTrue<
 it('keeps every StyleOperation variant JSON-backed', () => {
   const compiled: StyleOperationIsJsonObject = true;
   assert.equal(compiled, true);
+  assert.equal(setLayerFilterJsonContract.op, 'setLayerFilter');
 });

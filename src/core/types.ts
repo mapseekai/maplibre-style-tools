@@ -81,9 +81,27 @@ export type SetStyleRootPropertiesOperation = {
   op: 'setStyleRootProperties';
   properties: JsonObject;
 };
+export type SetLayerFilterOperation =
+  | {
+      op: 'setLayerFilter';
+      layerId: string;
+      mode: 'replace' | 'and' | 'or';
+      filter: JsonValue[];
+    }
+  | { op: 'setLayerFilter'; layerId: string; mode: 'clear' };
+export type SetGeoJsonSourceFilterOperation =
+  | {
+      op: 'setGeoJsonSourceFilter';
+      sourceId: string;
+      mode: 'replace';
+      filter: JsonValue[];
+    }
+  | { op: 'setGeoJsonSourceFilter'; sourceId: string; mode: 'clear' };
 export type StyleOperation =
   | SetLayerPropertiesOperation
-  | SetStyleRootPropertiesOperation;
+  | SetStyleRootPropertiesOperation
+  | SetLayerFilterOperation
+  | SetGeoJsonSourceFilterOperation;
 export type StyleTransaction = {
   operations: StyleOperation[];
   validate?: boolean;

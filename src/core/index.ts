@@ -9,6 +9,8 @@ export type {
   OperationApplyResult,
   OperationContext,
   Placement,
+  SetGeoJsonSourceFilterOperation,
+  SetLayerFilterOperation,
   SetLayerPropertiesOperation,
   SetStyleRootPropertiesOperation,
   StyleDiffEntry,
@@ -46,6 +48,8 @@ export {
 export {
   createStyleTransactionSchema,
   jsonValueSchema,
+  setGeoJsonSourceFilterOperationSchema,
+  setLayerFilterOperationSchema,
   setLayerPropertiesOperationSchema,
   setStyleRootPropertiesOperationSchema,
   styleDocumentSchema,
@@ -56,6 +60,11 @@ export { validateStyleDocument } from './validation.js';
 export { buildStyleContext } from './context.js';
 export { searchLayers } from './search.js';
 export { applyRootOperation } from './operations/root.js';
+export {
+  applySetGeoJsonSourceFilter,
+  applySetLayerFilter,
+  composeFilter,
+} from './operations/filters.js';
 export { applyMergePatch, resolveInsertionIndex } from './operations/shared.js';
 export {
   applyStyleTransaction,
