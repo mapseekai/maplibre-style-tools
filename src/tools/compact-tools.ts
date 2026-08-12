@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { buildStyleContext, searchLayers } from '../engine/style-context.js';
 import { applyStyleOperations } from '../engine/style-operations.js';
 import { validateStyleDocument } from '../core/validation.js';
+export { COMPACT_LEGACY_TOOL_NAMES } from '../ai-sdk/tool-contracts.js';
 import type { StyleDocument as CoreStyleDocument } from '../core/types.js';
 import type {
   JsonObject,
