@@ -7,6 +7,7 @@ import type {
 } from 'maplibre-gl';
 import {
   createStyleToolError,
+  isStyleToolError,
   jsonValueSchema,
 } from '../../core/index.js';
 import { createMapRuntimeCommands } from './runtime-commands.js';
@@ -56,6 +57,7 @@ class FakeMap {
   source: unknown;
   imageListResult: unknown;
   spriteListResult: unknown = [];
+  onHasImage?: (imageId: string) => void;
   loadedImage: Promise<{ data: unknown }> = Promise.resolve({
     data: { width: 1, height: 1, data: new Uint8Array(4) },
   });
@@ -103,6 +105,7 @@ class FakeMap {
 
   hasImage(imageId: string): boolean {
     this.record('hasImage', [imageId]);
+    this.onHasImage?.(imageId);
     return this.images.has(imageId);
   }
 
@@ -725,6 +728,51 @@ test('a signal that becomes unreadable after loading cannot mutate image state',
   assert.equal(map.images.has('revoked'), false);
 });
 
+test('abort reentrancy from the final image existence check prevents add and update', async () => {
+  for (const existed of [false, true]) {
+    const map = new FakeMap();
+    if (existed) map.images.add('reentrant');
+    const controller = new AbortController();
+    let checks = 0;
+    map.onHasImage = () => {
+      checks += 1;
+      if (checks === 2) controller.abort();
+    };
+    const result = await createMapRuntimeCommands(map.asMap(), {
+      imageLoader: {
+        async load() { return { width: 1, height: 1, data: new Uint8Array(4) }; },
+      },
+    }).addImageFromUrl({
+      imageId: 'reentrant', url: 'custom://reentrant', overwrite: existed,
+    }, { signal: controller.signal });
+    assertFailureCode(result, 'TIMEOUT');
+    assert.deepEqual(map.calls.map((call) => call.method), ['hasImage', 'hasImage']);
+    assert.equal(map.images.has('reentrant'), existed);
+  }
+});
+
+test('abort reentrancy during decoded-image snapshotting prevents image mutation', async () => {
+  const map = new FakeMap();
+  const controller = new AbortController();
+  let reflectionCalls = 0;
+  const image = new Proxy({ width: 1, height: 1, data: new Uint8Array(4) }, {
+    ownKeys(target) {
+      reflectionCalls += 1;
+      controller.abort();
+      return Reflect.ownKeys(target);
+    },
+  });
+  const result = await createMapRuntimeCommands(map.asMap(), {
+    imageLoader: { async load() { return image; } },
+  }).addImageFromUrl({
+    imageId: 'snapshot', url: 'custom://snapshot',
+  }, { signal: controller.signal });
+  assertFailureCode(result, 'TIMEOUT');
+  assert.equal(reflectionCalls > 0, true);
+  assert.deepEqual(map.calls.map((call) => call.method), ['hasImage', 'hasImage']);
+  assert.equal(map.images.has('snapshot'), false);
+});
+
 test('image lists apply configured limits before reading output and remain JSON-only', () => {
   const map = new FakeMap();
   const capped = new Array<string>(MAX_RUNTIME_LIST_LIMIT + 1);
@@ -807,31 +855,98 @@ test('failed sprite overwrite restores the original sprite and returns the prima
   assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://old' }]);
 });
 
-test('sprite restore failure preserves the primary error and exposes only safe rollback details', () => {
+test('sprite restore failure preserves safe authentic primary and rollback snapshots', () => {
   const map = new FakeMap();
   map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
-  let thrownGetterCalls = 0;
-  const hostilePrimary = {};
-  Object.defineProperty(hostilePrimary, 'message', {
-    get() { thrownGetterCalls += 1; throw new Error('must not leak'); },
-  });
-  map.spriteAddErrors.set('sprite://new', hostilePrimary);
-  map.spriteAddErrors.set('sprite://old', new Error('restore secret'));
+  const primary = createStyleToolError(
+    'MAP_NOT_READY', 'replacement unavailable', '/spriteId', { phase: 'replace' },
+  );
+  const rollback = createStyleToolError(
+    'IO_ERROR', 'restore unavailable', '/spriteId', { phase: 'restore' },
+  );
+  map.spriteAddErrors.set('sprite://new', primary);
+  map.spriteAddErrors.set('sprite://old', rollback);
   const result = createMapRuntimeCommands(map.asMap()).addSprite({
     spriteId: 'base', url: 'sprite://new', overwrite: true,
   });
   assert.equal(result.ok, false);
   if (!result.ok) {
-    assert.equal(result.error.code, 'INTERNAL');
-    assert.equal(result.error.message, 'MapLibre sprite update failed.');
-    assert.deepEqual(result.error.details, { rollbackFailed: true });
+    assert.notStrictEqual(result.error, primary);
+    assert.equal(result.error.code, 'MAP_NOT_READY');
+    assert.equal(result.error.message, 'replacement unavailable');
+    assert.equal(result.error.path, '/spriteId');
+    assert.deepEqual(result.error.details, {
+      phase: 'replace',
+      rollbackFailed: true,
+      rollbackError: {
+        code: 'IO_ERROR',
+        message: 'restore unavailable',
+        path: '/spriteId',
+        details: { phase: 'restore' },
+      },
+    });
+    assert.equal(isStyleToolError(result.error), true);
     assert.equal(jsonValueSchema.safeParse(result.error).success, true);
   }
-  assert.equal(thrownGetterCalls, 0);
+  primary.details!.phase = 'changed';
+  rollback.details!.phase = 'changed';
+  if (!result.ok) {
+    assert.equal(result.error.details?.phase, 'replace');
+    assert.deepEqual(result.error.details?.rollbackError, {
+      code: 'IO_ERROR', message: 'restore unavailable', path: '/spriteId',
+      details: { phase: 'restore' },
+    });
+  }
   assert.deepEqual(map.calls.map((call) => call.method), [
     'getSprite', 'removeSprite', 'addSprite', 'addSprite',
   ]);
   assert.deepEqual(map.spriteListResult, []);
+});
+
+test('mutated authentic sprite failures never invoke accessors or escape the result envelope', () => {
+  const map = new FakeMap();
+  map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+  let getterCalls = 0;
+  const primary = createStyleToolError('MAP_NOT_READY', 'original primary');
+  Object.defineProperty(primary, 'code', {
+    configurable: true,
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('primary secret'); },
+  });
+  const rollback = createStyleToolError('IO_ERROR', 'original rollback');
+  Object.defineProperty(rollback, 'message', {
+    configurable: true,
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('rollback secret'); },
+  });
+  assert.equal(isStyleToolError(primary), true);
+  assert.equal(isStyleToolError(rollback), true);
+  map.spriteAddErrors.set('sprite://new', primary);
+  map.spriteAddErrors.set('sprite://old', rollback);
+  let result: RuntimeCommandResult | undefined;
+  assert.doesNotThrow(() => {
+    result = createMapRuntimeCommands(map.asMap()).addSprite({
+      spriteId: 'base', url: 'sprite://new', overwrite: true,
+    });
+  });
+  assert.equal(getterCalls, 0);
+  assert.equal(result?.ok, false);
+  if (result !== undefined && !result.ok) {
+    assert.deepEqual(result.error, {
+      code: 'INTERNAL',
+      message: 'MapLibre sprite update failed.',
+      details: {
+        rollbackFailed: true,
+        rollbackError: {
+          code: 'INTERNAL', message: 'MapLibre sprite rollback failed.',
+        },
+      },
+    });
+    assert.equal(isStyleToolError(result.error), true);
+    assert.equal(jsonValueSchema.safeParse(result.error).success, true);
+    assert.equal(JSON.stringify(result.error).includes('sprite://'), false);
+    assert.equal(JSON.stringify(result.error).includes('secret'), false);
+  }
 });
 
 test('Map exceptions and authentic StyleToolErrors become structured failures', async () => {
@@ -847,7 +962,12 @@ test('Map exceptions and authentic StyleToolErrors become structured failures', 
   map.errors.set('listImages', authentic);
   const result = commands.listImages();
   assert.equal(result.ok, false);
-  if (!result.ok) assert.strictEqual(result.error, authentic);
+  if (!result.ok) {
+    assert.notStrictEqual(result.error, authentic);
+    assert.deepEqual(result.error, authentic);
+    assert.equal(isStyleToolError(result.error), true);
+    assert.equal(jsonValueSchema.safeParse(result.error).success, true);
+  }
 
   map.errors.delete('listImages');
   map.errors.set('getSprite', new Error('sprite unavailable'));

@@ -6,6 +6,7 @@ import type {
   Source,
 } from 'maplibre-gl';
 import {
+  STYLE_TOOL_ERROR_CODES,
   createStyleToolError,
   isStyleToolError,
   jsonValueSchema,
@@ -15,6 +16,7 @@ import type {
   JsonObject,
   JsonValue,
   StyleToolError,
+  StyleToolErrorCode,
 } from '../../core/index.js';
 import { runtimeGeoJsonDiffUpdateSchema } from './geojson-diff.js';
 import {
@@ -87,10 +89,84 @@ function parseInput<Value>(schema: ZodType<Value>, input: unknown): ParsedInput<
   }
 }
 
+function isStyleToolErrorCode(value: unknown): value is StyleToolErrorCode {
+  return STYLE_TOOL_ERROR_CODES.some((code) => code === value);
+}
+
+function safeStyleToolErrorSnapshot(error: unknown): StyleToolError | undefined {
+  if (!isStyleToolError(error)) return undefined;
+  try {
+    const code = inspectOwnEnumerableData(error, 'code');
+    const message = inspectOwnEnumerableData(error, 'message');
+    if (code.kind !== 'value' || !isStyleToolErrorCode(code.value)
+      || message.kind !== 'value' || typeof message.value !== 'string') {
+      return undefined;
+    }
+    const path = inspectOwnEnumerableData(error, 'path');
+    if (path.kind === 'invalid') return undefined;
+    let safePath: string | undefined;
+    if (path.kind === 'value') {
+      if (typeof path.value !== 'string') return undefined;
+      safePath = path.value;
+    }
+    const details = inspectOwnEnumerableData(error, 'details');
+    if (details.kind === 'invalid') return undefined;
+    let safeDetails: JsonObject | undefined;
+    if (details.kind === 'value') {
+      const parsed = jsonValueSchema.safeParse(details.value);
+      if (!parsed.success || parsed.data === null || Array.isArray(parsed.data)
+        || typeof parsed.data !== 'object') return undefined;
+      safeDetails = parsed.data;
+    }
+    return createStyleToolError(
+      code.value,
+      message.value,
+      safePath,
+      safeDetails,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizeFailure(error: unknown, message: string): StyleToolError {
-  return isStyleToolError(error)
-    ? error
-    : createStyleToolError('INTERNAL', message);
+  return safeStyleToolErrorSnapshot(error)
+    ?? createStyleToolError('INTERNAL', message);
+}
+
+function rollbackFailure(
+  primary: StyleToolError,
+  rollback: StyleToolError,
+): StyleToolError {
+  const details: JsonObject = { ...(primary.details ?? {}) };
+  let failedKey = 'rollbackFailed';
+  while (Object.hasOwn(details, failedKey)) failedKey = `_${failedKey}`;
+  Reflect.defineProperty(details, failedKey, {
+    configurable: true,
+    enumerable: true,
+    value: true,
+    writable: true,
+  });
+  const rollbackSummary: JsonObject = {
+    code: rollback.code,
+    message: rollback.message,
+  };
+  if (rollback.path !== undefined) rollbackSummary.path = rollback.path;
+  if (rollback.details !== undefined) rollbackSummary.details = rollback.details;
+  let rollbackKey = 'rollbackError';
+  while (Object.hasOwn(details, rollbackKey)) rollbackKey = `_${rollbackKey}`;
+  Reflect.defineProperty(details, rollbackKey, {
+    configurable: true,
+    enumerable: true,
+    value: rollbackSummary,
+    writable: true,
+  });
+  return createStyleToolError(
+    primary.code,
+    primary.message,
+    primary.path,
+    details,
+  );
 }
 
 function failure<T extends JsonValue = JsonValue>(error: StyleToolError): RuntimeCommandResult<T> {
@@ -706,6 +782,8 @@ export function createMapRuntimeCommands(
         const imageValidation = parseInput(addImageDataInputSchema, imageInput);
         if (!imageValidation.ok) return failure(imageValidation.error);
         const existsAfterLoad = map.hasImage(parsed.value.imageId);
+        const finalSignalFailure = currentSignalFailure(signal);
+        if (finalSignalFailure !== undefined) return failure(finalSignalFailure);
         if (existsAfterLoad && parsed.value.overwrite !== true) {
           return failure(conflict('Image', parsed.value.imageId));
         }
@@ -784,13 +862,9 @@ export function createMapRuntimeCommands(
         if (removedExisting && existing.sprite !== undefined) {
           try {
             map.addSprite(existing.sprite.id, existing.sprite.url);
-          } catch {
-            return failure(createStyleToolError(
-              primary.code,
-              primary.message,
-              primary.path,
-              { rollbackFailed: true },
-            ));
+          } catch (error) {
+            const rollback = normalizeFailure(error, 'MapLibre sprite rollback failed.');
+            return failure(rollbackFailure(primary, rollback));
           }
         }
         return failure(primary);
