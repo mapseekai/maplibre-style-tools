@@ -138,3 +138,36 @@ test('legacy validation message preserves unusual ids and colon property names',
   assert.deepEqual(result.changedLayers, []);
   assert.deepEqual(result.diffSummary, []);
 });
+
+test('legacy validation message preserves colon-space property names', () => {
+  const style = makeStyle();
+  style.layers[0]!.id = 'roads:west/[0]~.x';
+  const result = applyStyleOperations(style, [{
+    layerId: 'roads:west/[0]~.x',
+    paint: { 'line-custom: state': 42 },
+  }]);
+  assert.equal(result.success, false);
+  assert.equal(
+    result.message,
+    'Invalid paint properties for line layer "roads:west/[0]~.x": line-custom: state'
+  );
+  assert.equal(result.style, style);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.diffSummary, []);
+});
+
+test('legacy validation message preserves quoted property content', () => {
+  const style = makeStyle();
+  const result = applyStyleOperations(style, [{
+    layerId: 'roads',
+    paint: { 'line-custom: "state"\\west': 42 },
+  }]);
+  assert.equal(result.success, false);
+  assert.equal(
+    result.message,
+    'Invalid paint properties for line layer "roads": line-custom: "state"\\west'
+  );
+  assert.equal(result.style, style);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.diffSummary, []);
+});

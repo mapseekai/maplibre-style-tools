@@ -34,17 +34,51 @@ const legacyPropertyValidationMessage = (
   style: StyleDocument,
   normalizedMessage: string
 ): string | undefined => {
-  const match = /^layers\[(\d+)\]\.(paint|layout)\.(.+?): /.exec(
-    normalizedMessage
-  );
+  const match = /^layers\[(\d+)\]\.(paint|layout)\./.exec(normalizedMessage);
   if (!match) {
     return undefined;
   }
   const layerIndex = Number(match[1]);
   const mode = match[2];
-  const property = match[3];
+  const pathPrefix = match[0];
+  const unknownPropertyMarker = ': unknown property "';
+  let property: string | undefined;
+
+  if (normalizedMessage.endsWith('"')) {
+    let markerIndex = normalizedMessage.indexOf(
+      unknownPropertyMarker,
+      pathPrefix.length
+    );
+    while (markerIndex >= 0) {
+      const pathProperty = normalizedMessage.slice(
+        pathPrefix.length,
+        markerIndex
+      );
+      const detailProperty = normalizedMessage.slice(
+        markerIndex + unknownPropertyMarker.length,
+        -1
+      );
+      if (pathProperty === detailProperty) {
+        property = detailProperty;
+        break;
+      }
+      markerIndex = normalizedMessage.indexOf(
+        unknownPropertyMarker,
+        markerIndex + 1
+      );
+    }
+  }
+
+  if (property === undefined) {
+    const detailIndex = normalizedMessage.indexOf(': ', pathPrefix.length);
+    if (detailIndex < 0) {
+      return undefined;
+    }
+    property = normalizedMessage.slice(pathPrefix.length, detailIndex);
+  }
+
   const layer = style.layers[layerIndex];
-  if (!layer || (mode !== 'paint' && mode !== 'layout') || !property) {
+  if (!layer || (mode !== 'paint' && mode !== 'layout')) {
     return undefined;
   }
   return `Invalid ${mode} properties for ${layer.type} layer "${layer.id}": ${property}`;
