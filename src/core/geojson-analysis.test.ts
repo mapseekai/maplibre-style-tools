@@ -399,3 +399,108 @@ test('analysis schemas reject hostile graphs without getters and snapshot safe p
     assert.equal(Object.getPrototypeOf(parsedInput), Object.prototype);
   }
 });
+
+test('uses UTF-16 code-unit ordering independent of feature and key encounter order', () => {
+  const composed = '\u00e9';
+  const decomposed = 'e\u0301';
+  const feature = (
+    firstName: string,
+    secondName: string,
+    firstValue: string,
+    secondValue: string,
+  ) => ({
+    type: 'Feature' as const,
+    geometry: null,
+    properties: {
+      [firstName]: firstName,
+      [secondName]: secondName,
+      category: firstValue,
+      repeated: secondValue,
+    },
+  });
+  const forward = {
+    type: 'FeatureCollection' as const,
+    features: [
+      feature(composed, decomposed, composed, decomposed),
+      feature(decomposed, composed, decomposed, composed),
+    ],
+  };
+  const reverse = {
+    type: 'FeatureCollection' as const,
+    features: [
+      feature(composed, decomposed, decomposed, composed),
+      feature(decomposed, composed, composed, decomposed),
+    ],
+  };
+
+  const first = analyzeGeoJson(forward);
+  const second = analyzeGeoJson(reverse);
+  assert.deepEqual(first, second);
+  assert.equal(first.ok, true);
+  if (!first.ok || !first.analysis.available) {
+    assert.fail('expected inline analysis');
+  }
+  assert.deepEqual(first.analysis.properties.map((property) => property.name), [
+    'category', decomposed, 'repeated', composed,
+  ]);
+  assert.deepEqual(
+    first.analysis.properties.find((property) => property.name === 'category')?.topValues,
+    [
+      { value: decomposed, count: 1 },
+      { value: composed, count: 1 },
+    ],
+  );
+});
+
+test('escapes property names in warning JSON Pointer paths', () => {
+  const propertyName = 'a/b~c';
+  const result = analyzeGeoJson({
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature', geometry: null,
+        properties: { [propertyName]: [] },
+      },
+      {
+        type: 'Feature', geometry: null,
+        properties: { [propertyName]: 'value' },
+      },
+    ],
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok || !result.analysis.available) assert.fail('expected inline analysis');
+  assert.deepEqual(result.analysis.warnings, [
+    {
+      code: 'GEOJSON_PROPERTY_UNSUPPORTED',
+      message: 'Property "a/b~c" contains array or object values.',
+      path: '/properties/a~1b~0c',
+    },
+    {
+      code: 'GEOJSON_PROPERTY_MIXED_TYPES',
+      message: 'Property "a/b~c" contains mixed value types.',
+      path: '/properties/a~1b~0c',
+    },
+  ]);
+});
+
+test('analyzes 4000 nested geometry collections within a raised depth limit', {
+  timeout: 5_000,
+}, () => {
+  let geometry: unknown = { type: 'Point', coordinates: [0, 0] };
+  for (let depth = 0; depth < 4_000; depth += 1) {
+    geometry = { type: 'GeometryCollection', geometries: [geometry] };
+  }
+  assert.deepEqual(analyzeGeoJson(geometry, {
+    limits: { maxGeometryDepth: 4_001 },
+  }), {
+    ok: true,
+    analysis: {
+      available: true,
+      featureCount: 0,
+      geometryTypes: { Point: 1, GeometryCollection: 4_000 },
+      bbox: [0, 0, 0, 0],
+      properties: [],
+      warnings: [],
+    },
+  });
+});

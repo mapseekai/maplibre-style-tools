@@ -233,6 +233,10 @@ function stablePrimitive(value: JsonPrimitive): string {
   return `${String(value)}:${value === null ? 'null' : typeof value}`;
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function summarizeProperty(
   name: string,
   accumulator: PropertyAccumulator,
@@ -255,7 +259,7 @@ function summarizeProperty(
     analysis.topValues = [...accumulator.frequencies.entries()]
       .sort((left, right) => (
         right[1] - left[1]
-        || stablePrimitive(left[0]).localeCompare(stablePrimitive(right[0]), 'en')
+        || compareCodeUnits(stablePrimitive(left[0]), stablePrimitive(right[0]))
       ))
       .slice(0, topValueLimit)
       .map(([value, count]) => ({ value, count }));
@@ -268,18 +272,19 @@ function propertyWarnings(
 ): StyleWarning[] {
   const warnings: StyleWarning[] = [];
   for (const property of properties) {
+    const path = toJsonPointer(['properties', property.name]);
     if (property.types.some((type) => type === 'array' || type === 'object')) {
       warnings.push({
         code: 'GEOJSON_PROPERTY_UNSUPPORTED',
         message: `Property "${property.name}" contains array or object values.`,
-        path: `/properties/${property.name}`,
+        path,
       });
     }
     if (property.types.length > 1) {
       warnings.push({
         code: 'GEOJSON_PROPERTY_MIXED_TYPES',
         message: `Property "${property.name}" contains mixed value types.`,
-        path: `/properties/${property.name}`,
+        path,
       });
     }
   }
@@ -316,7 +321,7 @@ function analyzeValidated(
   }
 
   const properties = [...accumulators.properties.entries()]
-    .sort(([left], [right]) => left.localeCompare(right, 'en'))
+    .sort(([left], [right]) => compareCodeUnits(left, right))
     .map(([name, accumulator]) => (
       summarizeProperty(name, accumulator, topValueLimit)
     ));
