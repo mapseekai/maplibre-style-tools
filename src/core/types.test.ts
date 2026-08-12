@@ -8,9 +8,9 @@ import {
   jsonUtf8ByteLength,
 } from './utf8.js';
 import type {
-  CoreExecutionLimits, JsonObject, JsonValue, OperationContext, StyleDiffEntry,
-  StyleDocument, StyleLayer, StyleOperation, StyleSource, StyleToolError,
-  StyleTransaction, StyleTransactionResult,
+  CoreExecutionLimits, JsonObject, JsonValue, OperationApplyResult, OperationContext,
+  StyleDiffEntry, StyleDiffTarget, StyleDocument, StyleLayer, StyleOperation,
+  StyleSource, StyleToolError, StyleTransaction, StyleTransactionResult, StyleWarning,
 } from './types.js';
 
 type Extends<Actual, Expected> = [Actual] extends [Expected] ? true : false;
@@ -55,6 +55,44 @@ test('strict core operations carry an op discriminator', () => {
   const transaction: StyleTransaction = { operations: [operation], validate: true };
   assert.equal(transaction.operations[0]?.op, 'setLayerProperties');
   void invalid;
+});
+
+test('closed core aliases reject extension fields', () => {
+  // eslint-disable-next-line no-constant-condition -- compile-only negative assertions.
+  if (false) {
+    // @ts-expect-error -- transactions do not expose extension fields.
+    const transaction: StyleTransaction = { operations: [], surprise: true };
+    const diff: StyleDiffEntry = {
+      op: 'add', path: '/layers/0', target: { kind: 'style' },
+      // @ts-expect-error -- diff entries do not expose extension fields.
+      surprise: true,
+    };
+    // @ts-expect-error -- diff targets do not expose extension fields.
+    const target: StyleDiffTarget = { kind: 'style', surprise: true };
+    const error: StyleToolError = {
+      code: 'INTERNAL', message: 'failed',
+      // @ts-expect-error -- stable errors do not expose extension fields.
+      surprise: true,
+    };
+    // @ts-expect-error -- warnings do not expose extension fields.
+    const warning: StyleWarning = { code: 'NOTICE', message: 'note', surprise: true };
+    // @ts-expect-error -- operation results do not expose extension fields.
+    const applyResult: OperationApplyResult = { ok: true, changed: true, surprise: true };
+    const transactionResult: StyleTransactionResult = {
+      ok: true,
+      style: { version: 8, sources: {}, layers: [] },
+      changedLayers: [], changedSources: [], diff: [], warnings: [],
+      // @ts-expect-error -- transaction results do not expose extension fields.
+      surprise: true,
+    };
+    void transaction;
+    void diff;
+    void target;
+    void error;
+    void warning;
+    void applyResult;
+    void transactionResult;
+  }
 });
 
 test('OperationContext requires one readonly resolved limit object', () => {

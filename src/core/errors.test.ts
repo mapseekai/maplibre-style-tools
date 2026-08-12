@@ -5,7 +5,21 @@ import {
 } from './errors.js';
 
 test('creates a serializable stable error', () => {
-  assert.equal(STYLE_TOOL_ERROR_CODES.includes('STYLE_INVALID'), true);
+  assert.deepEqual(STYLE_TOOL_ERROR_CODES, [
+    'INVALID_INPUT',
+    'STYLE_INVALID',
+    'NOT_FOUND',
+    'CONFLICT',
+    'DEPENDENCY_CONFLICT',
+    'UNSUPPORTED_SOURCE',
+    'REVISION_CONFLICT',
+    'MAP_NOT_READY',
+    'BRIDGE_DISCONNECTED',
+    'CAPABILITY_DENIED',
+    'IO_ERROR',
+    'TIMEOUT',
+    'INTERNAL',
+  ]);
   const error = createStyleToolError('NOT_FOUND', 'missing', '/layers/0');
   assert.deepEqual(error, {
     code: 'NOT_FOUND', message: 'missing', path: '/layers/0',
