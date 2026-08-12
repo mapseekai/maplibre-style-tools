@@ -52,3 +52,7 @@ export {
 export { validateStyleDocument } from './validation.js';
 export { buildStyleContext } from './context.js';
 export { searchLayers } from './search.js';
+export {
+  applyStyleTransaction,
+  finalizeStyleReplacement,
+} from './transaction.js';
