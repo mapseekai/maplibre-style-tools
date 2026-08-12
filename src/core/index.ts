@@ -128,6 +128,7 @@ export {
   validateInlineGeoJson,
 } from './geojson.js';
 export { validateStyleDocument } from './validation.js';
+export { canonicalizeJson } from './canonical-json.js';
 export { buildStyleContext } from './context.js';
 export { listSourceLayers, searchLayers } from './search.js';
 export { applyRootOperation } from './operations/root.js';
