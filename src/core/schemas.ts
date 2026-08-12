@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  JsonPrimitive, JsonValue, SetLayerPropertiesOperation, StyleOperation,
-  StyleTransaction,
+  JsonObject, JsonPrimitive, JsonValue, SetLayerPropertiesOperation,
+  StyleOperation, StyleTransaction,
 } from './types.js';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -18,9 +18,25 @@ type SanitizedIssue = {
   code: 'custom';
   message: string;
   path: (string | number)[];
-  params: { [key: string]: JsonValue };
+  params?: { [key: string]: JsonValue };
 };
-type SanitizedCheck = (value: JsonValue) => SanitizedIssue | undefined;
+type SanitizedCheck = (value: JsonValue) => SanitizedIssue[];
+type StyleLayerEnvelope = JsonObject & { id: string; type: string };
+type StyleDocumentEnvelope = JsonObject & {
+  version: 8;
+  sources: Record<string, JsonObject>;
+  layers: StyleLayerEnvelope[];
+};
+type ParsedStyleTransaction = StyleTransaction & { validate: boolean };
+
+function appendOwn<T>(values: T[], value: T): boolean {
+  return Reflect.defineProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
 
 function isJsonPrimitive(value: unknown): value is JsonPrimitive {
   return value === null
@@ -43,7 +59,7 @@ function createSnapshotValue(
 
   const target: JsonContainer = Array.isArray(value) ? [] : {};
   seen.add(value);
-  work.push({ source: value, target });
+  if (!appendOwn(work, { source: value, target })) return INVALID_SNAPSHOT;
   return target;
 }
 
@@ -172,9 +188,8 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
   }
 }
 
-function sanitizeBefore<Schema extends z.ZodType>(
-  schema: Schema,
-  check?: SanitizedCheck,
+function sanitizeBefore<Output extends JsonValue>(
+  check: SanitizedCheck = () => [],
 ) {
   return z.preprocess((input, context) => {
     const result = sanitizeJsonTree(input);
@@ -182,60 +197,124 @@ function sanitizeBefore<Schema extends z.ZodType>(
       context.addIssue({ code: 'custom', message: INVALID_JSON_MESSAGE });
       return z.NEVER;
     }
-    const issue = check?.(result.value);
-    if (issue !== undefined) {
-      context.addIssue(issue);
+    const issues = check(result.value);
+    if (issues.length > 0) {
+      for (const issue of issues) context.addIssue(issue);
       return z.NEVER;
     }
     return result.value;
-  }, schema);
+  }, z.custom<Output>());
 }
 
-const jsonValueInnerSchema = z.custom<JsonValue>();
-const jsonObjectInnerSchema = z.record(z.string(), jsonValueInnerSchema);
+function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-export const jsonValueSchema = sanitizeBefore(jsonValueInnerSchema);
+function ownValue(object: JsonObject, key: string): JsonValue | undefined {
+  return Object.getOwnPropertyDescriptor(object, key)?.value as JsonValue | undefined;
+}
 
-const styleLayerEnvelopeSchema = z.object({
-  id: z.string().min(1),
-  type: z.string().min(1),
-}).catchall(jsonValueInnerSchema);
+function issue(message: string, path: (string | number)[]): SanitizedIssue {
+  return { code: 'custom', message, path };
+}
 
-const styleDocumentInnerSchema = z.object({
-  version: z.literal(8),
-  sources: z.record(z.string(), jsonObjectInnerSchema),
-  layers: z.array(styleLayerEnvelopeSchema),
-}).catchall(jsonValueInnerSchema);
+function validateStyleDocument(value: JsonValue): SanitizedIssue[] {
+  if (!isJsonObject(value)) return [issue('Expected a style object', [])];
+  const issues: SanitizedIssue[] = [];
+  if (ownValue(value, 'version') !== 8) {
+    issues.push(issue('Expected version 8', ['version']));
+  }
+  const sources = ownValue(value, 'sources');
+  if (!isJsonObject(sources)) {
+    issues.push(issue('Expected a sources object', ['sources']));
+  } else {
+    for (const sourceId of Reflect.ownKeys(sources)) {
+      const source = ownValue(sources, sourceId as string);
+      if (!isJsonObject(source)) {
+        issues.push(issue('Expected a source object', ['sources', sourceId as string]));
+      }
+    }
+  }
+  const layers = ownValue(value, 'layers');
+  if (!Array.isArray(layers)) {
+    issues.push(issue('Expected a layers array', ['layers']));
+  } else {
+    for (let index = 0; index < layers.length; index += 1) {
+      const layer = Object.getOwnPropertyDescriptor(layers, String(index))?.value as
+        JsonValue | undefined;
+      if (!isJsonObject(layer)) {
+        issues.push(issue('Expected a layer object', ['layers', index]));
+        continue;
+      }
+      const id = ownValue(layer, 'id');
+      if (typeof id !== 'string' || id.length === 0) {
+        issues.push(issue('Expected a non-empty layer id', ['layers', index, 'id']));
+      }
+      const type = ownValue(layer, 'type');
+      if (typeof type !== 'string' || type.length === 0) {
+        issues.push(issue('Expected a non-empty layer type', ['layers', index, 'type']));
+      }
+    }
+  }
+  return issues;
+}
 
-export const styleDocumentSchema = sanitizeBefore(styleDocumentInnerSchema);
+const OPERATION_KEYS = new Set([
+  'op', 'layerId', 'paint', 'layout', 'metadata', 'minzoom', 'maxzoom',
+]);
 
-const zoomSchema = z.number().finite().min(0).max(24).nullable();
-const setLayerPropertiesOperationInnerSchema = z.object({
-  op: z.literal('setLayerProperties'),
-  layerId: z.string().min(1),
-  paint: jsonObjectInnerSchema.optional(),
-  layout: jsonObjectInnerSchema.optional(),
-  metadata: jsonObjectInnerSchema.nullable().optional(),
-  minzoom: zoomSchema.optional(),
-  maxzoom: zoomSchema.optional(),
-}).strict().refine((operation) => (
-  typeof operation.minzoom !== 'number'
-  || typeof operation.maxzoom !== 'number'
-  || operation.minzoom <= operation.maxzoom
-), {
-  message: 'minzoom must be less than or equal to maxzoom',
-  path: ['maxzoom'],
-}) satisfies z.ZodType<SetLayerPropertiesOperation>;
+function validateStyleOperation(
+  value: JsonValue,
+  path: (string | number)[] = [],
+): SanitizedIssue[] {
+  if (!isJsonObject(value)) return [issue('Expected an operation object', path)];
+  const issues: SanitizedIssue[] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    if (!OPERATION_KEYS.has(key as string)) {
+      issues.push(issue('Unrecognized operation field', [...path, key as string]));
+    }
+  }
+  if (ownValue(value, 'op') !== 'setLayerProperties') {
+    issues.push(issue('Expected setLayerProperties operation', [...path, 'op']));
+  }
+  const layerId = ownValue(value, 'layerId');
+  if (typeof layerId !== 'string' || layerId.length === 0) {
+    issues.push(issue('Expected a non-empty layerId', [...path, 'layerId']));
+  }
+  for (const key of ['paint', 'layout'] as const) {
+    const property = ownValue(value, key);
+    if (property !== undefined && !isJsonObject(property)) {
+      issues.push(issue(`Expected ${key} to be an object`, [...path, key]));
+    }
+  }
+  const metadata = ownValue(value, 'metadata');
+  if (metadata !== undefined && metadata !== null && !isJsonObject(metadata)) {
+    issues.push(issue('Expected metadata to be an object or null', [...path, 'metadata']));
+  }
+  const minzoom = ownValue(value, 'minzoom');
+  const maxzoom = ownValue(value, 'maxzoom');
+  for (const [key, zoom] of [['minzoom', minzoom], ['maxzoom', maxzoom]] as const) {
+    if (zoom !== undefined && zoom !== null
+      && (typeof zoom !== 'number' || zoom < 0 || zoom > 24)) {
+      issues.push(issue(`Expected ${key} between 0 and 24`, [...path, key]));
+    }
+  }
+  if (typeof minzoom === 'number' && typeof maxzoom === 'number' && minzoom > maxzoom) {
+    issues.push(issue(
+      'minzoom must be less than or equal to maxzoom', [...path, 'maxzoom'],
+    ));
+  }
+  return issues;
+}
 
-export const setLayerPropertiesOperationSchema = sanitizeBefore(
-  setLayerPropertiesOperationInnerSchema,
+export const jsonValueSchema = sanitizeBefore<JsonValue>();
+export const styleDocumentSchema = sanitizeBefore<StyleDocumentEnvelope>(
+  validateStyleDocument,
 );
-
-const styleOperationInnerSchema = z.discriminatedUnion('op', [
-  setLayerPropertiesOperationInnerSchema,
-]) satisfies z.ZodType<StyleOperation>;
-
-export const styleOperationSchema = sanitizeBefore(styleOperationInnerSchema);
+export const setLayerPropertiesOperationSchema = sanitizeBefore<
+  SetLayerPropertiesOperation
+>(validateStyleOperation);
+export const styleOperationSchema = sanitizeBefore<StyleOperation>(validateStyleOperation);
 
 export function createStyleTransactionSchema(
   maxOperations = DEFAULT_MAX_OPERATIONS,
@@ -244,17 +323,19 @@ export function createStyleTransactionSchema(
     throw new RangeError('maxOperations must be a positive safe integer');
   }
 
-  const transactionInnerSchema = z.object({
-    operations: z.array(styleOperationInnerSchema).min(1),
-    validate: z.boolean().default(true),
-  }).strict() satisfies z.ZodType<StyleTransaction>;
-
-  return sanitizeBefore(transactionInnerSchema, (value) => {
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const operationsDescriptor = Object.getOwnPropertyDescriptor(value, 'operations');
-      const operations = operationsDescriptor?.value;
-      if (Array.isArray(operations) && operations.length > maxOperations) {
-        return {
+  return sanitizeBefore<ParsedStyleTransaction>((value) => {
+    if (!isJsonObject(value)) return [issue('Expected a transaction object', [])];
+    const issues: SanitizedIssue[] = [];
+    for (const key of Reflect.ownKeys(value)) {
+      if (key !== 'operations' && key !== 'validate') {
+        issues.push(issue('Unrecognized transaction field', [key as string]));
+      }
+    }
+    const operations = ownValue(value, 'operations');
+    if (!Array.isArray(operations)) {
+      issues.push(issue('Expected an operations array', ['operations']));
+    } else if (operations.length > maxOperations) {
+      return [{
           code: 'custom',
           message: 'Too many operations',
           path: ['operations'],
@@ -263,10 +344,28 @@ export function createStyleTransactionSchema(
             maxOperations,
             actualOperations: operations.length,
           },
-        };
+      }];
+    } else if (operations.length === 0) {
+      issues.push(issue('Expected at least one operation', ['operations']));
+    } else {
+      for (let index = 0; index < operations.length; index += 1) {
+        const operationValue = Object.getOwnPropertyDescriptor(
+          operations, String(index),
+        )?.value as JsonValue;
+        issues.push(...validateStyleOperation(operationValue, ['operations', index]));
       }
     }
-    return undefined;
+    const validate = ownValue(value, 'validate');
+    if (validate === undefined) {
+      if (!Reflect.defineProperty(value, 'validate', {
+        configurable: true, enumerable: true, value: true, writable: true,
+      })) {
+        issues.push(issue('Could not default validate', ['validate']));
+      }
+    } else if (typeof validate !== 'boolean') {
+      issues.push(issue('Expected validate to be boolean', ['validate']));
+    }
+    return issues;
   });
 }
 

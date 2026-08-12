@@ -329,3 +329,147 @@ test('defines snapshot values without invoking inherited prototype setters', () 
     }
   }
 });
+
+test('styleDocumentSchema preserves extension fields without invoking inherited setters', () => {
+  const key = 'customStyleExtension';
+  const input = {
+    version: 8, sources: {}, layers: [], [key]: { enabled: true },
+  };
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  let setterCalls = 0;
+  let result: ReturnType<typeof styleDocumentSchema.safeParse> | undefined;
+
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true,
+      set() { setterCalls += 1; throw new Error('must not run'); },
+    });
+    assert.doesNotThrow(() => {
+      result = styleDocumentSchema.safeParse(input);
+    });
+    assert.equal(setterCalls, 0);
+    if (result === undefined || !result.success) {
+      assert.fail('expected the style document to parse');
+    }
+    assert.equal(Object.hasOwn(result.data, key), true);
+    assert.deepEqual(result.data[key], { enabled: true });
+  } finally {
+    if (originalDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, key);
+    } else {
+      Object.defineProperty(Object.prototype, key, originalDescriptor);
+    }
+  }
+
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, key), originalDescriptor,
+  );
+});
+
+test('operation schemas preserve paint without invoking inherited setters', () => {
+  const key = 'paint';
+  const input = {
+    op: 'setLayerProperties' as const,
+    layerId: 'roads',
+    paint: { 'line-color': '#fff' },
+  };
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  let setterCalls = 0;
+  let directResult: ReturnType<
+    typeof setLayerPropertiesOperationSchema.safeParse
+  > | undefined;
+  let unionResult: ReturnType<typeof styleOperationSchema.safeParse> | undefined;
+
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true,
+      set() { setterCalls += 1; throw new Error('must not run'); },
+    });
+    assert.doesNotThrow(() => {
+      directResult = setLayerPropertiesOperationSchema.safeParse(input);
+      unionResult = styleOperationSchema.safeParse(input);
+    });
+    assert.equal(setterCalls, 0);
+    if (directResult === undefined || !directResult.success) {
+      assert.fail('expected the direct operation schema to parse');
+    }
+    if (unionResult === undefined || !unionResult.success) {
+      assert.fail('expected the operation union schema to parse');
+    }
+    assert.equal(Object.hasOwn(directResult.data, key), true);
+    assert.equal(Object.hasOwn(unionResult.data, key), true);
+    assert.deepEqual(directResult.data.paint, { 'line-color': '#fff' });
+    assert.deepEqual(unionResult.data.paint, { 'line-color': '#fff' });
+  } finally {
+    if (originalDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, key);
+    } else {
+      Object.defineProperty(Object.prototype, key, originalDescriptor);
+    }
+  }
+
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, key), originalDescriptor,
+  );
+});
+
+test('transaction schemas preserve array indexes without invoking inherited setters', () => {
+  const index = 777;
+  const key = String(index);
+  const operations = Array.from({ length: index + 1 }, (_, operationIndex) => (
+    operation(operationIndex)
+  ));
+  const input = { operations };
+  const configuredSchema = createStyleTransactionSchema(index + 1);
+  const objectKey = 'operations';
+  const originalObjectDescriptor = Object.getOwnPropertyDescriptor(
+    Object.prototype, objectKey,
+  );
+  const originalArrayDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  let setterCalls = 0;
+  let defaultResult: ReturnType<typeof styleTransactionSchema.safeParse> | undefined;
+  let result: ReturnType<typeof configuredSchema.safeParse> | undefined;
+
+  try {
+    Object.defineProperty(Object.prototype, objectKey, {
+      configurable: true,
+      set() { setterCalls += 1; throw new Error('must not run'); },
+    });
+    Object.defineProperty(Array.prototype, key, {
+      configurable: true,
+      set() { setterCalls += 1; throw new Error('must not run'); },
+    });
+    assert.doesNotThrow(() => {
+      defaultResult = styleTransactionSchema.safeParse({ operations: [operation()] });
+      result = configuredSchema.safeParse(input);
+    });
+    assert.equal(setterCalls, 0);
+    if (defaultResult === undefined || !defaultResult.success) {
+      assert.fail('expected the default transaction schema to parse');
+    }
+    if (result === undefined || !result.success) {
+      assert.fail('expected the configured transaction schema to parse');
+    }
+    assert.equal(Object.hasOwn(defaultResult.data, objectKey), true);
+    assert.equal(Object.hasOwn(result.data.operations, key), true);
+    assert.deepEqual(result.data.operations[index], operation(index));
+  } finally {
+    if (originalObjectDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, objectKey);
+    } else {
+      Object.defineProperty(Object.prototype, objectKey, originalObjectDescriptor);
+    }
+    if (originalArrayDescriptor === undefined) {
+      Reflect.deleteProperty(Array.prototype, key);
+    } else {
+      Object.defineProperty(Array.prototype, key, originalArrayDescriptor);
+    }
+  }
+
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, objectKey), originalObjectDescriptor,
+  );
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Array.prototype, key), originalArrayDescriptor,
+  );
+});
