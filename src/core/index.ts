@@ -1,8 +1,12 @@
 export type {
   AddGeoJsonLayerOperation,
+  AddLayerDefinitionOperation,
   AddLayerFromSourceOperation,
   AddSourceOperation,
   CoreExecutionLimits,
+  CompatibilityStyleOperation,
+  DeepMergeLayerDefinitionOperation,
+  DeepMergeSourceDefinitionOperation,
   DuplicateLayerOperation,
   DuplicateSourceOperation,
   GeoJsonBbox,
@@ -51,6 +55,9 @@ export type {
   Placement,
   RemoveLayerOperation,
   RemoveSourceOperation,
+  ReplaceLayerDefinitionOperation,
+  ReplaceRootPropertyOperation,
+  ReplaceSourceDefinitionOperation,
   RenameSourceOperation,
   ReorderLayersOperation,
   SetGeoJsonSourceFilterOperation,
@@ -58,6 +65,7 @@ export type {
   SetLayerFilterOperation,
   SetLayerPropertiesOperation,
   SetStyleRootPropertiesOperation,
+  ShallowPatchRootPropertyOperation,
   StyleDiffEntry,
   StyleDiffTarget,
   StyleDocument,
@@ -94,11 +102,14 @@ export {
 } from './utf8.js';
 export {
   addGeoJsonLayerOperationSchema,
+  addLayerDefinitionOperationSchema,
   addLayerFromSourceOperationSchema,
   addSourceOperationSchema,
   duplicateLayerOperationSchema,
   createStyleTransactionSchema,
   duplicateSourceOperationSchema,
+  deepMergeLayerDefinitionOperationSchema,
+  deepMergeSourceDefinitionOperationSchema,
   geoJsonAnalysisInputSchema,
   geoJsonAnalysisOptionsSchema,
   geoJsonLimitsSchema,
@@ -109,6 +120,9 @@ export {
   patchSourceOperationSchema,
   removeLayerOperationSchema,
   removeSourceOperationSchema,
+  replaceLayerDefinitionOperationSchema,
+  replaceRootPropertyOperationSchema,
+  replaceSourceDefinitionOperationSchema,
   renameSourceOperationSchema,
   reorderLayersOperationSchema,
   setGeoJsonSourceFilterOperationSchema,
@@ -116,6 +130,7 @@ export {
   setLayerFilterOperationSchema,
   setLayerPropertiesOperationSchema,
   setStyleRootPropertiesOperationSchema,
+  shallowPatchRootPropertyOperationSchema,
   styleDocumentSchema,
   styleOperationSchema,
   styleTransactionSchema,
@@ -132,6 +147,10 @@ export { canonicalizeJson } from './canonical-json.js';
 export { buildStyleContext } from './context.js';
 export { listSourceLayers, searchLayers } from './search.js';
 export { applyRootOperation } from './operations/root.js';
+export {
+  applyCompatibilityStyleOperation,
+  applyValidatedCompatibilityEdit,
+} from './operations/compatibility.js';
 export { applyLayerOperation } from './operations/layers.js';
 export { applySourceOperation } from './operations/sources.js';
 export {

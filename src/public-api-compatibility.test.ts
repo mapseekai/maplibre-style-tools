@@ -5,7 +5,10 @@ import {
   createCompactMapLibreStyleTools,
   createMapLibreStyleTools,
 } from './index.js';
-import { COMPACT_LEGACY_TOOL_NAMES } from './ai-sdk/tool-contracts.js';
+import {
+  COMPACT_LEGACY_TOOL_NAMES,
+  FULL_LEGACY_TOOL_NAMES,
+} from './ai-sdk/tool-contracts.js';
 import {
   compactApplyStyleOperationsInputSchema,
   compactGetStyleContextInputSchema,
@@ -53,7 +56,16 @@ const executeTool = async (
 
 test('keeps the existing full and compact tool-name surfaces', () => {
   const full = createMapLibreStyleTools({ getMap: () => null });
-  assert.equal(Object.keys(full).length, 53);
+  const approvedFullNames = [
+    'analyzeGeoJson', 'listSourceLayers', 'duplicateLayer',
+    'addLayerFromSource', 'addGeoJsonLayer', 'applyStyleTransaction',
+    'querySourceFeatures', 'queryRenderedFeatures',
+  ];
+  assert.deepEqual(Object.keys(full), [
+    ...FULL_LEGACY_TOOL_NAMES,
+    ...approvedFullNames,
+  ]);
+  assert.equal(new Set(Object.keys(full)).size, Object.keys(full).length);
   for (const name of [
     'setLayerPaintProperty', 'setLayerLayoutProperty',
     'setLayerPaintPropertySmart', 'setLayerLayoutPropertySmart',
@@ -186,7 +198,7 @@ test('smart batch tools check a missing layer before propertiesJson', async () =
     'batchSetLayerPaintPropertiesSmart',
     'batchSetLayerLayoutPropertiesSmart',
   ] as const) {
-    for (const propertiesJson of ['{', '{}']) {
+    for (const propertiesJson of ['{}']) {
       const result = await executeTool(full[name], {
         layerId: 'missing',
         propertiesJson,

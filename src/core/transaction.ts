@@ -12,6 +12,7 @@ import {
 import { applyRootOperation } from './operations/root.js';
 import { cloneStrictJsonValue } from './operations/shared.js';
 import { applySourceOperation } from './operations/sources.js';
+import { applyCompatibilityStyleOperation } from './operations/compatibility.js';
 import { createStyleTransactionSchema } from './schemas.js';
 import type {
   CoreExecutionLimits,
@@ -336,7 +337,14 @@ type HandledStyleOperation = Extract<
       | 'renameSource'
       | 'removeSource'
       | 'patchSource'
-      | 'setGeoJsonData';
+      | 'setGeoJsonData'
+      | 'addLayerDefinition'
+      | 'deepMergeLayerDefinition'
+      | 'replaceLayerDefinition'
+      | 'deepMergeSourceDefinition'
+      | 'replaceSourceDefinition'
+      | 'replaceRootProperty'
+      | 'shallowPatchRootProperty';
   }
 >;
 type UnhandledStyleOperation = Exclude<StyleOperation, HandledStyleOperation>;
@@ -370,6 +378,14 @@ function applyOperation(
       case 'patchSource':
       case 'setGeoJsonData':
         return applySourceOperation(style, operation, context);
+      case 'addLayerDefinition':
+      case 'deepMergeLayerDefinition':
+      case 'replaceLayerDefinition':
+      case 'deepMergeSourceDefinition':
+      case 'replaceSourceDefinition':
+      case 'replaceRootProperty':
+      case 'shallowPatchRootProperty':
+        return applyCompatibilityStyleOperation(style, operation, context);
       default:
         return assertNever(operation as UnhandledStyleOperation);
     }

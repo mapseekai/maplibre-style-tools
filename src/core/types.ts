@@ -340,13 +340,57 @@ export type SourceOperation =
   | RemoveSourceOperation
   | PatchSourceOperation
   | SetGeoJsonDataOperation;
+export type AddLayerDefinitionOperation = {
+  op: 'addLayerDefinition';
+  layer: JsonObject;
+  beforeId?: string;
+};
+export type DeepMergeLayerDefinitionOperation = {
+  op: 'deepMergeLayerDefinition';
+  layerId: string;
+  patch: JsonObject;
+};
+export type ReplaceLayerDefinitionOperation = {
+  op: 'replaceLayerDefinition';
+  layerId: string;
+  layer: JsonObject;
+};
+export type DeepMergeSourceDefinitionOperation = {
+  op: 'deepMergeSourceDefinition';
+  sourceId: string;
+  patch: JsonObject;
+};
+export type ReplaceSourceDefinitionOperation = {
+  op: 'replaceSourceDefinition';
+  sourceId: string;
+  source: JsonObject;
+};
+export type ReplaceRootPropertyOperation = {
+  op: 'replaceRootProperty';
+  property: 'metadata' | 'transition' | 'sky' | 'projection' | 'terrain';
+  value: JsonObject | null;
+};
+export type ShallowPatchRootPropertyOperation = {
+  op: 'shallowPatchRootProperty';
+  property: 'light';
+  patch: JsonObject;
+};
+export type CompatibilityStyleOperation =
+  | AddLayerDefinitionOperation
+  | DeepMergeLayerDefinitionOperation
+  | ReplaceLayerDefinitionOperation
+  | DeepMergeSourceDefinitionOperation
+  | ReplaceSourceDefinitionOperation
+  | ReplaceRootPropertyOperation
+  | ShallowPatchRootPropertyOperation;
 export type StyleOperation =
   | SetLayerPropertiesOperation
   | LayerLifecycleOperation
   | SetStyleRootPropertiesOperation
   | SetLayerFilterOperation
   | SetGeoJsonSourceFilterOperation
-  | SourceOperation;
+  | SourceOperation
+  | CompatibilityStyleOperation;
 export type StyleTransaction = {
   operations: StyleOperation[];
   validate?: boolean;

@@ -7,7 +7,6 @@ import {
   analyzeGeoJson,
   applyStyleTransaction,
   buildStyleContext,
-  canonicalizeJson,
   createStyleToolError,
   jsonUtf8ByteLength,
   listSourceLayers,
@@ -37,6 +36,7 @@ import { diffStyleDocuments } from '../core/diff.js';
 import { applySetLayerFilter } from '../core/operations/filters.js';
 import { applySetLayerProperties } from '../core/operations/layers.js';
 import { applyTransactionToMap } from '../adapters/maplibre/index.js';
+import { createLegacyMapLifecycleFacade } from '../adapters/maplibre/map-adapter.js';
 import type { MapStyleApplyResult } from '../adapters/maplibre/index.js';
 import { normalizeLegacyOperations, parseStrictJson } from './compatibility.js';
 import type { ParseResult } from './compatibility.js';
@@ -175,65 +175,6 @@ function normalizeCompactLegacyOperations(
       operations: parsed.value as unknown as LegacyStyleOperation[],
     },
   };
-}
-
-function hasMapLifecycle(map: MapLibreMap): boolean {
-  return typeof map.on === 'function'
-    && typeof map.off === 'function'
-    && typeof map.isStyleLoaded === 'function';
-}
-
-function legacyLifecycleMap(map: MapLibreMap): MapLibreMap {
-  if (hasMapLifecycle(map)) return map;
-  let loaded = true;
-  const listeners = new Map<string, Set<(event: unknown) => void>>();
-  const emit = (type: string, error?: StyleToolError): void => {
-    const event = error === undefined ? { type } : { type, error };
-    for (const listener of [...(listeners.get(type) ?? [])]) listener(event);
-  };
-  const wrapper = {
-    getStyle: () => map.getStyle(),
-    isStyleLoaded: () => loaded,
-    on: (type: string, listener: (event: unknown) => void) => {
-      let registered = listeners.get(type);
-      if (registered === undefined) {
-        registered = new Set();
-        listeners.set(type, registered);
-      }
-      registered.add(listener);
-      return { unsubscribe: () => { registered!.delete(listener); } };
-    },
-    off: (type: string, listener: (event: unknown) => void) => {
-      listeners.get(type)?.delete(listener);
-      return wrapper;
-    },
-    setStyle: (style: unknown, options?: unknown) => {
-      loaded = false;
-      const expected = validateStyleDocument(style);
-      if (!expected.ok) {
-        queueMicrotask(() => emit('error', expected.errors[0]
-          ?? createStyleToolError('STYLE_INVALID', 'MapLibre style validation failed.')));
-        return wrapper;
-      }
-      const expectedCanonical = canonicalizeJson(expected.style);
-      map.setStyle(style as never, options as never);
-      queueMicrotask(() => {
-        const fresh = readStyle(map);
-        if (fresh.ok && canonicalizeJson(fresh.style) === expectedCanonical) {
-          loaded = true;
-          emit('style.load');
-          return;
-        }
-        emit('error', fresh.ok
-          ? createStyleToolError(
-              'INTERNAL', 'Map style application could not be verified.',
-            )
-          : fresh.error);
-      });
-      return wrapper;
-    },
-  } as unknown as MapLibreMap;
-  return wrapper;
 }
 
 function inspectLayer(
@@ -809,7 +750,7 @@ export const createCompactMapLibreStyleTools = <TStyle = unknown>({
 
         let lifecycleMap: MapLibreMap;
         try {
-          lifecycleMap = legacyLifecycleMap(map);
+          lifecycleMap = createLegacyMapLifecycleFacade(map);
         } catch {
           return failure(createStyleToolError(
             'MAP_NOT_READY', 'Current map style is unavailable.',

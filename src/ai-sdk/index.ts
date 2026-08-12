@@ -27,6 +27,14 @@ export {
   createCompactMapLibreStyleTools,
   COMPACT_LEGACY_TOOL_NAMES,
 } from './compact-tools.js';
+export { createMapLibreStyleTools } from './full-tools.js';
+export type {
+  CreateMapLibreStyleToolsOptions,
+  MapAccessor,
+  StyleAccessor,
+  ToolCallResult,
+} from './full-tools.js';
+export * from './schemas.js';
 export type {
   CompactMapAccessor,
   CompactToolContext,

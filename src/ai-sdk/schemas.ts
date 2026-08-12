@@ -12,6 +12,10 @@ import {
   parseJsonOrRawString,
   parseStrictJson,
 } from './compatibility.js';
+import {
+  renderedFeatureQueryInputSchema,
+  sourceFeatureQueryInputSchema,
+} from '../adapters/maplibre/index.js';
 
 function boundedTextSchema(
   label: string,
@@ -198,3 +202,139 @@ export const compactApplyStyleTransactionInputSchema = descriptorSafeInputSchema
   dryRun: z.boolean().default(false),
   diff: z.boolean().default(true),
 }).strict());
+
+const fullSchema = <Shape extends z.ZodRawShape>(shape: Shape) =>
+  descriptorSafeInputSchema(z.object(shape).strict());
+const legacyDiff = z.boolean().default(true);
+const legacyLimit = z.number().min(1).max(300).default(120);
+const layerId = z.string();
+const sourceId = z.string();
+const property = z.string();
+const emptyShape = {};
+
+export const fullListAllLayersInputSchema = fullSchema({ limit: legacyLimit });
+export const fullListAllSourcesInputSchema = fullSchema({ limit: legacyLimit });
+export const fullInspectLayerStyleInputSchema = fullSchema({ layerId });
+export const fullInspectSourceInputSchema = fullSchema({ sourceId });
+export const fullSetLayerPaintPropertyInputSchema = fullSchema({
+  layerId, property, valueJson: jsonOrRawStringTextSchema,
+});
+export const fullSetLayerLayoutPropertyInputSchema = fullSchema({
+  layerId, property, valueJson: jsonOrRawStringTextSchema,
+});
+export const fullSetLayerPaintPropertySmartInputSchema = fullSchema({
+  layerId, property, valueJson: jsonOrRawStringTextSchema,
+});
+export const fullSetLayerLayoutPropertySmartInputSchema = fullSchema({
+  layerId, property, valueJson: jsonOrRawStringTextSchema,
+});
+export const fullBatchSetLayerPaintPropertiesSmartInputSchema = fullSchema({
+  layerId, propertiesJson: strictJsonTextSchema,
+});
+export const fullBatchSetLayerLayoutPropertiesSmartInputSchema = fullSchema({
+  layerId, propertiesJson: strictJsonTextSchema,
+});
+export const fullBatchSetLayerPaintPropertiesInputSchema = fullSchema({
+  layerId, propertiesJson: strictJsonTextSchema,
+});
+export const fullBatchSetLayerLayoutPropertiesInputSchema = fullSchema({
+  layerId, propertiesJson: strictJsonTextSchema,
+});
+export const fullClearLayerPaintPropertyInputSchema = fullSchema({ layerId, property });
+export const fullClearLayerLayoutPropertyInputSchema = fullSchema({ layerId, property });
+export const fullSetLayerFilterInputSchema = fullSchema({
+  layerId, filterJson: filterTextSchema,
+});
+export const fullSetLayerZoomRangeInputSchema = fullSchema({
+  layerId, minzoom: z.number().min(0).max(24), maxzoom: z.number().min(0).max(24),
+});
+export const fullSetLayerVisibilityInputSchema = fullSchema({
+  layerId, visibility: z.enum(['visible', 'none']),
+});
+export const fullAddLayerInputSchema = fullSchema({
+  layerJson: strictJsonTextSchema, beforeId: z.string().optional(),
+});
+export const fullMoveLayerInputSchema = fullSchema({
+  layerId, beforeId: z.string().optional(),
+});
+export const fullRemoveLayerInputSchema = fullSchema({ layerId });
+export const fullPatchLayerDefinitionInputSchema = fullSchema({
+  layerId, patchJson: strictJsonTextSchema, diff: legacyDiff,
+});
+export const fullReplaceLayerDefinitionInputSchema = fullSchema({
+  layerId, layerJson: strictJsonTextSchema, diff: legacyDiff,
+});
+export const fullAddSourceInputSchema = fullSchema({
+  sourceId, sourceJson: strictJsonTextSchema,
+});
+export const fullRemoveSourceInputSchema = fullSchema({ sourceId });
+export const fullUpdateGeoJsonSourceDataInputSchema = fullSchema({
+  sourceId, dataJson: jsonOrRawStringTextSchema,
+  method: z.enum(['setData', 'updateData']).default('setData'),
+});
+export const fullSetGeoJsonClusterOptionsInputSchema = fullSchema({
+  sourceId, optionsJson: strictJsonTextSchema,
+});
+export const fullSetSourceTileLodParamsInputSchema = fullSchema({
+  maxZoomLevelsOnScreen: z.number().positive(),
+  tileCountMaxMinRatio: z.number().positive(), sourceId: z.string().optional(),
+});
+export const fullPatchSourceDefinitionInputSchema = fullSchema({
+  sourceId, patchJson: strictJsonTextSchema, diff: legacyDiff,
+});
+export const fullReplaceSourceDefinitionInputSchema = fullSchema({
+  sourceId, sourceJson: strictJsonTextSchema, diff: legacyDiff,
+});
+export const fullSetStyleJsonOrUrlInputSchema = fullSchema({
+  styleJsonOrUrl: styleJsonOrUrlTextSchema, diff: legacyDiff,
+});
+export const fullInspectRootStyleInputSchema = fullSchema(emptyShape);
+export const fullSetStyleNameInputSchema = fullSchema({ name: z.string(), diff: legacyDiff });
+export const fullSetStyleMetadataInputSchema = fullSchema({
+  metadataJson: strictJsonTextSchema, diff: legacyDiff,
+});
+export const fullSetStyleTransitionInputSchema = fullSchema({
+  transitionJson: strictJsonTextSchema, diff: legacyDiff,
+});
+export const fullSetStyleCameraDefaultsInputSchema = fullSchema({
+  centerJson: strictJsonTextSchema.optional(), zoom: z.number().optional(),
+  bearing: z.number().optional(), pitch: z.number().optional(),
+  roll: z.number().optional(), centerAltitude: z.number().optional(),
+  diff: legacyDiff,
+});
+export const fullValidateStyleJsonInputSchema = fullSchema({
+  styleJson: strictJsonTextSchema,
+});
+export const fullValidateCurrentMapStyleInputSchema = fullSchema(emptyShape);
+export const fullSetMapLightInputSchema = fullSchema({ lightJson: strictJsonTextSchema });
+export const fullSetMapSkyInputSchema = fullSchema({ skyJson: strictJsonTextSchema });
+export const fullSetMapProjectionInputSchema = fullSchema({
+  projectionJson: strictJsonTextSchema,
+});
+export const fullSetMapTerrainInputSchema = fullSchema({ terrainJson: strictJsonTextSchema });
+export const fullSetMapGlyphsInputSchema = fullSchema({ glyphsUrlJson: strictJsonTextSchema });
+export const fullSetMapSpriteInputSchema = fullSchema({ spriteUrlJson: strictJsonTextSchema });
+export const fullListSpritesInputSchema = fullSchema(emptyShape);
+export const fullAddSpriteInputSchema = fullSchema({
+  spriteId: z.string(), url: z.string().url(), overwrite: z.boolean().default(false),
+});
+export const fullRemoveSpriteInputSchema = fullSchema({ spriteId: z.string() });
+export const fullSetFeatureStateInputSchema = fullSchema({
+  targetJson: strictJsonTextSchema, stateJson: strictJsonTextSchema,
+});
+export const fullRemoveFeatureStateInputSchema = fullSchema({
+  targetJson: strictJsonTextSchema, key: z.string().optional(),
+});
+export const fullSetGlobalStatePropertyInputSchema = fullSchema({
+  propertyName: z.string(), valueJson: strictJsonTextSchema,
+});
+export const fullListImagesInputSchema = fullSchema({
+  limit: z.number().min(1).max(500).default(300),
+});
+export const fullAddImageFromUrlInputSchema = fullSchema({
+  imageId: z.string(), url: z.string().url(), overwrite: z.boolean().default(false),
+});
+export const fullRemoveImageInputSchema = fullSchema({ imageId: z.string() });
+export const fullGetLayerCountInputSchema = fullSchema(emptyShape);
+export const fullQuerySourceFeaturesInputSchema = sourceFeatureQueryInputSchema;
+export const fullQueryRenderedFeaturesInputSchema = renderedFeatureQueryInputSchema;

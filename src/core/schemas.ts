@@ -3,12 +3,16 @@ import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
   AddGeoJsonLayerOperation, AddLayerFromSourceOperation, AddSourceOperation,
+  AddLayerDefinitionOperation, CompatibilityStyleOperation,
+  DeepMergeLayerDefinitionOperation, DeepMergeSourceDefinitionOperation,
   DuplicateLayerOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
   InlineGeoJson, JsonObject, JsonPrimitive, JsonValue,
   LayerLifecycleOperation, ListSourceLayersOptions,
   MoveLayerOperation, PatchSourceOperation,
   RemoveLayerOperation, RemoveSourceOperation, RenameSourceOperation,
+  ReplaceLayerDefinitionOperation, ReplaceRootPropertyOperation,
+  ReplaceSourceDefinitionOperation, ShallowPatchRootPropertyOperation,
   ReorderLayersOperation,
   SetGeoJsonSourceFilterOperation,
   SetGeoJsonDataOperation,
@@ -355,11 +359,66 @@ const ADD_GEOJSON_LAYER_OPERATION_KEYS = new Set([
   'paint', 'layout', 'filter', 'minzoom', 'maxzoom', 'metadata',
   'beforeId', 'afterId',
 ]);
+const ADD_LAYER_DEFINITION_OPERATION_KEYS = new Set(['op', 'layer', 'beforeId']);
+const DEEP_MERGE_LAYER_DEFINITION_OPERATION_KEYS = new Set(['op', 'layerId', 'patch']);
+const REPLACE_LAYER_DEFINITION_OPERATION_KEYS = new Set(['op', 'layerId', 'layer']);
+const DEEP_MERGE_SOURCE_DEFINITION_OPERATION_KEYS = new Set(['op', 'sourceId', 'patch']);
+const REPLACE_SOURCE_DEFINITION_OPERATION_KEYS = new Set(['op', 'sourceId', 'source']);
+const REPLACE_ROOT_PROPERTY_OPERATION_KEYS = new Set(['op', 'property', 'value']);
+const SHALLOW_PATCH_ROOT_PROPERTY_OPERATION_KEYS = new Set(['op', 'property', 'patch']);
 const GEOJSON_LAYER_TYPE_VALUES = [
   'fill', 'line', 'symbol', 'circle', 'heatmap', 'fill-extrusion',
 ] as const;
 const GEOJSON_LAYER_TYPES = new Set<string>(GEOJSON_LAYER_TYPE_VALUES);
 const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
+const REPLACE_ROOT_PROPERTIES = new Set([
+  'metadata', 'transition', 'sky', 'projection', 'terrain',
+]);
+
+function fallbackCompatibilityOperation(
+  value: JsonValue,
+  expectedOperation?: CompatibilityStyleOperation['op'],
+): JsonValue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  if (expectedOperation !== undefined && operation !== expectedOperation) return undefined;
+  switch (operation) {
+    case 'addLayerDefinition': {
+      const beforeId = ownValue(value, 'beforeId');
+      return hasOnlyKeys(value, ADD_LAYER_DEFINITION_OPERATION_KEYS)
+        && isJsonObject(ownValue(value, 'layer'))
+        && (beforeId === undefined || validLayerLifecycleId(beforeId)) ? value : undefined;
+    }
+    case 'deepMergeLayerDefinition':
+      return hasOnlyKeys(value, DEEP_MERGE_LAYER_DEFINITION_OPERATION_KEYS)
+        && validLayerLifecycleId(ownValue(value, 'layerId'))
+        && isJsonObject(ownValue(value, 'patch')) ? value : undefined;
+    case 'replaceLayerDefinition':
+      return hasOnlyKeys(value, REPLACE_LAYER_DEFINITION_OPERATION_KEYS)
+        && validLayerLifecycleId(ownValue(value, 'layerId'))
+        && isJsonObject(ownValue(value, 'layer')) ? value : undefined;
+    case 'deepMergeSourceDefinition':
+      return hasOnlyKeys(value, DEEP_MERGE_SOURCE_DEFINITION_OPERATION_KEYS)
+        && validSourceId(ownValue(value, 'sourceId'))
+        && isJsonObject(ownValue(value, 'patch')) ? value : undefined;
+    case 'replaceSourceDefinition':
+      return hasOnlyKeys(value, REPLACE_SOURCE_DEFINITION_OPERATION_KEYS)
+        && validSourceId(ownValue(value, 'sourceId'))
+        && isJsonObject(ownValue(value, 'source')) ? value : undefined;
+    case 'replaceRootProperty': {
+      const rootValue = ownValue(value, 'value');
+      return hasOnlyKeys(value, REPLACE_ROOT_PROPERTY_OPERATION_KEYS)
+        && REPLACE_ROOT_PROPERTIES.has(ownValue(value, 'property') as string)
+        && (rootValue === null || isJsonObject(rootValue)) ? value : undefined;
+    }
+    case 'shallowPatchRootProperty':
+      return hasOnlyKeys(value, SHALLOW_PATCH_ROOT_PROPERTY_OPERATION_KEYS)
+        && ownValue(value, 'property') === 'light'
+        && isJsonObject(ownValue(value, 'patch')) ? value : undefined;
+    default:
+      return undefined;
+  }
+}
 
 function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
   if (!isJsonObject(value) || !hasOnlyKeys(value, OPERATION_KEYS)) return undefined;
@@ -1062,7 +1121,8 @@ function fallbackOperation(value: JsonValue): JsonValue | undefined {
     ?? fallbackFilterOperation(value, 'setLayerFilter')
     ?? fallbackFilterOperation(value, 'setGeoJsonSourceFilter')
     ?? fallbackSourceOperation(value)
-    ?? fallbackLayerLifecycleOperation(value);
+    ?? fallbackLayerLifecycleOperation(value)
+    ?? fallbackCompatibilityOperation(value);
 }
 
 function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
@@ -1114,6 +1174,13 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     || operation === 'removeLayer'
     || operation === 'addLayerFromSource'
     || operation === 'addGeoJsonLayer'
+    || operation === 'addLayerDefinition'
+    || operation === 'deepMergeLayerDefinition'
+    || operation === 'replaceLayerDefinition'
+    || operation === 'deepMergeSourceDefinition'
+    || operation === 'replaceSourceDefinition'
+    || operation === 'replaceRootProperty'
+    || operation === 'shallowPatchRootProperty'
     ? undefined
     : fallbackSetLayerOperationIssue(value);
 }
@@ -2064,6 +2131,90 @@ export const addGeoJsonLayerOperationSchema = sanitizeBefore(
   (value) => fallbackLayerLifecycleOperationIssue(value, 'addGeoJsonLayer'),
 );
 
+const addLayerDefinitionOperationInnerSchema = z.object({
+  op: z.literal('addLayerDefinition'),
+  layer: jsonObjectInnerSchema,
+  beforeId: nonEmptyStringSchema.optional(),
+}).strict() satisfies z.ZodType<AddLayerDefinitionOperation>;
+
+export const addLayerDefinitionOperationSchema = sanitizeBefore(
+  addLayerDefinitionOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'addLayerDefinition'),
+);
+
+const deepMergeLayerDefinitionOperationInnerSchema = z.object({
+  op: z.literal('deepMergeLayerDefinition'),
+  layerId: nonEmptyStringSchema,
+  patch: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<DeepMergeLayerDefinitionOperation>;
+
+export const deepMergeLayerDefinitionOperationSchema = sanitizeBefore(
+  deepMergeLayerDefinitionOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'deepMergeLayerDefinition'),
+);
+
+const replaceLayerDefinitionOperationInnerSchema = z.object({
+  op: z.literal('replaceLayerDefinition'),
+  layerId: nonEmptyStringSchema,
+  layer: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<ReplaceLayerDefinitionOperation>;
+
+export const replaceLayerDefinitionOperationSchema = sanitizeBefore(
+  replaceLayerDefinitionOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'replaceLayerDefinition'),
+);
+
+const deepMergeSourceDefinitionOperationInnerSchema = z.object({
+  op: z.literal('deepMergeSourceDefinition'),
+  sourceId: sourceIdSchema,
+  patch: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<DeepMergeSourceDefinitionOperation>;
+
+export const deepMergeSourceDefinitionOperationSchema = sanitizeBefore(
+  deepMergeSourceDefinitionOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'deepMergeSourceDefinition'),
+);
+
+const replaceSourceDefinitionOperationInnerSchema = z.object({
+  op: z.literal('replaceSourceDefinition'),
+  sourceId: sourceIdSchema,
+  source: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<ReplaceSourceDefinitionOperation>;
+
+export const replaceSourceDefinitionOperationSchema = sanitizeBefore(
+  replaceSourceDefinitionOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'replaceSourceDefinition'),
+);
+
+const replaceRootPropertyOperationInnerSchema = z.object({
+  op: z.literal('replaceRootProperty'),
+  property: z.enum(['metadata', 'transition', 'sky', 'projection', 'terrain']),
+  value: jsonObjectInnerSchema.nullable(),
+}).strict() satisfies z.ZodType<ReplaceRootPropertyOperation>;
+
+export const replaceRootPropertyOperationSchema = sanitizeBefore(
+  replaceRootPropertyOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'replaceRootProperty'),
+);
+
+const shallowPatchRootPropertyOperationInnerSchema = z.object({
+  op: z.literal('shallowPatchRootProperty'),
+  property: z.literal('light'),
+  patch: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<ShallowPatchRootPropertyOperation>;
+
+export const shallowPatchRootPropertyOperationSchema = sanitizeBefore(
+  shallowPatchRootPropertyOperationInnerSchema,
+  undefined,
+  (value) => fallbackCompatibilityOperation(value, 'shallowPatchRootProperty'),
+);
+
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
   setStyleRootPropertiesOperationInnerSchema,
@@ -2081,6 +2232,13 @@ const styleOperationInnerSchema = z.discriminatedUnion('op', [
   removeLayerOperationInnerSchema,
   addLayerFromSourceOperationInnerSchema,
   addGeoJsonLayerOperationInnerSchema,
+  addLayerDefinitionOperationInnerSchema,
+  deepMergeLayerDefinitionOperationInnerSchema,
+  replaceLayerDefinitionOperationInnerSchema,
+  deepMergeSourceDefinitionOperationInnerSchema,
+  replaceSourceDefinitionOperationInnerSchema,
+  replaceRootPropertyOperationInnerSchema,
+  shallowPatchRootPropertyOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
 type StyleOperationSchemaOutput = StyleOperation & Pick<
