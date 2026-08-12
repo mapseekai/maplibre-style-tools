@@ -1,77 +1,52 @@
 import type { JsonObject, JsonValue, Placement, StyleLayer } from '../types.js';
+import { jsonValueSchema } from '../schemas.js';
 
-const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const INVALID_MERGE_INPUT = 'JSON Merge Patch inputs must be strict JSON trees';
 
 function isJsonObject(value: JsonValue): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function ownJsonEntries(value: JsonObject): [string, JsonValue][] {
-  const entries: [string, JsonValue][] = [];
-  for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== 'string' || DANGEROUS_KEYS.has(key)) {
-      throw new TypeError('JSON Merge Patch contains a dangerous key');
-    }
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) {
-      throw new TypeError('JSON Merge Patch must contain enumerable data properties');
-    }
-    entries.push([key, descriptor.value as JsonValue]);
+function strictJsonSnapshot(value: unknown): JsonValue {
+  try {
+    const result = jsonValueSchema.safeParse(value);
+    if (result.success) return result.data;
+  } catch {
+    // Normalize every hostile input to the same public helper error.
   }
-  return entries;
+  throw new TypeError(INVALID_MERGE_INPUT);
 }
 
-function cloneJsonValue(value: JsonValue): JsonValue {
-  if (Array.isArray(value)) return value.map((item) => cloneJsonValue(item));
-  if (!isJsonObject(value)) return value;
-  const clone: JsonObject = {};
-  for (const [key, child] of ownJsonEntries(value)) {
-    Reflect.defineProperty(clone, key, {
+function applySanitizedMergePatch(
+  target: JsonValue,
+  patch: JsonObject,
+): JsonObject {
+  const result = isJsonObject(target) ? target : {};
+  for (const key of Object.keys(patch)) {
+    const patchValue = patch[key]!;
+    if (patchValue === null) {
+      Reflect.deleteProperty(result, key);
+      continue;
+    }
+    const targetValue = Object.hasOwn(result, key) ? result[key]! : null;
+    Reflect.defineProperty(result, key, {
       configurable: true,
       enumerable: true,
-      value: cloneJsonValue(child),
+      value: isJsonObject(patchValue)
+        ? applySanitizedMergePatch(targetValue, patchValue)
+        : patchValue,
       writable: true,
     });
   }
-  return clone;
-}
-
-function applyObjectMergePatch(
-  target: JsonValue,
-  patch: JsonObject,
-  activePatches: WeakSet<object>,
-): JsonObject {
-  if (activePatches.has(patch)) {
-    throw new TypeError('JSON Merge Patch cannot contain a cycle');
-  }
-  activePatches.add(patch);
-  try {
-    const result = isJsonObject(target) ? cloneJsonValue(target) as JsonObject : {};
-    for (const [key, patchValue] of ownJsonEntries(patch)) {
-      if (patchValue === null) {
-        Reflect.deleteProperty(result, key);
-        continue;
-      }
-      const targetValue = Object.hasOwn(result, key) ? result[key]! : null;
-      Reflect.defineProperty(result, key, {
-        configurable: true,
-        enumerable: true,
-        value: isJsonObject(patchValue)
-          ? applyObjectMergePatch(targetValue, patchValue, activePatches)
-          : cloneJsonValue(patchValue),
-        writable: true,
-      });
-    }
-    return result;
-  } finally {
-    activePatches.delete(patch);
-  }
+  return result;
 }
 
 export function applyMergePatch(target: JsonValue, patch: JsonValue): JsonValue {
-  return isJsonObject(patch)
-    ? applyObjectMergePatch(target, patch, new WeakSet())
-    : cloneJsonValue(patch);
+  const safeTarget = strictJsonSnapshot(target);
+  const safePatch = strictJsonSnapshot(patch);
+  return isJsonObject(safePatch)
+    ? applySanitizedMergePatch(safeTarget, safePatch)
+    : safePatch;
 }
 
 export function resolveInsertionIndex(

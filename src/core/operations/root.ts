@@ -16,9 +16,7 @@ export function applyRootOperation(
   context: OperationContext,
 ): OperationApplyResult {
   void context;
-  let changed = false;
   for (const key of Object.keys(operation.properties)) {
-    if (!Object.hasOwn(operation.properties, key)) continue;
     if (PROTECTED_ROOT_KEYS.has(key)) {
       return {
         ok: false,
@@ -27,6 +25,11 @@ export function applyRootOperation(
         ),
       };
     }
+  }
+
+  let changed = false;
+  for (const key of Object.keys(operation.properties)) {
+    if (!Object.hasOwn(operation.properties, key)) continue;
     const patch = operation.properties[key]!;
     const hadProperty = Object.hasOwn(style, key);
     if (patch === null) {
