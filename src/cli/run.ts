@@ -1,5 +1,6 @@
 import { applyStyleTransaction, validateStyleDocument } from '../core/index.js';
 import { parseCliArgs } from './args.js';
+import { CliOutputError, writeNewOutputFile } from './file-output.js';
 import { CliInputError, readJsonInput } from './input.js';
 import { inspectStyle } from './inspect.js';
 import { writeDiagnostic, writeJson } from './output.js';
@@ -15,6 +16,9 @@ export const CLI_HELP = {
     'maplibre-style apply STYLE --operations OPERATIONS [OPTIONS]',
   ],
 } as const;
+
+export const POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC =
+  'File committed, but stdout result delivery failed; do not retry as though no file was written.';
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -133,6 +137,27 @@ export async function runCli(
         operations: operationsRead.value,
         validate: true,
       });
+      if (result.ok && command.output !== undefined) {
+        try {
+          await writeNewOutputFile(command.output, result.style, io.cwd);
+        } catch (error) {
+          if (error instanceof CliOutputError) {
+            await writeDiagnosticBestEffort(io, error.message);
+            return 3;
+          }
+          throw error;
+        }
+        try {
+          await writeJson(io.stdout, result);
+          return 0;
+        } catch {
+          await writeDiagnosticBestEffort(
+            io,
+            POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC,
+          );
+          return 3;
+        }
+      }
       return writeResult(io, result, result.ok ? 0 : 1);
     } catch (error) {
       if (error instanceof CliInputError) {

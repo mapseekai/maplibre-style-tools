@@ -8,11 +8,13 @@ import { Readable, Writable } from 'node:stream';
 import { after, describe, it } from 'node:test';
 import {
   analyzeGeoJson, applyStyleTransaction, DEFAULT_MAX_DIFF_BYTES,
-  DEFAULT_MAX_STYLE_BYTES,
+  DEFAULT_MAX_STYLE_BYTES, jsonUtf8ByteLength,
 } from '../core/index.js';
 import type { JsonValue, StyleDocument } from '../core/index.js';
 import { readJsonInput } from './input.js';
-import { runCli } from './run.js';
+import {
+  POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC, runCli,
+} from './run.js';
 
 class BufferWriter extends Writable {
   readonly chunks: string[] = [];
@@ -41,6 +43,23 @@ class CallbackErrorWriter extends Writable {
     _encoding: BufferEncoding,
     callback: (error?: Error | null) => void,
   ): void {
+    callback(this.failure);
+  }
+}
+
+class RejectingWriter extends Writable {
+  writes = 0;
+
+  constructor(private readonly failure = new Error('stdout unavailable')) {
+    super();
+  }
+
+  override _write(
+    _chunk: Buffer | string,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.writes += 1;
     callback(this.failure);
   }
 }
@@ -85,6 +104,23 @@ const styleTextAtBytes = (character: string, bytes: number): string => {
     ...base,
     metadata: { padding: character.repeat(repeated) + 'a'.repeat(remainder) },
   });
+};
+
+const makeExactStyle = (): StyleDocument => {
+  const style = {
+    version: 8,
+    sources: {},
+    layers: [{
+      id: 'background', type: 'background',
+      paint: { 'background-color': '#000000' },
+    }],
+    metadata: { padding: '' },
+  } satisfies StyleDocument;
+  style.metadata.padding = 'a'.repeat(
+    DEFAULT_MAX_STYLE_BYTES - jsonUtf8ByteLength(style),
+  );
+  assert.equal(jsonUtf8ByteLength(style), DEFAULT_MAX_STYLE_BYTES);
+  return style;
 };
 
 const makeDirectory = async (): Promise<string> => {
@@ -564,5 +600,104 @@ describe('runCli apply', () => {
       (diffResult.json as { error: { details: { reason: string } } }).error.details.reason,
       'maxDiffBytes',
     );
+  });
+
+  it('creates only a new output path and preserves the exact 5 MiB boundary', async () => {
+    const exactStyle = makeExactStyle();
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'background',
+      paint: { 'background-color': '#ffffff' },
+    }];
+    const inputs = await writeApplyInputs(exactStyle, operations);
+    const before = await readFile(inputs.stylePath);
+    const result = await invokeApply(inputs.cwd, [
+      'apply', inputs.stylePath, '--operations', inputs.operationsPath,
+      '--output', 'next.json',
+    ]);
+    assert.equal(result.code, 0);
+    assert.deepEqual(await readFile(inputs.stylePath), before);
+    const outputPath = join(inputs.cwd, 'next.json');
+    const outputBytes = await readFile(outputPath);
+    assert.equal((await stat(outputPath)).size, DEFAULT_MAX_STYLE_BYTES);
+    assert.equal(outputBytes.at(-1), '}'.charCodeAt(0));
+    const outputValue = JSON.parse(outputBytes.toString('utf8')) as StyleDocument;
+    assert.equal(jsonUtf8ByteLength(outputValue), DEFAULT_MAX_STYLE_BYTES);
+    assert.deepEqual(outputValue, (result.json as { style: JsonValue }).style);
+
+    const reread = await readJsonInput(outputPath, makeIo(inputs.cwd));
+    assert.equal(reread.source.kind, 'file');
+    assert.deepEqual(reread.value, outputValue);
+
+    const validateResult = await invokeApply(inputs.cwd, ['validate', outputPath]);
+    const inspectResult = await invokeApply(inputs.cwd, ['inspect', outputPath]);
+    const noopOperationsPath = join(inputs.cwd, 'noop.json');
+    await writeFile(noopOperationsPath, JSON.stringify(operations));
+    const noopResult = await invokeApply(inputs.cwd, [
+      'apply', outputPath, '--operations', noopOperationsPath, '--dry-run',
+    ]);
+    assert.deepEqual(
+      [validateResult.code, inspectResult.code, noopResult.code],
+      [0, 0, 0],
+    );
+  });
+
+  it('keeps a committed output when stdout or stderr acknowledgement fails', async () => {
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 },
+    }];
+    for (const rejectStderr of [false, true]) {
+      const inputs = await writeApplyInputs(baseStyle, operations);
+      const stdout = new RejectingWriter();
+      const stderr: Writable = rejectStderr ? new RejectingWriter() : new BufferWriter();
+      const stdoutBaseline = stdout.listenerCount('error');
+      const stderrBaseline = stderr.listenerCount('error');
+      const io = makeIo(inputs.cwd, '', stdout, stderr);
+      const code = await runCli([
+        'apply', inputs.stylePath, '--operations', inputs.operationsPath,
+        '--output', 'committed.json',
+      ], io);
+      assert.equal(code, 3);
+      const committed = JSON.parse(
+        await readFile(join(inputs.cwd, 'committed.json'), 'utf8'),
+      ) as StyleDocument;
+      assert.equal(committed.layers[0]?.paint?.['line-width'], 2);
+      if (!rejectStderr) {
+        assert.equal(
+          (stderr as BufferWriter).text,
+          `${POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC}\n`,
+        );
+      }
+      await immediate();
+      assert.equal(stdout.listenerCount('error'), stdoutBaseline);
+      assert.equal(stderr.listenerCount('error'), stderrBaseline);
+      assert.equal(stdout.writes, 1);
+    }
+  });
+
+  it('does not touch stdout or claim a commit for pre-commit and dry-run failures', async () => {
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 },
+    }];
+    const inputs = await writeApplyInputs(baseStyle, operations);
+    const existingPath = join(inputs.cwd, 'existing.json');
+    await writeFile(existingPath, 'existing bytes');
+    const stdout = new RejectingWriter();
+    const stderr = new BufferWriter();
+    const code = await runCli([
+      'apply', inputs.stylePath, '--operations', inputs.operationsPath,
+      '--output', existingPath,
+    ], makeIo(inputs.cwd, '', stdout, stderr));
+    assert.equal(code, 3);
+    assert.equal(stdout.writes, 0);
+    assert.equal(await readFile(existingPath, 'utf8'), 'existing bytes');
+    assert.doesNotMatch(stderr.text, /File committed/);
+
+    const dryStdout = new RejectingWriter();
+    const dryStderr = new BufferWriter();
+    const dryCode = await runCli([
+      'apply', inputs.stylePath, '--operations', inputs.operationsPath, '--dry-run',
+    ], makeIo(inputs.cwd, '', dryStdout, dryStderr));
+    assert.equal(dryCode, 3);
+    assert.doesNotMatch(dryStderr.text, /File committed/);
   });
 });
