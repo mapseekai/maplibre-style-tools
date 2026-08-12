@@ -6,11 +6,24 @@ import type {
 } from './types.js';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-const OBJECT_PROTOTYPE_DATA_KEYS = new Set([
+const OBJECT_PROTOTYPE_KEYS = Object.freeze([
   'constructor', '__defineGetter__', '__defineSetter__', 'hasOwnProperty',
   '__lookupGetter__', '__lookupSetter__', 'isPrototypeOf',
-  'propertyIsEnumerable', 'toString', 'valueOf', 'toLocaleString',
-]);
+  'propertyIsEnumerable', 'toString', 'valueOf', 'toLocaleString', '__proto__',
+] as const);
+const NORMAL_OBJECT_PROTOTYPE_DESCRIPTORS: ReadonlyMap<
+  string, Readonly<PropertyDescriptor>
+> = (() => {
+  const descriptors = new Map<string, Readonly<PropertyDescriptor>>();
+  for (const key of OBJECT_PROTOTYPE_KEYS) {
+    const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+    if (descriptor !== undefined) descriptors.set(key, Object.freeze(descriptor));
+  }
+  return descriptors;
+})();
+const PROPERTY_DESCRIPTOR_FIELDS = Object.freeze([
+  'configurable', 'enumerable', 'writable', 'value', 'get', 'set',
+] as const);
 const INVALID_SNAPSHOT = Symbol('invalidSnapshot');
 const INVALID_JSON_MESSAGE = 'Input must be a strict JSON tree';
 
@@ -156,17 +169,19 @@ function isNormalObjectPrototypeDescriptor(
   key: string | symbol,
   descriptor: PropertyDescriptor,
 ): boolean {
-  if (typeof key !== 'string' || descriptor.enumerable || !descriptor.configurable) {
-    return false;
+  if (typeof key !== 'string') return false;
+  const expected = NORMAL_OBJECT_PROTOTYPE_DESCRIPTORS.get(key);
+  if (expected === undefined) return false;
+  for (const field of PROPERTY_DESCRIPTOR_FIELDS) {
+    const actualField = Object.getOwnPropertyDescriptor(descriptor, field);
+    const expectedField = Object.getOwnPropertyDescriptor(expected, field);
+    if (actualField === undefined || expectedField === undefined) {
+      if (actualField !== expectedField) return false;
+    } else if (actualField.value !== expectedField.value) {
+      return false;
+    }
   }
-  if (key === '__proto__') {
-    return !('value' in descriptor)
-      && typeof descriptor.get === 'function'
-      && typeof descriptor.set === 'function';
-  }
-  return OBJECT_PROTOTYPE_DATA_KEYS.has(key)
-    && 'value' in descriptor
-    && descriptor.writable === true;
+  return true;
 }
 
 function hasPollutedPrototype(): boolean {

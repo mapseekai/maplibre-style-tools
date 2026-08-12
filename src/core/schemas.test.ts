@@ -803,6 +803,138 @@ test('Object prototype accessors cannot execute or supply schema fields', () => 
   assert.equal(calls, 0);
 });
 
+test('replaced Object.prototype.hasOwnProperty selects the safe fallback', () => {
+  const key = 'hasOwnProperty';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  if (originalDescriptor === undefined || !('value' in originalDescriptor)) {
+    assert.fail('expected the built-in hasOwnProperty data descriptor');
+  }
+  let calls = 0;
+  let result: ReturnType<typeof styleDocumentSchema.safeParse> | undefined;
+  let thrown: unknown;
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      ...originalDescriptor,
+      value() { calls += 1; throw new Error('must not run'); },
+    });
+    try {
+      result = styleDocumentSchema.safeParse({
+        version: 8,
+        sources: { base: { type: 'vector' } },
+        layers: [],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+  } finally {
+    Object.defineProperty(Object.prototype, key, originalDescriptor);
+  }
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, key), originalDescriptor,
+  );
+  assert.equal(thrown, undefined);
+  assert.equal(calls, 0);
+  assert.equal(result?.success, true);
+});
+
+test('replaced Object.prototype.propertyIsEnumerable cannot run for paint', () => {
+  const key = 'propertyIsEnumerable';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  if (originalDescriptor === undefined || !('value' in originalDescriptor)) {
+    assert.fail('expected the built-in propertyIsEnumerable data descriptor');
+  }
+  const input = {
+    op: 'setLayerProperties' as const,
+    layerId: 'roads',
+    paint: { 'line-color': '#fff' },
+  };
+  let calls = 0;
+  let directResult: ReturnType<
+    typeof setLayerPropertiesOperationSchema.safeParse
+  > | undefined;
+  let directThrown: unknown;
+  let unionResult: ReturnType<typeof styleOperationSchema.safeParse> | undefined;
+  let unionThrown: unknown;
+  let transactionResult: ReturnType<typeof styleTransactionSchema.safeParse> | undefined;
+  let transactionThrown: unknown;
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      ...originalDescriptor,
+      value() { calls += 1; throw new Error('must not run'); },
+    });
+    try {
+      directResult = setLayerPropertiesOperationSchema.safeParse(input);
+    } catch (error) {
+      directThrown = error;
+    }
+    try {
+      unionResult = styleOperationSchema.safeParse(input);
+    } catch (error) {
+      unionThrown = error;
+    }
+    try {
+      transactionResult = styleTransactionSchema.safeParse({ operations: [input] });
+    } catch (error) {
+      transactionThrown = error;
+    }
+  } finally {
+    Object.defineProperty(Object.prototype, key, originalDescriptor);
+  }
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, key), originalDescriptor,
+  );
+  assert.equal(calls, 0);
+  assert.equal(directThrown, undefined);
+  assert.equal(unionThrown, undefined);
+  assert.equal(transactionThrown, undefined);
+  assert.equal(directResult?.success, true);
+  assert.equal(unionResult?.success, true);
+  assert.equal(transactionResult?.success, true);
+});
+
+test('replaced Object.prototype.constructor cannot expose a prototype trap', () => {
+  const key = 'constructor';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  if (originalDescriptor === undefined || !('value' in originalDescriptor)) {
+    assert.fail('expected the built-in constructor data descriptor');
+  }
+  let prototypeGets = 0;
+  const replacement = new Proxy(function ReplacementObject() {}, {
+    get(target, property, receiver) {
+      if (property === 'prototype') {
+        prototypeGets += 1;
+        throw new Error('must not run');
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  let result: ReturnType<typeof styleDocumentSchema.safeParse> | undefined;
+  let thrown: unknown;
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      ...originalDescriptor,
+      value: replacement,
+    });
+    try {
+      result = styleDocumentSchema.safeParse({
+        version: 8,
+        sources: { base: { type: 'vector' } },
+        layers: [{ id: 'roads', type: 'line', paint: { 'line-color': '#fff' } }],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+  } finally {
+    Object.defineProperty(Object.prototype, key, originalDescriptor);
+  }
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, key), originalDescriptor,
+  );
+  assert.equal(thrown, undefined);
+  assert.equal(prototypeGets, 0);
+  assert.equal(result?.success, true);
+});
+
 test('prototype reflection failures and cycles select the stable fallback', () => {
   const original = Object.getPrototypeOf(Array.prototype);
   const parents: object[] = [
