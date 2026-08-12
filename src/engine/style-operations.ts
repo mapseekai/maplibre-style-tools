@@ -34,7 +34,7 @@ const legacyPropertyValidationMessage = (
   style: StyleDocument,
   normalizedMessage: string
 ): string | undefined => {
-  const match = /^layers\[(\d+)\]\.(paint|layout)\.([^:]+):/.exec(
+  const match = /^layers\[(\d+)\]\.(paint|layout)\.(.+?): /.exec(
     normalizedMessage
   );
   if (!match) {
