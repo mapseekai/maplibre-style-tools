@@ -542,7 +542,7 @@ function receivedType(value: unknown): string {
 }
 
 function invalidTypeIssue(
-  expected: 'string' | 'record' | 'array' | 'number',
+  expected: 'string' | 'record' | 'array' | 'number' | 'boolean',
   value: unknown,
   path: PathToken[],
 ): LayerLifecycleIssue {
@@ -554,9 +554,49 @@ function invalidTypeIssue(
   } as LayerLifecycleIssue;
 }
 
+function literalIssue(expected: string): LayerLifecycleIssue {
+  return {
+    code: 'invalid_value', values: [expected], path: ['op'],
+    message: `Invalid input: expected ${JSON.stringify(expected)}`,
+  } as LayerLifecycleIssue;
+}
+
+function minLengthStringIssue(path: PathToken[]): LayerLifecycleIssue {
+  return {
+    origin: 'string', code: 'too_small', minimum: 1, inclusive: true,
+    path, message: 'Too small: expected string to have >=1 characters',
+  } as LayerLifecycleIssue;
+}
+
+function requiredMinLengthStringIssue(
+  value: JsonObject,
+  field: 'layerId' | 'sourceId' | 'newSourceId',
+): LayerLifecycleIssue | undefined {
+  const fieldValue = ownValue(value, field);
+  if (typeof fieldValue !== 'string') return invalidTypeIssue('string', fieldValue, [field]);
+  return fieldValue.length > 0 ? undefined : minLengthStringIssue([field]);
+}
+
+function unrecognizedKeysIssue(
+  value: JsonObject,
+  allowed: ReadonlySet<string>,
+): LayerLifecycleIssue | undefined {
+  const keys = Reflect.ownKeys(value).filter((key): key is string => (
+    typeof key === 'string' && !allowed.has(key)
+  ));
+  if (keys.length === 0) return undefined;
+  const quoted = keys.map((key) => `"${key}"`).join(', ');
+  return {
+    code: 'unrecognized_keys', keys, path: [],
+    message: keys.length === 1
+      ? `Unrecognized key: ${quoted}`
+      : `Unrecognized keys: ${quoted}`,
+  } as LayerLifecycleIssue;
+}
+
 function requiredNonEmptyStringIssue(
   value: JsonObject,
-  field: 'layerId' | 'sourceId' | 'type',
+  field: 'layerId' | 'newLayerId' | 'sourceId' | 'type',
 ): LayerLifecycleIssue | undefined {
   const fieldValue = ownValue(value, field);
   if (typeof fieldValue !== 'string') return invalidTypeIssue('string', fieldValue, [field]);
@@ -627,18 +667,8 @@ function fallbackAddLayerFromSourceIssue(
     ?? optionalNonEmptyStringIssue(value, 'afterId');
   if (laterFieldIssue !== undefined) return laterFieldIssue;
 
-  const unknownKeys = Reflect.ownKeys(value).filter((key): key is string => (
-    typeof key === 'string' && !ADD_LAYER_FROM_SOURCE_OPERATION_KEYS.has(key)
-  ));
-  if (unknownKeys.length > 0) {
-    const quoted = unknownKeys.map((key) => `"${key}"`).join(', ');
-    return {
-      code: 'unrecognized_keys', keys: unknownKeys, path: [],
-      message: unknownKeys.length === 1
-        ? `Unrecognized key: ${quoted}`
-        : `Unrecognized keys: ${quoted}`,
-    } as LayerLifecycleIssue;
-  }
+  const unknownKeysIssue = unrecognizedKeysIssue(value, ADD_LAYER_FROM_SOURCE_OPERATION_KEYS);
+  if (unknownKeysIssue !== undefined) return unknownKeysIssue;
   if (ownValue(value, 'beforeId') !== undefined
     && ownValue(value, 'afterId') !== undefined) {
     return {
@@ -663,43 +693,133 @@ function fallbackLayerLifecycleOperationIssue(
 ): LayerLifecycleIssue | undefined {
   if (!isJsonObject(value)) return undefined;
   const operation = ownValue(value, 'op');
-  if (expectedOperation !== undefined && operation !== expectedOperation) return undefined;
+  if (expectedOperation !== undefined && operation !== expectedOperation) {
+    return literalIssue(expectedOperation);
+  }
 
-  const fieldIssue = (field:
-    | 'layerId' | 'newLayerId' | 'sourceId' | 'sourceLayer' | 'type'
-    | 'beforeId' | 'afterId') => {
-    const fieldValue = ownValue(value, field);
-    return typeof fieldValue === 'string' && !validLayerLifecycleId(fieldValue)
-      ? nonEmptyStringIssue([field])
-      : undefined;
-  };
   switch (operation) {
-    case 'duplicateLayer':
-      return fieldIssue('layerId')
-        ?? fieldIssue('newLayerId')
-        ?? fieldIssue('beforeId')
-        ?? fieldIssue('afterId');
-    case 'moveLayer':
-      return fieldIssue('layerId') ?? fieldIssue('beforeId') ?? fieldIssue('afterId');
+    case 'duplicateLayer': {
+      const issue = requiredNonEmptyStringIssue(value, 'layerId')
+        ?? requiredNonEmptyStringIssue(value, 'newLayerId')
+        ?? optionalNonEmptyStringIssue(value, 'beforeId')
+        ?? optionalNonEmptyStringIssue(value, 'afterId');
+      if (issue !== undefined) return issue;
+      const overrides = ownValue(value, 'overrides');
+      if (overrides !== undefined && !isJsonObject(overrides)) {
+        return invalidTypeIssue('record', overrides, ['overrides']);
+      }
+      return unrecognizedKeysIssue(value, DUPLICATE_LAYER_OPERATION_KEYS);
+    }
+    case 'moveLayer': {
+      const issue = requiredNonEmptyStringIssue(value, 'layerId')
+        ?? optionalNonEmptyStringIssue(value, 'beforeId')
+        ?? optionalNonEmptyStringIssue(value, 'afterId');
+      return issue ?? unrecognizedKeysIssue(value, MOVE_LAYER_OPERATION_KEYS);
+    }
     case 'reorderLayers': {
       const layerIds = ownValue(value, 'layerIds');
-      if (Array.isArray(layerIds)) {
-        for (let index = 0; index < layerIds.length; index += 1) {
-          const layerId = ownValue(layerIds, String(index));
-          if (typeof layerId === 'string' && !validLayerLifecycleId(layerId)) {
-            return nonEmptyStringIssue(['layerIds', index]);
-          }
+      if (!Array.isArray(layerIds)) return invalidTypeIssue('array', layerIds, ['layerIds']);
+      if (layerIds.length === 0) {
+        return {
+          origin: 'array', code: 'too_small', minimum: 1, inclusive: true,
+          path: ['layerIds'], message: 'Too small: expected array to have >=1 items',
+        } as LayerLifecycleIssue;
+      }
+      for (let index = 0; index < layerIds.length; index += 1) {
+        const layerId = ownValue(layerIds, String(index));
+        if (typeof layerId !== 'string') {
+          return invalidTypeIssue('string', layerId, ['layerIds', index]);
+        }
+        if (!validLayerLifecycleId(layerId)) {
+          return nonEmptyStringIssue(['layerIds', index]);
         }
       }
-      return fieldIssue('beforeId') ?? fieldIssue('afterId');
+      return optionalNonEmptyStringIssue(value, 'beforeId')
+        ?? optionalNonEmptyStringIssue(value, 'afterId')
+        ?? unrecognizedKeysIssue(value, REORDER_LAYERS_OPERATION_KEYS);
     }
     case 'removeLayer':
-      return fieldIssue('layerId');
+      return requiredNonEmptyStringIssue(value, 'layerId')
+        ?? unrecognizedKeysIssue(value, REMOVE_LAYER_OPERATION_KEYS);
     case 'addLayerFromSource':
       return fallbackAddLayerFromSourceIssue(value);
     default:
       return undefined;
   }
+}
+
+function fallbackSourceOperationIssue(value: JsonValue): LayerLifecycleIssue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  if (operation !== 'addSource'
+    && operation !== 'duplicateSource'
+    && operation !== 'renameSource'
+    && operation !== 'removeSource'
+    && operation !== 'patchSource'
+    && operation !== 'setGeoJsonData') return undefined;
+  const sourceIdIssue = requiredMinLengthStringIssue(value, 'sourceId');
+  if (sourceIdIssue !== undefined) return sourceIdIssue;
+
+  switch (operation) {
+    case 'addSource': {
+      const source = ownValue(value, 'source');
+      if (!isJsonObject(source)) return invalidTypeIssue('record', source, ['source']);
+      return unrecognizedKeysIssue(value, ADD_SOURCE_OPERATION_KEYS);
+    }
+    case 'duplicateSource': {
+      const newSourceIdIssue = requiredMinLengthStringIssue(value, 'newSourceId');
+      if (newSourceIdIssue !== undefined) return newSourceIdIssue;
+      const overrides = ownValue(value, 'overrides');
+      if (overrides !== undefined && !isJsonObject(overrides)) {
+        return invalidTypeIssue('record', overrides, ['overrides']);
+      }
+      return unrecognizedKeysIssue(value, DUPLICATE_SOURCE_OPERATION_KEYS);
+    }
+    case 'renameSource':
+      return requiredMinLengthStringIssue(value, 'newSourceId')
+        ?? unrecognizedKeysIssue(value, RENAME_SOURCE_OPERATION_KEYS);
+    case 'removeSource': {
+      const cascadeLayers = ownValue(value, 'cascadeLayers');
+      if (cascadeLayers !== undefined && typeof cascadeLayers !== 'boolean') {
+        return invalidTypeIssue('boolean', cascadeLayers, ['cascadeLayers']);
+      }
+      return unrecognizedKeysIssue(value, REMOVE_SOURCE_OPERATION_KEYS);
+    }
+    case 'patchSource': {
+      const patch = ownValue(value, 'patch');
+      if (!isJsonObject(patch)) return invalidTypeIssue('record', patch, ['patch']);
+      return unrecognizedKeysIssue(value, PATCH_SOURCE_OPERATION_KEYS);
+    }
+    case 'setGeoJsonData':
+      return unrecognizedKeysIssue(value, SET_GEOJSON_DATA_OPERATION_KEYS);
+    default:
+      return undefined;
+  }
+}
+
+function fallbackFilterOperationIssue(value: JsonValue): LayerLifecycleIssue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  const isLayer = operation === 'setLayerFilter';
+  if (!isLayer && operation !== 'setGeoJsonSourceFilter') return undefined;
+  const mode = ownValue(value, 'mode');
+  const options = isLayer ? ['replace', 'and', 'or', 'clear'] : ['replace', 'clear'];
+  if (!options.includes(mode as string)) {
+    return {
+      code: 'invalid_union', errors: [], path: ['mode'],
+      message: `Invalid discriminator value. Expected ${options.map((item) => `'${item}'`).join(' | ')}`,
+      note: 'No matching discriminator', discriminator: 'mode', options,
+    } as LayerLifecycleIssue;
+  }
+  const idField = isLayer ? 'layerId' : 'sourceId';
+  const idIssue = requiredMinLengthStringIssue(value, idField);
+  if (idIssue !== undefined) return idIssue;
+  if (mode !== 'clear') {
+    const filter = ownValue(value, 'filter');
+    if (!Array.isArray(filter)) return invalidTypeIssue('array', filter, ['filter']);
+  }
+  const allowed = isLayer ? LAYER_FILTER_OPERATION_KEYS : SOURCE_FILTER_OPERATION_KEYS;
+  return unrecognizedKeysIssue(value, allowed);
 }
 
 function fallbackOperation(value: JsonValue): JsonValue | undefined {
@@ -736,6 +856,10 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
   const operation = ownValue(value, 'op');
   const lifecycleIssue = fallbackLayerLifecycleOperationIssue(value);
   if (lifecycleIssue !== undefined) return lifecycleIssue;
+  const sourceIssue = fallbackSourceOperationIssue(value);
+  if (sourceIssue !== undefined) return sourceIssue;
+  const filterIssue = fallbackFilterOperationIssue(value);
+  if (filterIssue !== undefined) return filterIssue;
   return operation === 'setLayerProperties'
     || operation === 'setStyleRootProperties'
     || operation === 'setLayerFilter'
@@ -790,7 +914,8 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
     if (Array.isArray(operations)) {
       for (let index = 0; index < operations.length; index += 1) {
         const operation = ownValue(operations, String(index)) as JsonValue;
-        const issue = fallbackLayerLifecycleOperationIssue(operation);
+        if (fallbackOperation(operation) !== undefined) continue;
+        const issue = fallbackOperationIssue(operation);
         if (issue !== undefined) {
           const prefixedIssue: Record<string, unknown> = {};
           for (const key of Reflect.ownKeys(issue)) {
@@ -809,6 +934,7 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
           }
           return prefixedIssue as unknown as z.core.$ZodIssue;
         }
+        return undefined;
       }
     }
   }

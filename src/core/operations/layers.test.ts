@@ -1388,6 +1388,118 @@ test('addLayerFromSource polluted fallback preserves every native first issue', 
   );
 });
 
+test('addLayerFromSource polluted fallback preserves native literal op issues', () => {
+  const issue = {
+    code: 'invalid_value', values: ['addLayerFromSource'], path: ['op'],
+    message: 'Invalid input: expected "addLayerFromSource"',
+  };
+  const operations: Record<string, unknown>[] = [
+    { layerId: 'roads', sourceId: 'vector', type: 'line' },
+    { op: 'addSource', layerId: 'roads', sourceId: 'vector', type: 'line' },
+    { op: null, layerId: 'roads', sourceId: 'vector', type: 'line' },
+  ];
+  const firstIssue = (operation: Record<string, unknown>): unknown => {
+    const result = addLayerFromSourceOperationSchema.safeParse(operation);
+    assert.equal(result.success, false);
+    if (result.success) assert.fail('expected invalid operation discriminator');
+    return result.error.issues[0];
+  };
+
+  for (const operation of operations) assert.deepEqual(firstIssue(operation), issue);
+
+  const pollutionKey = 'addLayerFromSourceLiteralIssueProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true, value: true, writable: true,
+    });
+    for (const operation of operations) assert.deepEqual(firstIssue(operation), issue);
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, pollutionKey);
+    else Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+  }
+});
+
+test('configured transaction fallback reports the first invalid operation in order', () => {
+  const laterInvalidLayer = {
+    op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+    sourceLayer: ' ', type: 'line',
+  } as const;
+  const fixtures: Array<{
+    name: string;
+    first: Record<string, unknown>;
+    issue: Record<string, unknown>;
+  }> = [
+    {
+      name: 'source ID type',
+      first: { op: 'addSource', sourceId: 1, source: { type: 'geojson' } },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['operations', 0, 'sourceId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'source object type',
+      first: { op: 'addSource', sourceId: 'geo', source: [] },
+      issue: {
+        expected: 'record', code: 'invalid_type', path: ['operations', 0, 'source'],
+        message: 'Invalid input: expected record, received array',
+      },
+    },
+    {
+      name: 'lifecycle required ID',
+      first: { op: 'removeLayer' },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['operations', 0, 'layerId'],
+        message: 'Invalid input: expected string, received undefined',
+      },
+    },
+    {
+      name: 'source filter ID type',
+      first: { op: 'setGeoJsonSourceFilter', sourceId: 1, mode: 'clear' },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['operations', 0, 'sourceId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'layer filter discriminator',
+      first: { op: 'setLayerFilter', layerId: 'roads', mode: 'invalid' },
+      issue: {
+        code: 'invalid_union', errors: [], note: 'No matching discriminator',
+        discriminator: 'mode', options: ['replace', 'and', 'or', 'clear'],
+        path: ['operations', 0, 'mode'],
+        message: "Invalid discriminator value. Expected 'replace' | 'and' | 'or' | 'clear'",
+      },
+    },
+  ];
+  const schema = createStyleTransactionSchema(5);
+  const firstIssue = (first: Record<string, unknown>): unknown => {
+    const result = schema.safeParse({ operations: [first, laterInvalidLayer] });
+    assert.equal(result.success, false);
+    if (result.success) assert.fail('expected invalid transaction');
+    return result.error.issues[0];
+  };
+
+  for (const { name, first, issue } of fixtures) {
+    assert.deepEqual(firstIssue(first), issue, `clean: ${name}`);
+  }
+
+  const pollutionKey = 'transactionFallbackOrderProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true, value: true, writable: true,
+    });
+    for (const { name, first, issue } of fixtures) {
+      assert.deepEqual(firstIssue(first), issue, `polluted: ${name}`);
+    }
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, pollutionKey);
+    else Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+  }
+});
+
 test('addLayerFromSource handles 20k-deep JSON fields without stack overflow', () => {
   const style = makeSourceStyle();
   const deep = makeDeepJsonObject(DEEP_JSON_DEPTH, 'leaf');
