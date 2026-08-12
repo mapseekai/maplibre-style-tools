@@ -1,6 +1,8 @@
 import { tool } from 'ai';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import { z } from 'zod';
+import { validateStyleDocument } from './core/validation.js';
+import { applyLegacyPropertyOperationToMap } from './tools/legacy-property-adapter.js';
 export { createCompactMapLibreStyleTools } from './tools/compact-tools.js';
 export type {
   LayerSearchQuery,
@@ -42,37 +44,6 @@ export interface CreateMapLibreStyleToolsOptions<TStyle = unknown> {
 }
 
 type JsonObject = Record<string, unknown>;
-
-type PaintPropertyName = Parameters<MapLibreMap['setPaintProperty']>[1];
-type PaintPropertyValue = Parameters<MapLibreMap['setPaintProperty']>[2];
-type LayoutPropertyName = Parameters<MapLibreMap['setLayoutProperty']>[1];
-type LayoutPropertyValue = Parameters<MapLibreMap['setLayoutProperty']>[2];
-
-const setDynamicPaintProperty = (
-  map: MapLibreMap,
-  layerId: string,
-  property: string,
-  value: unknown
-): void => {
-  map.setPaintProperty(
-    layerId,
-    property as PaintPropertyName,
-    value as PaintPropertyValue
-  );
-};
-
-const setDynamicLayoutProperty = (
-  map: MapLibreMap,
-  layerId: string,
-  property: string,
-  value: unknown
-): void => {
-  map.setLayoutProperty(
-    layerId,
-    property as LayoutPropertyName,
-    value as LayoutPropertyValue
-  );
-};
 
 const parseStyleValue = (rawValue: string): unknown => {
   try {
@@ -133,22 +104,6 @@ const missingLayerError = <TStyle>(layerId: string, style: TStyle | undefined) =
 const missingSourceError = <TStyle>(sourceId: string, style: TStyle | undefined) =>
   buildResult(`Source "${sourceId}" not found in current style.`, style, false);
 
-const summarizeValidationErrors = (errors: Array<{ message?: string; key?: string }>) =>
-  errors
-    .slice(0, 20)
-    .map((error, index) => `${index + 1}. ${error.key ?? '<root>'}: ${error.message ?? 'Unknown error'}`)
-    .join('\n');
-
-const validateStyleObject = async (
-  styleObject: JsonObject
-): Promise<Array<{ message?: string; key?: string }>> => {
-  const styleSpecModule = await import('@maplibre/maplibre-gl-style-spec');
-  return styleSpecModule.validateStyleMin(styleObject as never) as Array<{
-    message?: string;
-    key?: string;
-  }>;
-};
-
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const cloneCurrentStyle = (
@@ -183,57 +138,6 @@ const mergeObjects = (base: JsonObject, patch: JsonObject): JsonObject => {
 };
 
 const isJsonArray = (value: unknown): value is unknown[] => Array.isArray(value);
-
-const layerTypePropertyPrefixes: Record<
-  string,
-  { paint: string[]; layout: string[] }
-> = {
-  background: { paint: ['background-'], layout: ['background-'] },
-  fill: { paint: ['fill-'], layout: ['fill-'] },
-  line: { paint: ['line-'], layout: ['line-'] },
-  symbol: {
-    paint: ['icon-', 'text-'],
-    layout: ['icon-', 'text-', 'symbol-'],
-  },
-  circle: { paint: ['circle-'], layout: ['circle-'] },
-  heatmap: { paint: ['heatmap-'], layout: ['heatmap-'] },
-  'fill-extrusion': {
-    paint: ['fill-extrusion-'],
-    layout: ['fill-extrusion-'],
-  },
-  raster: { paint: ['raster-'], layout: ['raster-'] },
-  hillshade: { paint: ['hillshade-'], layout: ['hillshade-'] },
-  'color-relief': { paint: ['color-relief-'], layout: ['color-relief-'] },
-};
-
-const getLayerType = (map: MapLibreMap, layerId: string): string | null => {
-  const layer = map.getLayer(layerId);
-  if (!layer || typeof layer.type !== 'string') {
-    return null;
-  }
-  return layer.type;
-};
-
-const getAllowedPrefixes = (
-  layerType: string,
-  mode: 'paint' | 'layout'
-): string[] => layerTypePropertyPrefixes[layerType]?.[mode] ?? [];
-
-const isPropertyAllowedForLayerType = (
-  layerType: string,
-  property: string,
-  mode: 'paint' | 'layout'
-): boolean => {
-  if (mode === 'layout' && property === 'visibility') {
-    return true;
-  }
-
-  const prefixes = getAllowedPrefixes(layerType, mode);
-  if (prefixes.length === 0) {
-    return true;
-  }
-  return prefixes.some((prefix) => property.startsWith(prefix));
-};
 
 export const createMapLibreStyleTools = <TStyle = unknown>({
   getMap,
@@ -409,27 +313,21 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
         const parsedValue = parseStyleValue(valueJson);
-
-        try {
-          setDynamicPaintProperty(map, layerId, property, parsedValue);
-          return buildResult(
-            `Updated paint property: ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to set paint property ${layerId}.${property}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          paint: { [property]: parsedValue },
+        });
+        return result.success
+          ? buildResult(
+              `Updated paint property: ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
+              style
+            )
+          : buildResult(
+              `Failed to set paint property ${layerId}.${property}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -451,27 +349,21 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
         const parsedValue = parseStyleValue(valueJson);
-
-        try {
-          setDynamicLayoutProperty(map, layerId, property, parsedValue);
-          return buildResult(
-            `Updated layout property: ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to set layout property ${layerId}.${property}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          layout: { [property]: parsedValue },
+        });
+        return result.success
+          ? buildResult(
+              `Updated layout property: ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
+              style
+            )
+          : buildResult(
+              `Failed to set layout property ${layerId}.${property}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -489,40 +381,21 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        const layerType = getLayerType(map, layerId);
-        if (!layerType) {
-          return buildResult(`Cannot resolve layer type for "${layerId}".`, style, false);
-        }
-
-        if (!isPropertyAllowedForLayerType(layerType, property, 'paint')) {
-          const allowedPrefixes = getAllowedPrefixes(layerType, 'paint');
-          return buildResult(
-            `Rejected paint property "${property}" for layer "${layerId}" (type: ${layerType}). Allowed prefixes: ${allowedPrefixes.join(', ') || '<unknown>'}.`,
-            style,
-            false
-          );
-        }
-
         const parsedValue = parseStyleValue(valueJson);
-        try {
-          setDynamicPaintProperty(map, layerId, property, parsedValue);
-          return buildResult(
-            `Updated paint property (smart): ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to set paint property ${layerId}.${property}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          paint: { [property]: parsedValue },
+        });
+        return result.success
+          ? buildResult(
+              `Updated paint property (smart): ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
+              style
+            )
+          : buildResult(
+              `Failed to set paint property ${layerId}.${property}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -540,40 +413,21 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        const layerType = getLayerType(map, layerId);
-        if (!layerType) {
-          return buildResult(`Cannot resolve layer type for "${layerId}".`, style, false);
-        }
-
-        if (!isPropertyAllowedForLayerType(layerType, property, 'layout')) {
-          const allowedPrefixes = getAllowedPrefixes(layerType, 'layout');
-          return buildResult(
-            `Rejected layout property "${property}" for layer "${layerId}" (type: ${layerType}). Allowed prefixes: visibility, ${allowedPrefixes.join(', ') || '<unknown>'}.`,
-            style,
-            false
-          );
-        }
-
         const parsedValue = parseStyleValue(valueJson);
-        try {
-          setDynamicLayoutProperty(map, layerId, property, parsedValue);
-          return buildResult(
-            `Updated layout property (smart): ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to set layout property ${layerId}.${property}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          layout: { [property]: parsedValue },
+        });
+        return result.success
+          ? buildResult(
+              `Updated layout property (smart): ${layerId}.${property} = ${JSON.stringify(parsedValue)}`,
+              style
+            )
+          : buildResult(
+              `Failed to set layout property ${layerId}.${property}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -590,15 +444,6 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        const layerType = getLayerType(map, layerId);
-        if (!layerType) {
-          return buildResult(`Cannot resolve layer type for "${layerId}".`, style, false);
-        }
-
         const parsedProps = parseObjectInput(propertiesJson, 'propertiesJson');
         if (!parsedProps.ok) {
           return buildResult(parsedProps.message, style, false);
@@ -608,39 +453,20 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (entries.length === 0) {
           return buildResult('propertiesJson is empty.', style, false);
         }
-
-        const invalidProps = entries
-          .map(([property]) => property)
-          .filter(
-            (property) =>
-              !isPropertyAllowedForLayerType(layerType, property, 'paint')
-          );
-        if (invalidProps.length > 0) {
-          const allowedPrefixes = getAllowedPrefixes(layerType, 'paint');
-          return buildResult(
-            `Rejected batch paint update for layer "${layerId}" (type: ${layerType}). Invalid properties: ${invalidProps.join(', ')}. Allowed prefixes: ${allowedPrefixes.join(', ') || '<unknown>'}.`,
-            style,
-            false
-          );
-        }
-
-        try {
-          for (const [property, value] of entries) {
-            setDynamicPaintProperty(map, layerId, property, value);
-          }
-          return buildResult(
-            `Updated ${entries.length} paint properties for layer "${layerId}" (smart).`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to batch set paint properties for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          paint: parsedProps.value,
+        });
+        return result.success
+          ? buildResult(
+              `Updated ${entries.length} paint properties for layer "${layerId}" (smart).`,
+              style
+            )
+          : buildResult(
+              `Failed to batch set paint properties for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -657,15 +483,6 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        const layerType = getLayerType(map, layerId);
-        if (!layerType) {
-          return buildResult(`Cannot resolve layer type for "${layerId}".`, style, false);
-        }
-
         const parsedProps = parseObjectInput(propertiesJson, 'propertiesJson');
         if (!parsedProps.ok) {
           return buildResult(parsedProps.message, style, false);
@@ -675,39 +492,20 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (entries.length === 0) {
           return buildResult('propertiesJson is empty.', style, false);
         }
-
-        const invalidProps = entries
-          .map(([property]) => property)
-          .filter(
-            (property) =>
-              !isPropertyAllowedForLayerType(layerType, property, 'layout')
-          );
-        if (invalidProps.length > 0) {
-          const allowedPrefixes = getAllowedPrefixes(layerType, 'layout');
-          return buildResult(
-            `Rejected batch layout update for layer "${layerId}" (type: ${layerType}). Invalid properties: ${invalidProps.join(', ')}. Allowed prefixes: visibility, ${allowedPrefixes.join(', ') || '<unknown>'}.`,
-            style,
-            false
-          );
-        }
-
-        try {
-          for (const [property, value] of entries) {
-            setDynamicLayoutProperty(map, layerId, property, value);
-          }
-          return buildResult(
-            `Updated ${entries.length} layout properties for layer "${layerId}" (smart).`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to batch set layout properties for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          layout: parsedProps.value,
+        });
+        return result.success
+          ? buildResult(
+              `Updated ${entries.length} layout properties for layer "${layerId}" (smart).`,
+              style
+            )
+          : buildResult(
+              `Failed to batch set layout properties for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -724,10 +522,6 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
         const parsedProps = parseObjectInput(propertiesJson, 'propertiesJson');
         if (!parsedProps.ok) {
           return buildResult(parsedProps.message, style, false);
@@ -737,24 +531,20 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (entries.length === 0) {
           return buildResult('propertiesJson is empty.', style, false);
         }
-
-        try {
-          for (const [property, value] of entries) {
-            setDynamicPaintProperty(map, layerId, property, value);
-          }
-          return buildResult(
-            `Updated ${entries.length} paint properties for layer "${layerId}".`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to batch set paint properties for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          paint: parsedProps.value,
+        });
+        return result.success
+          ? buildResult(
+              `Updated ${entries.length} paint properties for layer "${layerId}".`,
+              style
+            )
+          : buildResult(
+              `Failed to batch set paint properties for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -771,10 +561,6 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
         const parsedProps = parseObjectInput(propertiesJson, 'propertiesJson');
         if (!parsedProps.ok) {
           return buildResult(parsedProps.message, style, false);
@@ -784,24 +570,20 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (entries.length === 0) {
           return buildResult('propertiesJson is empty.', style, false);
         }
-
-        try {
-          for (const [property, value] of entries) {
-            setDynamicLayoutProperty(map, layerId, property, value);
-          }
-          return buildResult(
-            `Updated ${entries.length} layout properties for layer "${layerId}".`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to batch set layout properties for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          layout: parsedProps.value,
+        });
+        return result.success
+          ? buildResult(
+              `Updated ${entries.length} layout properties for layer "${layerId}".`,
+              style
+            )
+          : buildResult(
+              `Failed to batch set layout properties for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -817,22 +599,17 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        try {
-          setDynamicPaintProperty(map, layerId, property, null);
-          return buildResult(`Cleared paint property: ${layerId}.${property}`, style);
-        } catch (error) {
-          return buildResult(
-            `Failed to clear paint property ${layerId}.${property}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          paint: { [property]: null },
+        });
+        return result.success
+          ? buildResult(`Cleared paint property: ${layerId}.${property}`, style)
+          : buildResult(
+              `Failed to clear paint property ${layerId}.${property}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -849,22 +626,17 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        try {
-          setDynamicLayoutProperty(map, layerId, property, null);
-          return buildResult(`Cleared layout property: ${layerId}.${property}`, style);
-        } catch (error) {
-          return buildResult(
-            `Failed to clear layout property ${layerId}.${property}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          layout: { [property]: null },
+        });
+        return result.success
+          ? buildResult(`Cleared layout property: ${layerId}.${property}`, style)
+          : buildResult(
+              `Failed to clear layout property ${layerId}.${property}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -885,26 +657,21 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
         const parsedFilter = parseStyleValue(filterJson);
-        try {
-          map.setFilter(layerId, parsedFilter as never);
-          return buildResult(
-            `Updated filter: ${layerId}.filter = ${JSON.stringify(parsedFilter)}`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to set filter for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          filter: parsedFilter,
+        });
+        return result.success
+          ? buildResult(
+              `Updated filter: ${layerId}.filter = ${JSON.stringify(parsedFilter)}`,
+              style
+            )
+          : buildResult(
+              `Failed to set filter for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -927,22 +694,21 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (minzoom > maxzoom) {
           return buildResult('minzoom must be less than or equal to maxzoom.', style, false);
         }
-
-        try {
-          map.setLayerZoomRange(layerId, minzoom, maxzoom);
-          return buildResult(
-            `Updated zoom range: ${layerId} minzoom=${minzoom}, maxzoom=${maxzoom}`,
-            style
-          );
-        } catch (error) {
-          return buildResult(
-            `Failed to set zoom range for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          minzoom,
+          maxzoom,
+        });
+        return result.success
+          ? buildResult(
+              `Updated zoom range: ${layerId} minzoom=${minzoom}, maxzoom=${maxzoom}`,
+              style
+            )
+          : buildResult(
+              `Failed to set zoom range for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -958,22 +724,17 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
-        if (!map.getLayer(layerId)) {
-          return missingLayerError(layerId, style);
-        }
-
-        try {
-          map.setLayoutProperty(layerId, 'visibility', visibility);
-          return buildResult(`Layer ${layerId} visibility set to ${visibility}.`, style);
-        } catch (error) {
-          return buildResult(
-            `Failed to set visibility for ${layerId}: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
-        }
+        const result = applyLegacyPropertyOperationToMap(map, {
+          layerId,
+          layout: { visibility },
+        });
+        return result.success
+          ? buildResult(`Layer ${layerId} visibility set to ${visibility}.`, style)
+          : buildResult(
+              `Failed to set visibility for ${layerId}: ${result.message}`,
+              style,
+              false
+            );
       },
     }),
 
@@ -1866,33 +1627,29 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
       inputSchema: z.object({
         styleJson: z.string().describe('Full style JSON object string'),
       }),
-      execute: async ({ styleJson }) => {
+      execute: ({ styleJson }) => {
         const style = readState();
         const parsedStyle = parseObjectInput(styleJson, 'styleJson');
         if (!parsedStyle.ok) {
           return buildResult(parsedStyle.message, style, false);
         }
 
-        try {
-          const errors = await validateStyleObject(parsedStyle.value);
-          if (errors.length === 0) {
-            return buildResult('Style JSON validation passed (0 errors).', style);
-          }
-
-          return buildResult(
-            `Style JSON validation failed (${errors.length} errors):\n${summarizeValidationErrors(errors)}`,
-            style,
-            false
-          );
-        } catch (error) {
-          return buildResult(
-            `Style validation failed unexpectedly: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`,
-            style,
-            false
-          );
+        const validation = validateStyleDocument(parsedStyle.value);
+        if (validation.ok) {
+          return buildResult('Style JSON validation passed (0 errors).', style);
         }
+
+        return buildResult(
+          `Style JSON validation failed (${validation.errors.length} errors):\n${validation.errors
+            .slice(0, 20)
+            .map(
+              (error, index) =>
+                `${index + 1}. ${error.path || '<root>'}: ${error.message}`
+            )
+            .join('\n')}`,
+          style,
+          false
+        );
       },
     }),
 
@@ -1900,7 +1657,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
       description:
         'Validate the currently loaded map style against MapLibre style spec.',
       inputSchema: z.object({}),
-      execute: async () => {
+      execute: () => {
         const style = readState();
         const map = getMap();
         if (!map) {
@@ -1910,18 +1667,29 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         try {
           const currentStyle = map.getStyle();
           if (!currentStyle || !isRecord(currentStyle)) {
-            return buildResult('Current map style is unavailable.', style, false);
+            return buildResult(
+              'Current map style is unavailable.',
+              style,
+              false
+            );
           }
 
-          const errors = await validateStyleObject(currentStyle);
-          if (errors.length === 0) {
-            return buildResult('Current map style validation passed (0 errors).', style);
+          const validation = validateStyleDocument(currentStyle);
+          if (validation.ok) {
+            return buildResult(
+              'Current map style validation passed (0 errors).',
+              style
+            );
           }
 
           return buildResult(
-            `Current map style validation failed (${errors.length} errors):\n${summarizeValidationErrors(
-              errors
-            )}`,
+            `Current map style validation failed (${validation.errors.length} errors):\n${validation.errors
+              .slice(0, 20)
+              .map(
+                (error, index) =>
+                  `${index + 1}. ${error.path || '<root>'}: ${error.message}`
+              )
+              .join('\n')}`,
             style,
             false
           );
