@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { Map } from 'maplibre-gl';
+import { createCompactMapLibreStyleTools } from '../../index.js';
+import { applyStyleOperations } from '../../engine/style-operations.js';
 import { replayStyleDiff } from '../diff.js';
 import { applyStyleTransaction } from '../transaction.js';
 import {
@@ -13,6 +16,10 @@ import {
 import type {
   CoreExecutionLimits, JsonValue, OperationContext, StyleDocument,
 } from '../types.js';
+import type {
+  StyleDocument as LegacyStyleDocument,
+  StyleOperation as LegacyStyleOperation,
+} from '../../types.js';
 
 const TEST_LIMITS: Readonly<CoreExecutionLimits> = {
   maxStyleBytes: DEFAULT_MAX_STYLE_BYTES,
@@ -251,4 +258,87 @@ test('a later mixed-syntax composition rolls back an earlier valid source change
   assert.deepEqual(result.diff, []);
   if (result.ok) assert.fail('expected mixed filter syntax failure');
   assert.equal(result.error.code, 'INVALID_INPUT');
+});
+
+test('legacy history replays temporarily invalid transitions and compact applies the final style', async () => {
+  const style = makeStyle() as unknown as LegacyStyleDocument;
+  style.layers[0]!.paint!['line-width'] = 1;
+  const operations: LegacyStyleOperation[] = [
+    {
+      layerId: 'roads',
+      paint: { 'line-color': 42, 'line-width': 2 },
+    },
+    {
+      layerId: 'roads',
+      paint: { 'line-color': '#000' },
+    },
+  ];
+
+  const result = applyStyleOperations(style, operations);
+  assert.equal(result.success, true);
+  assert.equal(result.style.layers[0]?.paint?.['line-color'], '#000');
+  assert.equal(result.style.layers[0]?.paint?.['line-width'], 2);
+  assert.deepEqual(result.changedLayers, ['roads']);
+  assert.deepEqual(result.diffSummary, [
+    {
+      path: 'layers.roads.paint.line-color',
+      before: '#000',
+      after: 42,
+    },
+    {
+      path: 'layers.roads.paint.line-width',
+      before: 1,
+      after: 2,
+    },
+    {
+      path: 'layers.roads.paint.line-color',
+      before: 42,
+      after: '#000',
+    },
+  ]);
+
+  let setStyleCalls = 0;
+  let appliedStyle: LegacyStyleDocument | undefined;
+  const map = {
+    getStyle: () => structuredClone(style),
+    setStyle: (nextStyle: LegacyStyleDocument) => {
+      setStyleCalls += 1;
+      appliedStyle = nextStyle;
+    },
+  } as unknown as Map;
+  const compact = createCompactMapLibreStyleTools({ getMap: () => map });
+  const execute = (compact.applyStyleOperations as {
+    execute?: (input: Record<string, unknown>) => unknown;
+  }).execute;
+  assert.ok(execute);
+  const compactResult = await execute({
+    operationsJson: JSON.stringify(operations),
+    dryRun: false,
+    diff: true,
+  }) as { success: boolean };
+  assert.equal(compactResult.success, true);
+  assert.equal(setStyleCalls, 1);
+  assert.equal(appliedStyle?.layers[0]?.paint?.['line-width'], 2);
+});
+
+test('legacy batches allow 51 pure filter operations within the core operation limit', () => {
+  const operations: LegacyStyleOperation[] = Array.from(
+    { length: 51 },
+    (_, rank) => ({
+      layerId: 'roads',
+      filter: ['==', ['get', 'rank'], rank],
+    }),
+  );
+  const result = applyStyleOperations(
+    makeStyle() as unknown as LegacyStyleDocument,
+    operations,
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.message, 'Applied 51 style operations.');
+  assert.deepEqual(result.changedLayers, ['roads']);
+  assert.deepEqual(
+    result.style.layers[0]?.filter,
+    ['==', ['get', 'rank'], 50],
+  );
+  assert.doesNotMatch(result.message, /too many operations/i);
 });

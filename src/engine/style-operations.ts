@@ -1,12 +1,20 @@
 import { applyStyleTransaction } from '../core/transaction.js';
+import { diffStyleDocuments } from '../core/diff.js';
 import type {
+  CoreExecutionLimits,
   JsonValue as CoreJsonValue,
   JsonObject as CoreJsonObject,
+  OperationContext,
   SetLayerFilterOperation,
   SetLayerPropertiesOperation,
   StyleDiffEntry as CoreStyleDiffEntry,
   StyleDocument as CoreStyleDocument,
 } from '../core/types.js';
+import {
+  DEFAULT_MAX_DIFF_BYTES,
+  DEFAULT_MAX_OPERATIONS,
+  DEFAULT_MAX_STYLE_BYTES,
+} from '../core/utf8.js';
 import { validateStyleDocument } from '../core/validation.js';
 import type {
   StyleDiffEntry,
@@ -108,9 +116,15 @@ const toCoreFilterOperation = (
 const toCoreOperations = (
   operation: StyleOperation
 ): Array<SetLayerPropertiesOperation | SetLayerFilterOperation> => {
-  const normalized: Array<SetLayerPropertiesOperation | SetLayerFilterOperation> = [
-    toCoreOperation(operation),
-  ];
+  const normalized: Array<SetLayerPropertiesOperation | SetLayerFilterOperation> = [];
+  if (
+    operation.paint !== undefined
+    || operation.layout !== undefined
+    || operation.minzoom !== undefined
+    || operation.maxzoom !== undefined
+  ) {
+    normalized.push(toCoreOperation(operation));
+  }
   const filter = toCoreFilterOperation(operation);
   if (filter !== undefined) normalized.push(filter);
   return normalized;
@@ -235,6 +249,19 @@ type LegacyOperationHistory = {
   diffSummary: StyleDiffEntry[];
 };
 
+const historyLimits: Readonly<CoreExecutionLimits> = Object.freeze({
+  maxStyleBytes: DEFAULT_MAX_STYLE_BYTES,
+  maxDiffBytes: DEFAULT_MAX_DIFF_BYTES,
+  maxOperations: DEFAULT_MAX_OPERATIONS,
+});
+
+const historyContext = (layerId: string): OperationContext => ({
+  limits: historyLimits,
+  changedLayerIds: new Set([layerId]),
+  changedSourceIds: new Set(),
+  warnings: [],
+});
+
 const reconstructLegacyOperationHistory = (
   original: CoreStyleDocument,
   operations: StyleOperation[]
@@ -243,17 +270,25 @@ const reconstructLegacyOperationHistory = (
   const changedLayers: string[] = [];
   const changedLayerSet = new Set<string>();
   const diffSummary: StyleDiffEntry[] = [];
+  const replayOperations: Array<SetLayerPropertiesOperation | SetLayerFilterOperation> = [];
 
   for (const operation of operations) {
+    const normalized = toCoreOperations(operation);
+    if (normalized.length === 0) continue;
+    replayOperations.push(...normalized);
     const result = applyStyleTransaction(
-      workingStyle,
-      { operations: toCoreOperations(operation) }
+      original,
+      { operations: replayOperations, validate: false }
     );
     if (!result.ok) {
       continue;
     }
 
-    const coreDiff = toLegacyCoreDiff(result.diff);
+    const coreDiff = toLegacyCoreDiff(diffStyleDocuments(
+      workingStyle,
+      result.style,
+      historyContext(operation.layerId)
+    ));
     const operationDiff = orderDiffSummary(
       [operation],
       coreDiff
