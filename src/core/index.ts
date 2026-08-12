@@ -20,6 +20,10 @@ export type {
   StyleWarning,
 } from './types.js';
 export type { StyleToolErrorCode } from './errors.js';
+export type {
+  StyleValidationOptions,
+  StyleValidationResult,
+} from './validation.js';
 export {
   createStyleToolError,
   isStyleToolError,
@@ -40,3 +44,4 @@ export {
   styleOperationSchema,
   styleTransactionSchema,
 } from './schemas.js';
+export { validateStyleDocument } from './validation.js';
