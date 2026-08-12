@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import { validateStyleDocument } from '../core/index.js';
+import { z } from 'zod';
+import { isStyleToolError, validateStyleDocument } from '../core/index.js';
 import type { RuntimeImageLoader } from '../adapters/maplibre/index.js';
 import { createMapLibreStyleTools } from './full-tools.js';
 import * as namedSchemas from './schemas.js';
@@ -217,6 +218,306 @@ type RoutingRow = {
   ) => Promise<Record<string, unknown>[]>;
 };
 
+type LegacyDescriptionContract = {
+  name: typeof FULL_LEGACY_TOOL_NAMES[number];
+  description: string;
+  fields: Record<string, string | null>;
+};
+
+const legacyDescriptionContracts: LegacyDescriptionContract[] = [
+  {
+    name: 'listAllLayers',
+    description: 'List all loaded layers from the current MapLibre style.',
+    fields: { limit: null },
+  },
+  {
+    name: 'listAllSources',
+    description: 'List all loaded sources from the current MapLibre style.',
+    fields: { limit: null },
+  },
+  {
+    name: 'inspectLayerStyle',
+    description: 'Inspect a layer by id and return its paint/layout/filter definitions.',
+    fields: { layerId: 'Layer id from listAllLayers output' },
+  },
+  {
+    name: 'inspectSource',
+    description: 'Inspect a source by id and return its full source definition.',
+    fields: { sourceId: 'Source id from listAllSources output' },
+  },
+  {
+    name: 'setLayerPaintProperty',
+    description: 'Set a paint property for any existing layer. valueJson can be JSON literal (number/array/object) or plain string.',
+    fields: {
+      layerId: null,
+      property: 'For example fill-color, line-width, text-color',
+      valueJson: 'JSON literal or string. Example: "#ff0000", 1.2, ["interpolate", ...]',
+    },
+  },
+  {
+    name: 'setLayerLayoutProperty',
+    description: 'Set a layout property for any existing layer. valueJson can be JSON literal or plain string.',
+    fields: {
+      layerId: null,
+      property: 'For example visibility, text-size, line-cap',
+      valueJson: 'JSON literal or string. Example: "visible", 14',
+    },
+  },
+  {
+    name: 'setLayerPaintPropertySmart',
+    description: 'Set a paint property with layer-type guard. Example: line layer accepts line-* but rejects fill-*.',
+    fields: { layerId: null, property: null, valueJson: null },
+  },
+  {
+    name: 'setLayerLayoutPropertySmart',
+    description: 'Set a layout property with layer-type guard. visibility is always allowed.',
+    fields: { layerId: null, property: null, valueJson: null },
+  },
+  {
+    name: 'batchSetLayerPaintPropertiesSmart',
+    description: 'Batch set paint properties with layer-type guard. Rejects the whole request if any property is invalid.',
+    fields: { layerId: null, propertiesJson: null },
+  },
+  {
+    name: 'batchSetLayerLayoutPropertiesSmart',
+    description: 'Batch set layout properties with layer-type guard. visibility is always allowed.',
+    fields: { layerId: null, propertiesJson: null },
+  },
+  {
+    name: 'batchSetLayerPaintProperties',
+    description: 'Set multiple paint properties in one call. propertiesJson must be an object of paint-property -> value.',
+    fields: {
+      layerId: null,
+      propertiesJson: 'JSON object, e.g. {"fill-color":"#fff","fill-opacity":0.6}',
+    },
+  },
+  {
+    name: 'batchSetLayerLayoutProperties',
+    description: 'Set multiple layout properties in one call. propertiesJson must be an object of layout-property -> value.',
+    fields: {
+      layerId: null,
+      propertiesJson: 'JSON object, e.g. {"text-size":14,"text-font":["Noto Sans Regular"]}',
+    },
+  },
+  {
+    name: 'clearLayerPaintProperty',
+    description: 'Clear a paint property by setting it to null.',
+    fields: { layerId: null, property: null },
+  },
+  {
+    name: 'clearLayerLayoutProperty',
+    description: 'Clear a layout property by setting it to null. Some layout properties may reject null.',
+    fields: { layerId: null, property: null },
+  },
+  {
+    name: 'setLayerFilter',
+    description: 'Set the filter expression for a layer. Use JSON array expression, or null to clear filter.',
+    fields: {
+      layerId: null,
+      filterJson: 'JSON filter expression or null. Example: ["==", ["get", "class"], "primary"]',
+    },
+  },
+  {
+    name: 'setLayerZoomRange',
+    description: 'Set minzoom and maxzoom for a layer.',
+    fields: { layerId: null, minzoom: null, maxzoom: null },
+  },
+  {
+    name: 'setLayerVisibility',
+    description: 'Set layer visibility to visible or none.',
+    fields: { layerId: null, visibility: null },
+  },
+  {
+    name: 'addLayer',
+    description: 'Add a new style layer. layerJson must be a full layer object (id/type/source/...); optional beforeId controls z-order.',
+    fields: { layerJson: 'Full JSON layer object', beforeId: null },
+  },
+  {
+    name: 'moveLayer',
+    description: 'Move an existing layer before another layer. Omit beforeId to move to top.',
+    fields: { layerId: null, beforeId: null },
+  },
+  {
+    name: 'removeLayer',
+    description: 'Remove an existing layer by id.',
+    fields: { layerId: null },
+  },
+  {
+    name: 'patchLayerDefinition',
+    description: 'Patch an existing layer definition (deep merge). Supports paint/layout/filter/metadata/minzoom/maxzoom/etc.',
+    fields: { layerId: null, patchJson: 'JSON object patch', diff: null },
+  },
+  {
+    name: 'replaceLayerDefinition',
+    description: 'Replace an existing layer definition with layerJson, then apply via setStyle.',
+    fields: { layerId: null, layerJson: 'Full JSON layer object', diff: null },
+  },
+  {
+    name: 'addSource',
+    description: 'Add a new source by id. sourceJson must be a valid source definition object.',
+    fields: { sourceId: null, sourceJson: 'Full JSON source object' },
+  },
+  {
+    name: 'removeSource',
+    description: 'Remove a source by id. Source must not be referenced by any remaining layer.',
+    fields: { sourceId: null },
+  },
+  {
+    name: 'updateGeoJsonSourceData',
+    description: 'Update data of a GeoJSON source via setData/updateData. dataJson can be URL string or inline GeoJSON object.',
+    fields: { sourceId: null, dataJson: null, method: null },
+  },
+  {
+    name: 'setGeoJsonClusterOptions',
+    description: 'Set clustering options on an existing GeoJSON source via setClusterOptions.',
+    fields: { sourceId: null, optionsJson: 'JSON object for GeoJSON cluster options' },
+  },
+  {
+    name: 'setSourceTileLodParams',
+    description: 'Adjust source tile LOD behavior for pitched views. If sourceId is omitted, applies to all sources.',
+    fields: { maxZoomLevelsOnScreen: null, tileCountMaxMinRatio: null, sourceId: null },
+  },
+  {
+    name: 'patchSourceDefinition',
+    description: 'Patch an existing source definition by deep-merging patchJson into style.sources[sourceId], then apply via setStyle.',
+    fields: { sourceId: null, patchJson: 'JSON object patch', diff: null },
+  },
+  {
+    name: 'replaceSourceDefinition',
+    description: 'Replace an existing source definition with sourceJson, then apply via setStyle.',
+    fields: { sourceId: null, sourceJson: 'Full JSON source object', diff: null },
+  },
+  {
+    name: 'setStyleJsonOrUrl',
+    description: 'Set a full map style via URL string or full style JSON object. diff=true applies style diff when possible.',
+    fields: {
+      styleJsonOrUrl: 'Either style URL, or full style JSON object string',
+      diff: null,
+    },
+  },
+  {
+    name: 'inspectRootStyle',
+    description: 'Inspect root-level style fields such as name, metadata, transition, camera defaults, sprite, glyphs, projection, terrain, light and sky.',
+    fields: {},
+  },
+  {
+    name: 'setStyleName',
+    description: 'Set root style name via style diff update.',
+    fields: { name: null, diff: null },
+  },
+  {
+    name: 'setStyleMetadata',
+    description: 'Set root style metadata object, or null to clear metadata.',
+    fields: { metadataJson: 'JSON object or null', diff: null },
+  },
+  {
+    name: 'setStyleTransition',
+    description: 'Set root transition object, or null to clear transition defaults.',
+    fields: { transitionJson: 'JSON object or null', diff: null },
+  },
+  {
+    name: 'setStyleCameraDefaults',
+    description: 'Set root camera defaults (center/zoom/bearing/pitch/roll/centerAltitude) in the style JSON.',
+    fields: {
+      centerJson: 'JSON array [lng, lat]', zoom: null, bearing: null, pitch: null,
+      roll: null, centerAltitude: null, diff: null,
+    },
+  },
+  {
+    name: 'validateStyleJson',
+    description: 'Validate a full style JSON object against MapLibre style spec without applying it to the map.',
+    fields: { styleJson: 'Full style JSON object string' },
+  },
+  {
+    name: 'validateCurrentMapStyle',
+    description: 'Validate the currently loaded map style against MapLibre style spec.',
+    fields: {},
+  },
+  {
+    name: 'setMapLight',
+    description: 'Set root light specification using a full JSON object.',
+    fields: { lightJson: 'JSON object for light spec' },
+  },
+  {
+    name: 'setMapSky',
+    description: 'Set root sky specification using JSON object. Use null to clear sky where supported.',
+    fields: { skyJson: 'JSON object for sky spec, or null' },
+  },
+  {
+    name: 'setMapProjection',
+    description: 'Set root projection specification.',
+    fields: { projectionJson: 'JSON projection object' },
+  },
+  {
+    name: 'setMapTerrain',
+    description: 'Set root terrain specification using JSON object. Use null to disable terrain.',
+    fields: { terrainJson: 'JSON object for terrain spec, or null' },
+  },
+  {
+    name: 'setMapGlyphs',
+    description: 'Set root glyphs URL. Use null to unset glyphs.',
+    fields: { glyphsUrlJson: 'JSON string URL or null' },
+  },
+  {
+    name: 'setMapSprite',
+    description: 'Set root sprite URL. Use null to unset sprite.',
+    fields: { spriteUrlJson: 'JSON string URL or null' },
+  },
+  {
+    name: 'listSprites',
+    description: 'List all sprite definitions currently set in style root.',
+    fields: {},
+  },
+  {
+    name: 'addSprite',
+    description: 'Add a sprite definition to the style root. Use overwrite=true to replace an existing sprite id.',
+    fields: { spriteId: null, url: null, overwrite: null },
+  },
+  {
+    name: 'removeSprite',
+    description: 'Remove a sprite definition by sprite id.',
+    fields: { spriteId: null },
+  },
+  {
+    name: 'setFeatureState',
+    description: 'Set feature-state for a specific feature identifier target. targetJson must include source/sourceLayer/id as needed.',
+    fields: {
+      targetJson: 'Feature identifier JSON object',
+      stateJson: 'State JSON object to merge',
+    },
+  },
+  {
+    name: 'removeFeatureState',
+    description: 'Remove feature-state by feature target; optionally provide a key to remove only one state key.',
+    fields: { targetJson: 'Feature identifier JSON object', key: null },
+  },
+  {
+    name: 'setGlobalStateProperty',
+    description: 'Set root global state property for use in global-state expressions.',
+    fields: { propertyName: null, valueJson: 'JSON value for global state' },
+  },
+  {
+    name: 'listImages',
+    description: 'List all currently available style image IDs.',
+    fields: { limit: null },
+  },
+  {
+    name: 'addImageFromUrl',
+    description: 'Load an image from URL and add it to style sprite images by imageId. If overwrite=true and image exists, update it.',
+    fields: { imageId: null, url: null, overwrite: null },
+  },
+  {
+    name: 'removeImage',
+    description: 'Remove a style image by id.',
+    fields: { imageId: null },
+  },
+  {
+    name: 'getLayerCount',
+    description: 'Return number of layers currently loaded in map style.',
+    fields: {},
+  },
+];
+
 const wholeStyle = JSON.stringify({ ...baseStyle(), name: 'replacement' });
 const routingRows: RoutingRow[] = [
   { name: 'listAllLayers', input: {}, route: 'discovery' },
@@ -402,6 +703,125 @@ test('registers every approved name once and binds all 53 designated strict name
   assert.equal(rejected.success, false);
   assert.equal(getterCalls, 0);
   assert.equal(fake.setStyleCalls.length, before);
+});
+
+test('preserves the exact frozen legacy descriptions and schema field guidance for all 53 tools', () => {
+  assert.deepEqual(
+    legacyDescriptionContracts.map((contract) => contract.name),
+    [...FULL_LEGACY_TOOL_NAMES],
+  );
+  assert.equal(legacyDescriptionContracts.length, 53);
+  const tools = createMapLibreStyleTools({
+    getMap: () => new FakeMap().asMap(),
+    imageLoader,
+  });
+
+  for (const contract of legacyDescriptionContracts) {
+    const registered = tools[contract.name] as unknown as {
+      description?: string;
+      inputSchema: z.ZodType;
+    };
+    assert.equal(registered.description, contract.description, contract.name);
+    const jsonSchema = z.toJSONSchema(registered.inputSchema) as {
+      properties?: Record<string, { description?: string }>;
+    };
+    const fieldDescriptions = Object.fromEntries(
+      Object.entries(jsonSchema.properties ?? {}).map(([name, schema]) => [
+        name,
+        schema.description ?? null,
+      ]),
+    );
+    assert.deepEqual(fieldDescriptions, contract.fields, contract.name);
+  }
+});
+
+test('preserves exact friendly failures for ordinary smart and batch paint/layout tools', async () => {
+  const cases = [
+    {
+      name: 'setLayerPaintProperty',
+      input: { layerId: 'roads', property: 'line-color', valueJson: '42' },
+      message: 'Failed to set paint property roads.line-color: Invalid paint properties for line layer "roads": line-color',
+    },
+    {
+      name: 'setLayerLayoutProperty',
+      input: { layerId: 'roads', property: 'line-cap', valueJson: '42' },
+      message: 'Failed to set layout property roads.line-cap: Invalid layout properties for line layer "roads": line-cap',
+    },
+    {
+      name: 'setLayerPaintPropertySmart',
+      input: { layerId: 'roads', property: 'line-color', valueJson: '42' },
+      message: 'Failed to set paint property roads.line-color: Invalid paint properties for line layer "roads": line-color',
+    },
+    {
+      name: 'setLayerLayoutPropertySmart',
+      input: { layerId: 'roads', property: 'line-cap', valueJson: '42' },
+      message: 'Failed to set layout property roads.line-cap: Invalid layout properties for line layer "roads": line-cap',
+    },
+    {
+      name: 'batchSetLayerPaintPropertiesSmart',
+      input: { layerId: 'roads', propertiesJson: '{"line-color":42}' },
+      message: 'Failed to batch set paint properties for roads: Invalid paint properties for line layer "roads": line-color',
+    },
+    {
+      name: 'batchSetLayerLayoutPropertiesSmart',
+      input: { layerId: 'roads', propertiesJson: '{"line-cap":42}' },
+      message: 'Failed to batch set layout properties for roads: Invalid layout properties for line layer "roads": line-cap',
+    },
+    {
+      name: 'batchSetLayerPaintProperties',
+      input: { layerId: 'roads', propertiesJson: '{"line-color":42}' },
+      message: 'Failed to batch set paint properties for roads: Invalid paint properties for line layer "roads": line-color',
+    },
+    {
+      name: 'batchSetLayerLayoutProperties',
+      input: { layerId: 'roads', propertiesJson: '{"line-cap":42}' },
+      message: 'Failed to batch set layout properties for roads: Invalid layout properties for line layer "roads": line-cap',
+    },
+  ] as const;
+
+  for (const row of cases) {
+    const fake = new FakeMap();
+    const tools = createMapLibreStyleTools({ getMap: () => fake.asMap(), imageLoader });
+    const result = await executeTool(tools[row.name], row.input);
+    assert.equal(result.success, false, row.name);
+    assert.equal(result.message, row.message, row.name);
+    assert.equal(isStyleToolError(result.error), true, row.name);
+    assert.equal((result.error as { code?: unknown }).code, 'STYLE_INVALID', row.name);
+  }
+});
+
+test('preserves exact source root and full-style apply exception wrappers', async () => {
+  const cases = [
+    {
+      name: 'addSource',
+      input: {
+        sourceId: 'added',
+        sourceJson: '{"type":"geojson","data":{"type":"FeatureCollection","features":[]}}',
+      },
+      message: 'Failed to add source "added": Map style application failed.',
+    },
+    {
+      name: 'setStyleName',
+      input: { name: 'rejected' },
+      message: 'Failed to set style name: Map style application failed.',
+    },
+    {
+      name: 'setStyleJsonOrUrl',
+      input: { styleJsonOrUrl: wholeStyle },
+      message: 'Failed to set style: Map style application failed.',
+    },
+  ] as const;
+
+  for (const row of cases) {
+    const fake = new FakeMap();
+    fake.failCandidate = true;
+    const tools = createMapLibreStyleTools({ getMap: () => fake.asMap(), imageLoader });
+    const result = await executeTool(tools[row.name], row.input);
+    assert.equal(result.success, false, row.name);
+    assert.equal(result.message, row.message, row.name);
+    assert.equal(isStyleToolError(result.error), true, row.name);
+    assert.equal(fake.setStyleCalls.length, 2, row.name);
+  }
 });
 
 const diffCases = [

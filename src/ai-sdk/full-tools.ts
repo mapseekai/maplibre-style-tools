@@ -203,6 +203,60 @@ function hasLayer(style: StyleDocument, layerId: string): boolean {
   return style.layers.some((layer) => layer.id === layerId);
 }
 
+function recreateStyleToolError(
+  error: StyleToolError,
+  message: string,
+): StyleToolError {
+  return createStyleToolError(error.code, message, error.path, error.details);
+}
+
+function legacyPropertyValidationMessage(
+  style: StyleDocument,
+  error: StyleToolError,
+): string | undefined {
+  if (error.code !== 'STYLE_INVALID') return undefined;
+  const match = /^layers\[(\d+)\]\.(paint|layout)\./.exec(error.message);
+  if (match === null) return undefined;
+  const layerIndex = Number(match[1]);
+  const mode = match[2];
+  const pathPrefix = match[0];
+  const unknownPropertyMarker = ': unknown property "';
+  let propertyName: string | undefined;
+
+  if (error.message.endsWith('"')) {
+    let markerIndex = error.message.indexOf(unknownPropertyMarker, pathPrefix.length);
+    while (markerIndex >= 0) {
+      const pathProperty = error.message.slice(pathPrefix.length, markerIndex);
+      const detailProperty = error.message.slice(
+        markerIndex + unknownPropertyMarker.length,
+        -1,
+      );
+      if (pathProperty === detailProperty) {
+        propertyName = detailProperty;
+        break;
+      }
+      markerIndex = error.message.indexOf(unknownPropertyMarker, markerIndex + 1);
+    }
+  }
+
+  if (propertyName === undefined) {
+    const detailIndex = error.message.indexOf(': ', pathPrefix.length);
+    if (detailIndex < 0) return undefined;
+    propertyName = error.message.slice(pathPrefix.length, detailIndex);
+  }
+
+  const layer = style.layers[layerIndex];
+  if (layer === undefined || (mode !== 'paint' && mode !== 'layout')) return undefined;
+  return 'Invalid ' + mode + ' properties for ' + layer.type + ' layer "'
+    + layer.id + '": ' + propertyName;
+}
+
+type LegacyApplyOptions = {
+  diff?: boolean;
+  failurePrefix: string;
+  validationStyle?: StyleDocument;
+};
+
 export const createMapLibreStyleTools = <TStyle = unknown>({
   getMap,
   getState,
@@ -250,29 +304,43 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     outer: ApplicationState<TStyle>,
     operations: StyleOperation[],
     message: string,
-    diff?: boolean,
+    options: LegacyApplyOptions,
   ): Promise<AiStyleToolResult<unknown, TStyle>> => {
     const transaction: StyleTransaction = { operations };
     const result = await applyTransactionToMap(
       map,
       transaction,
-      diff === undefined ? undefined : { diff },
+      options.diff === undefined ? undefined : { diff: options.diff },
     );
     const data = mapTransactionData(result);
-    return result.ok
-      ? success(message, outer, data)
-      : failure(result.error, outer, data);
+    if (result.ok) return success(message, outer, data);
+    const cause = options.validationStyle === undefined
+      ? result.error.message
+      : legacyPropertyValidationMessage(options.validationStyle, result.error)
+        ?? result.error.message;
+    return failure(
+      recreateStyleToolError(result.error, options.failurePrefix + ': ' + cause),
+      outer,
+      data,
+    );
   };
 
   const runRuntime = async (
     outer: ApplicationState<TStyle>,
     result: RuntimeCommandResult | Promise<RuntimeCommandResult>,
     message: string,
+    failurePrefix: string,
   ): Promise<AiStyleToolResult<unknown, TStyle>> => {
     const resolved = await result;
     return resolved.ok
       ? success(message, outer, resolved.data)
-      : failure(resolved.error, outer);
+      : failure(
+          recreateStyleToolError(
+            resolved.error,
+            failurePrefix + ': ' + resolved.error.message,
+          ),
+          outer,
+        );
   };
 
   const register = <Schema extends z.ZodType>(
@@ -300,7 +368,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
 
   const legacyTools = {
     listAllLayers: register(
-      'List all loaded layers from the validated current MapLibre style.',
+      'List all loaded layers from the current MapLibre style.',
       schemas.fullListAllLayersInputSchema,
       ({ limit }) => {
         const context = ready();
@@ -325,7 +393,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     listAllSources: register(
-      'List all sources from the validated current MapLibre style.',
+      'List all loaded sources from the current MapLibre style.',
       schemas.fullListAllSourcesInputSchema,
       ({ limit }) => {
         const context = ready();
@@ -347,7 +415,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     inspectLayerStyle: register(
-      'Inspect one layer from the validated current Style document.',
+      'Inspect a layer by id and return its paint/layout/filter definitions.',
       schemas.fullInspectLayerStyleInputSchema,
       ({ layerId }) => {
         const context = ready();
@@ -363,7 +431,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     inspectSource: register(
-      'Inspect one source from the validated current Style document.',
+      'Inspect a source by id and return its full source definition.',
       schemas.fullInspectSourceInputSchema,
       ({ sourceId }) => {
         const context = ready();
@@ -381,7 +449,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     setLayerPaintProperty: register(
-      'Set one paint property through one validated Style transaction.',
+      'Set a paint property for any existing layer. valueJson can be JSON literal (number/array/object) or plain string.',
       schemas.fullSetLayerPaintPropertyInputSchema,
       async ({ layerId, property, valueJson }) => {
         const context = ready();
@@ -392,12 +460,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, paint: { [property]: parsed.value },
         }], 'Updated paint property: ' + layerId + '.' + property
-          + ' = ' + JSON.stringify(parsed.value));
+          + ' = ' + JSON.stringify(parsed.value), {
+          failurePrefix: 'Failed to set paint property ' + layerId + '.' + property,
+          validationStyle: context.current,
+        });
       },
     ),
 
     setLayerLayoutProperty: register(
-      'Set one layout property through one validated Style transaction.',
+      'Set a layout property for any existing layer. valueJson can be JSON literal or plain string.',
       schemas.fullSetLayerLayoutPropertyInputSchema,
       async ({ layerId, property, valueJson }) => {
         const context = ready();
@@ -408,12 +479,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, layout: { [property]: parsed.value },
         }], 'Updated layout property: ' + layerId + '.' + property
-          + ' = ' + JSON.stringify(parsed.value));
+          + ' = ' + JSON.stringify(parsed.value), {
+          failurePrefix: 'Failed to set layout property ' + layerId + '.' + property,
+          validationStyle: context.current,
+        });
       },
     ),
 
     setLayerPaintPropertySmart: register(
-      'Set one paint property with completed-Style validation.',
+      'Set a paint property with layer-type guard. Example: line layer accepts line-* but rejects fill-*.',
       schemas.fullSetLayerPaintPropertySmartInputSchema,
       async ({ layerId, property, valueJson }) => {
         const context = ready();
@@ -424,12 +498,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, paint: { [property]: parsed.value },
         }], 'Updated paint property (smart): ' + layerId + '.' + property
-          + ' = ' + JSON.stringify(parsed.value));
+          + ' = ' + JSON.stringify(parsed.value), {
+          failurePrefix: 'Failed to set paint property ' + layerId + '.' + property,
+          validationStyle: context.current,
+        });
       },
     ),
 
     setLayerLayoutPropertySmart: register(
-      'Set one layout property with completed-Style validation.',
+      'Set a layout property with layer-type guard. visibility is always allowed.',
       schemas.fullSetLayerLayoutPropertySmartInputSchema,
       async ({ layerId, property, valueJson }) => {
         const context = ready();
@@ -440,12 +517,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, layout: { [property]: parsed.value },
         }], 'Updated layout property (smart): ' + layerId + '.' + property
-          + ' = ' + JSON.stringify(parsed.value));
+          + ' = ' + JSON.stringify(parsed.value), {
+          failurePrefix: 'Failed to set layout property ' + layerId + '.' + property,
+          validationStyle: context.current,
+        });
       },
     ),
 
     batchSetLayerPaintPropertiesSmart: register(
-      'Atomically set multiple paint properties with completed-Style validation.',
+      'Batch set paint properties with layer-type guard. Rejects the whole request if any property is invalid.',
       schemas.fullBatchSetLayerPaintPropertiesSmartInputSchema,
       async ({ layerId, propertiesJson }) => {
         const context = ready();
@@ -457,12 +537,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (count === 0) return legacyFailure('propertiesJson is empty.', context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, paint: parsed.value,
-        }], 'Updated ' + count + ' paint properties for layer "' + layerId + '" (smart).');
+        }], 'Updated ' + count + ' paint properties for layer "' + layerId + '" (smart).', {
+          failurePrefix: 'Failed to batch set paint properties for ' + layerId,
+          validationStyle: context.current,
+        });
       },
     ),
 
     batchSetLayerLayoutPropertiesSmart: register(
-      'Atomically set multiple layout properties with completed-Style validation.',
+      'Batch set layout properties with layer-type guard. visibility is always allowed.',
       schemas.fullBatchSetLayerLayoutPropertiesSmartInputSchema,
       async ({ layerId, propertiesJson }) => {
         const context = ready();
@@ -474,12 +557,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (count === 0) return legacyFailure('propertiesJson is empty.', context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, layout: parsed.value,
-        }], 'Updated ' + count + ' layout properties for layer "' + layerId + '" (smart).');
+        }], 'Updated ' + count + ' layout properties for layer "' + layerId + '" (smart).', {
+          failurePrefix: 'Failed to batch set layout properties for ' + layerId,
+          validationStyle: context.current,
+        });
       },
     ),
 
     batchSetLayerPaintProperties: register(
-      'Atomically set multiple paint properties.',
+      'Set multiple paint properties in one call. propertiesJson must be an object of paint-property -> value.',
       schemas.fullBatchSetLayerPaintPropertiesInputSchema,
       async ({ layerId, propertiesJson }) => {
         const context = ready();
@@ -491,12 +577,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (count === 0) return legacyFailure('propertiesJson is empty.', context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, paint: parsed.value,
-        }], 'Updated ' + count + ' paint properties for layer "' + layerId + '".');
+        }], 'Updated ' + count + ' paint properties for layer "' + layerId + '".', {
+          failurePrefix: 'Failed to batch set paint properties for ' + layerId,
+          validationStyle: context.current,
+        });
       },
     ),
 
     batchSetLayerLayoutProperties: register(
-      'Atomically set multiple layout properties.',
+      'Set multiple layout properties in one call. propertiesJson must be an object of layout-property -> value.',
       schemas.fullBatchSetLayerLayoutPropertiesInputSchema,
       async ({ layerId, propertiesJson }) => {
         const context = ready();
@@ -508,12 +597,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (count === 0) return legacyFailure('propertiesJson is empty.', context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, layout: parsed.value,
-        }], 'Updated ' + count + ' layout properties for layer "' + layerId + '".');
+        }], 'Updated ' + count + ' layout properties for layer "' + layerId + '".', {
+          failurePrefix: 'Failed to batch set layout properties for ' + layerId,
+          validationStyle: context.current,
+        });
       },
     ),
 
     clearLayerPaintProperty: register(
-      'Clear one paint property through a null property patch.',
+      'Clear a paint property by setting it to null.',
       schemas.fullClearLayerPaintPropertyInputSchema,
       async ({ layerId, property }) => {
         const context = ready();
@@ -521,12 +613,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!hasLayer(context.current, layerId)) return layerMissing(layerId, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, paint: { [property]: null },
-        }], 'Cleared paint property: ' + layerId + '.' + property);
+        }], 'Cleared paint property: ' + layerId + '.' + property, {
+          failurePrefix: 'Failed to clear paint property ' + layerId + '.' + property,
+          validationStyle: context.current,
+        });
       },
     ),
 
     clearLayerLayoutProperty: register(
-      'Clear one layout property through a null property patch.',
+      'Clear a layout property by setting it to null. Some layout properties may reject null.',
       schemas.fullClearLayerLayoutPropertyInputSchema,
       async ({ layerId, property }) => {
         const context = ready();
@@ -534,12 +629,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!hasLayer(context.current, layerId)) return layerMissing(layerId, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, layout: { [property]: null },
-        }], 'Cleared layout property: ' + layerId + '.' + property);
+        }], 'Cleared layout property: ' + layerId + '.' + property, {
+          failurePrefix: 'Failed to clear layout property ' + layerId + '.' + property,
+          validationStyle: context.current,
+        });
       },
     ),
 
     setLayerFilter: register(
-      'Replace or clear a layer filter through one validated transaction.',
+      'Set the filter expression for a layer. Use JSON array expression, or null to clear filter.',
       schemas.fullSetLayerFilterInputSchema,
       async ({ layerId, filterJson }) => {
         const context = ready();
@@ -561,12 +659,16 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           context.outer,
           [operation],
           'Updated filter: ' + layerId + '.filter = ' + JSON.stringify(parsed.value),
+          {
+            failurePrefix: 'Failed to set filter for ' + layerId,
+            validationStyle: context.current,
+          },
         );
       },
     ),
 
     setLayerZoomRange: register(
-      'Set layer minzoom and maxzoom through one transaction.',
+      'Set minzoom and maxzoom for a layer.',
       schemas.fullSetLayerZoomRangeInputSchema,
       async ({ layerId, minzoom, maxzoom }) => {
         const context = ready();
@@ -581,12 +683,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, minzoom, maxzoom,
         }], 'Updated zoom range: ' + layerId + ' minzoom=' + minzoom
-          + ', maxzoom=' + maxzoom);
+          + ', maxzoom=' + maxzoom, {
+          failurePrefix: 'Failed to set zoom range for ' + layerId,
+          validationStyle: context.current,
+        });
       },
     ),
 
     setLayerVisibility: register(
-      'Set layer visibility through one layout transaction.',
+      'Set layer visibility to visible or none.',
       schemas.fullSetLayerVisibilityInputSchema,
       async ({ layerId, visibility }) => {
         const context = ready();
@@ -594,12 +699,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!hasLayer(context.current, layerId)) return layerMissing(layerId, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'setLayerProperties', layerId, layout: { visibility },
-        }], 'Layer ' + layerId + ' visibility set to ' + visibility + '.');
+        }], 'Layer ' + layerId + ' visibility set to ' + visibility + '.', {
+          failurePrefix: 'Failed to set visibility for ' + layerId,
+          validationStyle: context.current,
+        });
       },
     ),
 
     addLayer: register(
-      'Add one full raw layer definition through the compatibility operation.',
+      'Add a new style layer. layerJson must be a full layer object (id/type/source/...); optional beforeId controls z-order.',
       schemas.fullAddLayerInputSchema,
       async ({ layerJson, beforeId }) => {
         const context = ready();
@@ -624,12 +732,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           op: 'addLayerDefinition', layer: parsed.value,
           ...(beforeId === undefined ? {} : { beforeId }),
         }], 'Added layer "' + rawId + '"'
-          + (beforeId === undefined ? '.' : ' before "' + beforeId + '".'));
+          + (beforeId === undefined ? '.' : ' before "' + beforeId + '".'), {
+          failurePrefix: 'Failed to add layer "' + rawId + '"',
+        });
       },
     ),
 
     moveLayer: register(
-      'Move one layer through the core moveLayer transaction.',
+      'Move an existing layer before another layer. Omit beforeId to move to top.',
       schemas.fullMoveLayerInputSchema,
       async ({ layerId, beforeId }) => {
         const context = ready();
@@ -645,12 +755,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           op: 'moveLayer', layerId,
           ...(beforeId === undefined ? {} : { beforeId }),
         }], 'Moved layer "' + layerId + '"'
-          + (beforeId === undefined ? ' to top.' : ' before "' + beforeId + '".'));
+          + (beforeId === undefined ? ' to top.' : ' before "' + beforeId + '".'), {
+          failurePrefix: 'Failed to move layer "' + layerId + '"',
+        });
       },
     ),
 
     removeLayer: register(
-      'Remove one layer through the core removeLayer transaction.',
+      'Remove an existing layer by id.',
       schemas.fullRemoveLayerInputSchema,
       async ({ layerId }) => {
         const context = ready();
@@ -658,12 +770,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!hasLayer(context.current, layerId)) return layerMissing(layerId, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'removeLayer', layerId,
-        }], 'Removed layer "' + layerId + '".');
+        }], 'Removed layer "' + layerId + '".', {
+          failurePrefix: 'Failed to remove layer "' + layerId + '"',
+        });
       },
     ),
 
     patchLayerDefinition: register(
-      'Legacy deep-merge a raw layer definition while retaining null values.',
+      'Patch an existing layer definition (deep merge). Supports paint/layout/filter/metadata/minzoom/maxzoom/etc.',
       schemas.fullPatchLayerDefinitionInputSchema,
       async ({ layerId, patchJson, diff }) => {
         const context = ready();
@@ -673,12 +787,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'deepMergeLayerDefinition', layerId, patch: parsed.value,
-        }], 'Patched layer definition "' + layerId + '" (diff=' + diff + ').', diff);
+        }], 'Patched layer definition "' + layerId + '" (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to patch layer "' + layerId + '"',
+        });
       },
     ),
 
     replaceLayerDefinition: register(
-      'Replace a raw layer definition atomically.',
+      'Replace an existing layer definition with layerJson, then apply via setStyle.',
       schemas.fullReplaceLayerDefinitionInputSchema,
       async ({ layerId, layerJson, diff }) => {
         const context = ready();
@@ -688,12 +805,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'replaceLayerDefinition', layerId, layer: parsed.value,
-        }], 'Replaced layer definition "' + layerId + '" (diff=' + diff + ').', diff);
+        }], 'Replaced layer definition "' + layerId + '" (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to replace layer "' + layerId + '"',
+        });
       },
     ),
 
     addSource: register(
-      'Add one source through the core addSource transaction.',
+      'Add a new source by id. sourceJson must be a valid source definition object.',
       schemas.fullAddSourceInputSchema,
       async ({ sourceId, sourceJson }) => {
         const context = ready();
@@ -709,12 +829,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'addSource', sourceId, source: parsed.value,
-        }], 'Added source "' + sourceId + '".');
+        }], 'Added source "' + sourceId + '".', {
+          failurePrefix: 'Failed to add source "' + sourceId + '"',
+        });
       },
     ),
 
     removeSource: register(
-      'Remove one source through the core removeSource transaction.',
+      'Remove a source by id. Source must not be referenced by any remaining layer.',
       schemas.fullRemoveSourceInputSchema,
       async ({ sourceId }) => {
         const context = ready();
@@ -724,12 +846,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         }
         return applyOperations(context.map, context.outer, [{
           op: 'removeSource', sourceId,
-        }], 'Removed source "' + sourceId + '".');
+        }], 'Removed source "' + sourceId + '".', {
+          failurePrefix: 'Failed to remove source "' + sourceId + '"',
+        });
       },
     ),
 
     updateGeoJsonSourceData: register(
-      'Use a core document transaction for setData or a strict runtime diff command for updateData.',
+      'Update data of a GeoJSON source via setData/updateData. dataJson can be URL string or inline GeoJSON object.',
       schemas.fullUpdateGeoJsonSourceDataInputSchema,
       async ({ sourceId, dataJson, method }) => {
         const parsed = method === 'updateData'
@@ -751,6 +875,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
             createMapRuntimeCommands(context.map, { imageLoader })
               .updateGeoJsonDataRuntime({ sourceId, diff: parsed.value as never }),
             'Updated GeoJSON source "' + sourceId + '" via updateData.',
+            'Failed to update source "' + sourceId + '"',
           );
         }
         const context = ready();
@@ -760,12 +885,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         }
         return applyOperations(context.map, context.outer, [{
           op: 'setGeoJsonData', sourceId, data: parsed.value as never,
-        }], 'Updated GeoJSON source "' + sourceId + '" via setData.');
+        }], 'Updated GeoJSON source "' + sourceId + '" via setData.', {
+          failurePrefix: 'Failed to update source "' + sourceId + '"',
+        });
       },
     ),
 
     setGeoJsonClusterOptions: register(
-      'Patch GeoJSON clustering options through the native core patchSource operation.',
+      'Set clustering options on an existing GeoJSON source via setClusterOptions.',
       schemas.fullSetGeoJsonClusterOptionsInputSchema,
       async ({ sourceId, optionsJson }) => {
         const context = ready();
@@ -777,12 +904,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'patchSource', sourceId, patch: parsed.value,
-        }], 'Updated cluster options for source "' + sourceId + '".');
+        }], 'Updated cluster options for source "' + sourceId + '".', {
+          failurePrefix: 'Failed to set cluster options for "' + sourceId + '"',
+        });
       },
     ),
 
     setSourceTileLodParams: register(
-      'Set source tile LOD parameters through the runtime command boundary.',
+      'Adjust source tile LOD behavior for pitched views. If sourceId is omitted, applies to all sources.',
       schemas.fullSetSourceTileLodParamsInputSchema,
       async (input) => {
         const context = runtimeReady();
@@ -792,12 +921,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           createMapRuntimeCommands(context.map, { imageLoader })
             .setSourceTileLodParams(input),
           'Updated source tile LOD params.',
+          'Failed to set source tile LOD params',
         );
       },
     ),
 
     patchSourceDefinition: register(
-      'Legacy deep-merge a raw source definition while retaining null values.',
+      'Patch an existing source definition by deep-merging patchJson into style.sources[sourceId], then apply via setStyle.',
       schemas.fullPatchSourceDefinitionInputSchema,
       async ({ sourceId, patchJson, diff }) => {
         const context = ready();
@@ -809,12 +939,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'deepMergeSourceDefinition', sourceId, patch: parsed.value,
-        }], 'Patched source definition "' + sourceId + '" (diff=' + diff + ').', diff);
+        }], 'Patched source definition "' + sourceId + '" (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to patch source "' + sourceId + '"',
+        });
       },
     ),
 
     replaceSourceDefinition: register(
-      'Replace a raw source definition atomically.',
+      'Replace an existing source definition with sourceJson, then apply via setStyle.',
       schemas.fullReplaceSourceDefinitionInputSchema,
       async ({ sourceId, sourceJson, diff }) => {
         const context = ready();
@@ -826,12 +959,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'replaceSourceDefinition', sourceId, source: parsed.value,
-        }], 'Replaced source definition "' + sourceId + '" (diff=' + diff + ').', diff);
+        }], 'Replaced source definition "' + sourceId + '" (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to replace source "' + sourceId + '"',
+        });
       },
     ),
 
     setStyleJsonOrUrl: register(
-      'Apply a strict full Style document or raw Style URL through the completion-aware adapter.',
+      'Set a full map style via URL string or full style JSON object. diff=true applies style diff when possible.',
       schemas.fullSetStyleJsonOrUrlInputSchema,
       async ({ styleJsonOrUrl, diff }) => {
         const outer = state();
@@ -870,20 +1006,28 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           { diff },
         );
         const data = mapTransactionData(result);
-        return result.ok
-          ? success(
-              'Style update requested via '
-                + (typeof nextStyle === 'string' ? 'URL' : 'JSON object')
-                + ' (diff=' + diff + ').',
-              outer,
-              data,
-            )
-          : failure(result.error, outer, data);
+        if (result.ok) {
+          return success(
+            'Style update requested via '
+              + (typeof nextStyle === 'string' ? 'URL' : 'JSON object')
+              + ' (diff=' + diff + ').',
+            outer,
+            data,
+          );
+        }
+        return failure(
+          recreateStyleToolError(
+            result.error,
+            'Failed to set style: ' + result.error.message,
+          ),
+          outer,
+          data,
+        );
       },
     ),
 
     inspectRootStyle: register(
-      'Inspect bounded root-level fields from the validated Style document.',
+      'Inspect root-level style fields such as name, metadata, transition, camera defaults, sprite, glyphs, projection, terrain, light and sky.',
       schemas.fullInspectRootStyleInputSchema,
       () => {
         const context = ready();
@@ -907,19 +1051,22 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     setStyleName: register(
-      'Set the root Style name through setStyleRootProperties.',
+      'Set root style name via style diff update.',
       schemas.fullSetStyleNameInputSchema,
       async ({ name, diff }) => {
         const context = ready();
         if (!context.ok) return context.result;
         return applyOperations(context.map, context.outer, [{
           op: 'setStyleRootProperties', properties: { name },
-        }], 'Updated style name to "' + name + '" (diff=' + diff + ').', diff);
+        }], 'Updated style name to "' + name + '" (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to set style name',
+        });
       },
     ),
 
     setStyleMetadata: register(
-      'Replace or clear the complete root metadata value.',
+      'Set root style metadata object, or null to clear metadata.',
       schemas.fullSetStyleMetadataInputSchema,
       async ({ metadataJson, diff }) => {
         const context = ready();
@@ -929,12 +1076,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'replaceRootProperty', property: 'metadata', value: parsed.value,
         }], (parsed.value === null ? 'Cleared' : 'Updated')
-          + ' style metadata (diff=' + diff + ').', diff);
+          + ' style metadata (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to set style metadata',
+        });
       },
     ),
 
     setStyleTransition: register(
-      'Replace or clear the complete root transition value.',
+      'Set root transition object, or null to clear transition defaults.',
       schemas.fullSetStyleTransitionInputSchema,
       async ({ transitionJson, diff }) => {
         const context = ready();
@@ -944,12 +1094,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         return applyOperations(context.map, context.outer, [{
           op: 'replaceRootProperty', property: 'transition', value: parsed.value,
         }], (parsed.value === null ? 'Cleared' : 'Updated')
-          + ' style transition (diff=' + diff + ').', diff);
+          + ' style transition (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to set style transition',
+        });
       },
     ),
 
     setStyleCameraDefaults: register(
-      'Set supplied root camera defaults through setStyleRootProperties.',
+      'Set root camera defaults (center/zoom/bearing/pitch/roll/centerAltitude) in the style JSON.',
       schemas.fullSetStyleCameraDefaultsInputSchema,
       async ({ centerJson, zoom, bearing, pitch, roll, centerAltitude, diff }) => {
         const context = ready();
@@ -978,12 +1131,15 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         }
         return applyOperations(context.map, context.outer, [{
           op: 'setStyleRootProperties', properties,
-        }], 'Updated style camera defaults (diff=' + diff + ').', diff);
+        }], 'Updated style camera defaults (diff=' + diff + ').', {
+          diff,
+          failurePrefix: 'Failed to set style camera defaults',
+        });
       },
     ),
 
     validateStyleJson: register(
-      'Validate a complete strict JSON Style document without applying it.',
+      'Validate a full style JSON object against MapLibre style spec without applying it to the map.',
       schemas.fullValidateStyleJsonInputSchema,
       ({ styleJson }) => {
         const outer = state();
@@ -1011,7 +1167,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     validateCurrentMapStyle: register(
-      'Validate the current Map Style snapshot.',
+      'Validate the currently loaded map style against MapLibre style spec.',
       schemas.fullValidateCurrentMapStyleInputSchema,
       () => {
         const context = ready();
@@ -1033,7 +1189,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     setMapLight: register(
-      'Shallow-patch root light one top-level key at a time.',
+      'Set root light specification using a full JSON object.',
       schemas.fullSetMapLightInputSchema,
       async ({ lightJson }) => {
         const context = ready();
@@ -1042,12 +1198,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'shallowPatchRootProperty', property: 'light', patch: parsed.value,
-        }], 'Updated map light specification.');
+        }], 'Updated map light specification.', {
+          failurePrefix: 'Failed to set light',
+        });
       },
     ),
 
     setMapSky: register(
-      'Replace or clear the complete root sky value.',
+      'Set root sky specification using JSON object. Use null to clear sky where supported.',
       schemas.fullSetMapSkyInputSchema,
       async ({ skyJson }) => {
         const context = ready();
@@ -1058,12 +1216,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           op: 'replaceRootProperty', property: 'sky', value: parsed.value,
         }], parsed.value === null
           ? 'Cleared map sky specification.'
-          : 'Updated map sky specification.');
+          : 'Updated map sky specification.', {
+          failurePrefix: 'Failed to set sky',
+        });
       },
     ),
 
     setMapProjection: register(
-      'Replace or clear the complete root projection value.',
+      'Set root projection specification.',
       schemas.fullSetMapProjectionInputSchema,
       async ({ projectionJson }) => {
         const context = ready();
@@ -1072,12 +1232,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'replaceRootProperty', property: 'projection', value: parsed.value,
-        }], 'Updated map projection specification.');
+        }], 'Updated map projection specification.', {
+          failurePrefix: 'Failed to set projection',
+        });
       },
     ),
 
     setMapTerrain: register(
-      'Replace or clear the complete root terrain value.',
+      'Set root terrain specification using JSON object. Use null to disable terrain.',
       schemas.fullSetMapTerrainInputSchema,
       async ({ terrainJson }) => {
         const context = ready();
@@ -1086,12 +1248,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!parsed.ok) return failure(parsed.error, context.outer);
         return applyOperations(context.map, context.outer, [{
           op: 'replaceRootProperty', property: 'terrain', value: parsed.value,
-        }], parsed.value === null ? 'Terrain disabled.' : 'Updated map terrain specification.');
+        }], parsed.value === null ? 'Terrain disabled.' : 'Updated map terrain specification.', {
+          failurePrefix: 'Failed to set terrain',
+        });
       },
     ),
 
     setMapGlyphs: register(
-      'Set or unset the root glyphs URL through setStyleRootProperties.',
+      'Set root glyphs URL. Use null to unset glyphs.',
       schemas.fullSetMapGlyphsInputSchema,
       async ({ glyphsUrlJson }) => {
         const context = ready();
@@ -1108,12 +1272,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           op: 'setStyleRootProperties', properties: { glyphs: parsed.value },
         }], parsed.value === null
           ? 'Glyphs unset.'
-          : 'Updated glyphs URL to "' + parsed.value + '".');
+          : 'Updated glyphs URL to "' + parsed.value + '".', {
+          failurePrefix: 'Failed to set glyphs',
+        });
       },
     ),
 
     setMapSprite: register(
-      'Set or unset the document-representable root sprite URL.',
+      'Set root sprite URL. Use null to unset sprite.',
       schemas.fullSetMapSpriteInputSchema,
       async ({ spriteUrlJson }) => {
         const context = ready();
@@ -1130,12 +1296,14 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           op: 'setStyleRootProperties', properties: { sprite: parsed.value },
         }], parsed.value === null
           ? 'Sprite unset.'
-          : 'Updated sprite URL to "' + parsed.value + '".');
+          : 'Updated sprite URL to "' + parsed.value + '".', {
+          failurePrefix: 'Failed to set sprite',
+        });
       },
     ),
 
     listSprites: register(
-      'List bounded runtime sprite definitions.',
+      'List all sprite definitions currently set in style root.',
       schemas.fullListSpritesInputSchema,
       async () => {
         const context = runtimeReady();
@@ -1165,7 +1333,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     addSprite: register(
-      'Add or replace a sprite through the runtime command boundary.',
+      'Add a sprite definition to the style root. Use overwrite=true to replace an existing sprite id.',
       schemas.fullAddSpriteInputSchema,
       async (input) => {
         const context = runtimeReady();
@@ -1174,12 +1342,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           context.outer,
           createMapRuntimeCommands(context.map, { imageLoader }).addSprite(input),
           'Updated sprite "' + input.spriteId + '" -> ' + input.url,
+          'Failed to add sprite "' + input.spriteId + '"',
         );
       },
     ),
 
     removeSprite: register(
-      'Remove a sprite through the runtime command boundary.',
+      'Remove a sprite definition by sprite id.',
       schemas.fullRemoveSpriteInputSchema,
       async (input) => {
         const context = runtimeReady();
@@ -1188,12 +1357,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           context.outer,
           createMapRuntimeCommands(context.map, { imageLoader }).removeSprite(input),
           'Removed sprite "' + input.spriteId + '".',
+          'Failed to remove sprite "' + input.spriteId + '"',
         );
       },
     ),
 
     setFeatureState: register(
-      'Set feature state through the runtime command boundary.',
+      'Set feature-state for a specific feature identifier target. targetJson must include source/sourceLayer/id as needed.',
       schemas.fullSetFeatureStateInputSchema,
       async ({ targetJson, stateJson }) => {
         const context = runtimeReady();
@@ -1209,12 +1379,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
             state: featureState.value,
           }),
           'Updated feature-state.',
+          'Failed to set feature-state',
         );
       },
     ),
 
     removeFeatureState: register(
-      'Remove feature state through the runtime command boundary.',
+      'Remove feature-state by feature target; optionally provide a key to remove only one state key.',
       schemas.fullRemoveFeatureStateInputSchema,
       async ({ targetJson, key }) => {
         const context = runtimeReady();
@@ -1230,12 +1401,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           key === undefined
             ? 'Removed feature-state object.'
             : 'Removed feature-state key "' + key + '".',
+          'Failed to remove feature-state',
         );
       },
     ),
 
     setGlobalStateProperty: register(
-      'Set global state through the runtime command boundary.',
+      'Set root global state property for use in global-state expressions.',
       schemas.fullSetGlobalStatePropertyInputSchema,
       async ({ propertyName, valueJson }) => {
         const context = runtimeReady();
@@ -1249,12 +1421,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
             value: parsed.value,
           }),
           'Updated global state: ' + propertyName + ' = ' + JSON.stringify(parsed.value),
+          'Failed to set global state "' + propertyName + '"',
         );
       },
     ),
 
     listImages: register(
-      'List bounded runtime image IDs.',
+      'List all currently available style image IDs.',
       schemas.fullListImagesInputSchema,
       async ({ limit }) => {
         const context = runtimeReady();
@@ -1279,7 +1452,7 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
     ),
 
     addImageFromUrl: register(
-      'Load and add an image through the injected runtime image loader.',
+      'Load an image from URL and add it to style sprite images by imageId. If overwrite=true and image exists, update it.',
       schemas.fullAddImageFromUrlInputSchema,
       async (input) => {
         const context = runtimeReady();
@@ -1288,12 +1461,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           context.outer,
           createMapRuntimeCommands(context.map, { imageLoader }).addImageFromUrl(input),
           'Added or updated image "' + input.imageId + '" from URL.',
+          'Failed to add/update image "' + input.imageId + '"',
         );
       },
     ),
 
     removeImage: register(
-      'Remove an image through the runtime command boundary.',
+      'Remove a style image by id.',
       schemas.fullRemoveImageInputSchema,
       async (input) => {
         const context = runtimeReady();
@@ -1302,12 +1476,13 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
           context.outer,
           createMapRuntimeCommands(context.map, { imageLoader }).removeImage(input),
           'Removed image "' + input.imageId + '".',
+          'Failed to remove image "' + input.imageId + '"',
         );
       },
     ),
 
     getLayerCount: register(
-      'Return the layer count from core context discovery.',
+      'Return number of layers currently loaded in map style.',
       schemas.fullGetLayerCountInputSchema,
       () => {
         const context = ready();

@@ -214,13 +214,25 @@ const emptyShape = {};
 
 export const fullListAllLayersInputSchema = fullSchema({ limit: legacyLimit });
 export const fullListAllSourcesInputSchema = fullSchema({ limit: legacyLimit });
-export const fullInspectLayerStyleInputSchema = fullSchema({ layerId });
-export const fullInspectSourceInputSchema = fullSchema({ sourceId });
+export const fullInspectLayerStyleInputSchema = fullSchema({
+  layerId: z.string().describe('Layer id from listAllLayers output'),
+});
+export const fullInspectSourceInputSchema = fullSchema({
+  sourceId: z.string().describe('Source id from listAllSources output'),
+});
 export const fullSetLayerPaintPropertyInputSchema = fullSchema({
-  layerId, property, valueJson: jsonOrRawStringTextSchema,
+  layerId,
+  property: z.string().describe('For example fill-color, line-width, text-color'),
+  valueJson: jsonOrRawStringTextSchema.describe(
+    'JSON literal or string. Example: "#ff0000", 1.2, ["interpolate", ...]',
+  ),
 });
 export const fullSetLayerLayoutPropertyInputSchema = fullSchema({
-  layerId, property, valueJson: jsonOrRawStringTextSchema,
+  layerId,
+  property: z.string().describe('For example visibility, text-size, line-cap'),
+  valueJson: jsonOrRawStringTextSchema.describe(
+    'JSON literal or string. Example: "visible", 14',
+  ),
 });
 export const fullSetLayerPaintPropertySmartInputSchema = fullSchema({
   layerId, property, valueJson: jsonOrRawStringTextSchema,
@@ -235,15 +247,24 @@ export const fullBatchSetLayerLayoutPropertiesSmartInputSchema = fullSchema({
   layerId, propertiesJson: strictJsonTextSchema,
 });
 export const fullBatchSetLayerPaintPropertiesInputSchema = fullSchema({
-  layerId, propertiesJson: strictJsonTextSchema,
+  layerId,
+  propertiesJson: strictJsonTextSchema.describe(
+    'JSON object, e.g. {"fill-color":"#fff","fill-opacity":0.6}',
+  ),
 });
 export const fullBatchSetLayerLayoutPropertiesInputSchema = fullSchema({
-  layerId, propertiesJson: strictJsonTextSchema,
+  layerId,
+  propertiesJson: strictJsonTextSchema.describe(
+    'JSON object, e.g. {"text-size":14,"text-font":["Noto Sans Regular"]}',
+  ),
 });
 export const fullClearLayerPaintPropertyInputSchema = fullSchema({ layerId, property });
 export const fullClearLayerLayoutPropertyInputSchema = fullSchema({ layerId, property });
 export const fullSetLayerFilterInputSchema = fullSchema({
-  layerId, filterJson: filterTextSchema,
+  layerId,
+  filterJson: filterTextSchema.describe(
+    'JSON filter expression or null. Example: ["==", ["get", "class"], "primary"]',
+  ),
 });
 export const fullSetLayerZoomRangeInputSchema = fullSchema({
   layerId, minzoom: z.number().min(0).max(24), maxzoom: z.number().min(0).max(24),
@@ -252,20 +273,23 @@ export const fullSetLayerVisibilityInputSchema = fullSchema({
   layerId, visibility: z.enum(['visible', 'none']),
 });
 export const fullAddLayerInputSchema = fullSchema({
-  layerJson: strictJsonTextSchema, beforeId: z.string().optional(),
+  layerJson: strictJsonTextSchema.describe('Full JSON layer object'),
+  beforeId: z.string().optional(),
 });
 export const fullMoveLayerInputSchema = fullSchema({
   layerId, beforeId: z.string().optional(),
 });
 export const fullRemoveLayerInputSchema = fullSchema({ layerId });
 export const fullPatchLayerDefinitionInputSchema = fullSchema({
-  layerId, patchJson: strictJsonTextSchema, diff: legacyDiff,
+  layerId, patchJson: strictJsonTextSchema.describe('JSON object patch'), diff: legacyDiff,
 });
 export const fullReplaceLayerDefinitionInputSchema = fullSchema({
-  layerId, layerJson: strictJsonTextSchema, diff: legacyDiff,
+  layerId,
+  layerJson: strictJsonTextSchema.describe('Full JSON layer object'),
+  diff: legacyDiff,
 });
 export const fullAddSourceInputSchema = fullSchema({
-  sourceId, sourceJson: strictJsonTextSchema,
+  sourceId, sourceJson: strictJsonTextSchema.describe('Full JSON source object'),
 });
 export const fullRemoveSourceInputSchema = fullSchema({ sourceId });
 export const fullUpdateGeoJsonSourceDataInputSchema = fullSchema({
@@ -273,60 +297,80 @@ export const fullUpdateGeoJsonSourceDataInputSchema = fullSchema({
   method: z.enum(['setData', 'updateData']).default('setData'),
 });
 export const fullSetGeoJsonClusterOptionsInputSchema = fullSchema({
-  sourceId, optionsJson: strictJsonTextSchema,
+  sourceId,
+  optionsJson: strictJsonTextSchema.describe('JSON object for GeoJSON cluster options'),
 });
 export const fullSetSourceTileLodParamsInputSchema = fullSchema({
   maxZoomLevelsOnScreen: z.number().positive(),
   tileCountMaxMinRatio: z.number().positive(), sourceId: z.string().optional(),
 });
 export const fullPatchSourceDefinitionInputSchema = fullSchema({
-  sourceId, patchJson: strictJsonTextSchema, diff: legacyDiff,
+  sourceId, patchJson: strictJsonTextSchema.describe('JSON object patch'), diff: legacyDiff,
 });
 export const fullReplaceSourceDefinitionInputSchema = fullSchema({
-  sourceId, sourceJson: strictJsonTextSchema, diff: legacyDiff,
+  sourceId,
+  sourceJson: strictJsonTextSchema.describe('Full JSON source object'),
+  diff: legacyDiff,
 });
 export const fullSetStyleJsonOrUrlInputSchema = fullSchema({
-  styleJsonOrUrl: styleJsonOrUrlTextSchema, diff: legacyDiff,
+  styleJsonOrUrl: styleJsonOrUrlTextSchema.describe(
+    'Either style URL, or full style JSON object string',
+  ),
+  diff: legacyDiff,
 });
 export const fullInspectRootStyleInputSchema = fullSchema(emptyShape);
 export const fullSetStyleNameInputSchema = fullSchema({ name: z.string(), diff: legacyDiff });
 export const fullSetStyleMetadataInputSchema = fullSchema({
-  metadataJson: strictJsonTextSchema, diff: legacyDiff,
+  metadataJson: strictJsonTextSchema.describe('JSON object or null'), diff: legacyDiff,
 });
 export const fullSetStyleTransitionInputSchema = fullSchema({
-  transitionJson: strictJsonTextSchema, diff: legacyDiff,
+  transitionJson: strictJsonTextSchema.describe('JSON object or null'), diff: legacyDiff,
 });
 export const fullSetStyleCameraDefaultsInputSchema = fullSchema({
-  centerJson: strictJsonTextSchema.optional(), zoom: z.number().optional(),
+  centerJson: strictJsonTextSchema.describe('JSON array [lng, lat]').optional(),
+  zoom: z.number().optional(),
   bearing: z.number().optional(), pitch: z.number().optional(),
   roll: z.number().optional(), centerAltitude: z.number().optional(),
   diff: legacyDiff,
 });
 export const fullValidateStyleJsonInputSchema = fullSchema({
-  styleJson: strictJsonTextSchema,
+  styleJson: strictJsonTextSchema.describe('Full style JSON object string'),
 });
 export const fullValidateCurrentMapStyleInputSchema = fullSchema(emptyShape);
-export const fullSetMapLightInputSchema = fullSchema({ lightJson: strictJsonTextSchema });
-export const fullSetMapSkyInputSchema = fullSchema({ skyJson: strictJsonTextSchema });
-export const fullSetMapProjectionInputSchema = fullSchema({
-  projectionJson: strictJsonTextSchema,
+export const fullSetMapLightInputSchema = fullSchema({
+  lightJson: strictJsonTextSchema.describe('JSON object for light spec'),
 });
-export const fullSetMapTerrainInputSchema = fullSchema({ terrainJson: strictJsonTextSchema });
-export const fullSetMapGlyphsInputSchema = fullSchema({ glyphsUrlJson: strictJsonTextSchema });
-export const fullSetMapSpriteInputSchema = fullSchema({ spriteUrlJson: strictJsonTextSchema });
+export const fullSetMapSkyInputSchema = fullSchema({
+  skyJson: strictJsonTextSchema.describe('JSON object for sky spec, or null'),
+});
+export const fullSetMapProjectionInputSchema = fullSchema({
+  projectionJson: strictJsonTextSchema.describe('JSON projection object'),
+});
+export const fullSetMapTerrainInputSchema = fullSchema({
+  terrainJson: strictJsonTextSchema.describe('JSON object for terrain spec, or null'),
+});
+export const fullSetMapGlyphsInputSchema = fullSchema({
+  glyphsUrlJson: strictJsonTextSchema.describe('JSON string URL or null'),
+});
+export const fullSetMapSpriteInputSchema = fullSchema({
+  spriteUrlJson: strictJsonTextSchema.describe('JSON string URL or null'),
+});
 export const fullListSpritesInputSchema = fullSchema(emptyShape);
 export const fullAddSpriteInputSchema = fullSchema({
   spriteId: z.string(), url: z.string().url(), overwrite: z.boolean().default(false),
 });
 export const fullRemoveSpriteInputSchema = fullSchema({ spriteId: z.string() });
 export const fullSetFeatureStateInputSchema = fullSchema({
-  targetJson: strictJsonTextSchema, stateJson: strictJsonTextSchema,
+  targetJson: strictJsonTextSchema.describe('Feature identifier JSON object'),
+  stateJson: strictJsonTextSchema.describe('State JSON object to merge'),
 });
 export const fullRemoveFeatureStateInputSchema = fullSchema({
-  targetJson: strictJsonTextSchema, key: z.string().optional(),
+  targetJson: strictJsonTextSchema.describe('Feature identifier JSON object'),
+  key: z.string().optional(),
 });
 export const fullSetGlobalStatePropertyInputSchema = fullSchema({
-  propertyName: z.string(), valueJson: strictJsonTextSchema,
+  propertyName: z.string(),
+  valueJson: strictJsonTextSchema.describe('JSON value for global state'),
 });
 export const fullListImagesInputSchema = fullSchema({
   limit: z.number().min(1).max(500).default(300),
