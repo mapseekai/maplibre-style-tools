@@ -66,17 +66,14 @@ type PreInvokeGuardResult =
 class MapWaitFailure extends Error {
   readonly styleToolError: StyleToolError;
   readonly mutationStarted: boolean;
-  readonly guardFailure?: Extract<PreInvokeGuardResult, { ok: false }>;
 
   constructor(
     styleToolError: StyleToolError,
     mutationStarted: boolean,
-    guardFailure?: Extract<PreInvokeGuardResult, { ok: false }>,
   ) {
     super(styleToolError.message);
     this.styleToolError = styleToolError;
     this.mutationStarted = mutationStarted;
-    this.guardFailure = guardFailure;
   }
 }
 
@@ -327,23 +324,18 @@ function currentSuccess(
   };
 }
 
-function nonMutationFailureResult(
+async function nonMutationFailureResult(
+  map: Map,
   failure: MapWaitFailure,
-  fallbackCurrent: StyleDocument,
   baselineStyle: StyleDocument,
+  maxStyleBytes: number | undefined,
   warnings: StyleWarning[],
-): MapStyleApplyResult {
-  if (failure.guardFailure?.authority === 'current') {
-    return currentFailure(
-      failure.guardFailure.style, failure.guardFailure.error, warnings,
-    );
-  }
-  if (failure.guardFailure?.authority === 'pre-operation') {
-    return preOperationFailure(
-      baselineStyle, failure.guardFailure.error, warnings,
-    );
-  }
-  return currentFailure(fallbackCurrent, failure.styleToolError, warnings);
+): Promise<MapStyleApplyResult> {
+  await Promise.resolve();
+  const fresh = readValidatedMapStyle(map, maxStyleBytes);
+  return fresh.ok
+    ? currentFailure(fresh.style, failure.styleToolError, warnings)
+    : preOperationFailure(baselineStyle, failure.styleToolError, warnings);
 }
 
 function normalizeFailure(error: unknown, message: string): StyleToolError {
@@ -649,14 +641,14 @@ async function waitForStyle(
     settleFailure(new MapWaitFailure(setupFailure, false));
     return raced;
   }
-  const guard = preInvokeGuard();
-  if (!guard.ok) {
-    settleFailure(new MapWaitFailure(guard.error, false, guard));
-    return raced;
-  }
   const guardedDeadlineFailure = deadlineFailure(deadline);
   if (guardedDeadlineFailure !== undefined) {
     settleFailure(new MapWaitFailure(guardedDeadlineFailure, false));
+    return raced;
+  }
+  const guard = preInvokeGuard();
+  if (!guard.ok) {
+    settleFailure(new MapWaitFailure(guard.error, false));
     return raced;
   }
 
@@ -992,9 +984,10 @@ export async function applyPreparedStyleToMap(
   } catch (error) {
     if (error instanceof MapWaitFailure && !error.mutationStarted) {
       return nonMutationFailureResult(
+        map,
         error,
-        immediateCurrent,
         baselineStyle,
+        maxStyleBytes,
         cloneWarnings(authority.transactionResult.warnings),
       );
     }
@@ -1120,7 +1113,7 @@ export async function applyStyleDocumentOrUrlToMap(
     } catch (error) {
       if (error instanceof MapWaitFailure && !error.mutationStarted) {
         return nonMutationFailureResult(
-          error, baseline, baseline, finalizer.warnings,
+          map, error, baseline, maxStyleBytes, finalizer.warnings,
         );
       }
       return rollbackAfterFailure(
@@ -1171,7 +1164,9 @@ export async function applyStyleDocumentOrUrlToMap(
     );
   } catch (error) {
     if (error instanceof MapWaitFailure && !error.mutationStarted) {
-      return nonMutationFailureResult(error, baseline, baseline, preflight.warnings);
+      return nonMutationFailureResult(
+        map, error, baseline, maxStyleBytes, preflight.warnings,
+      );
     }
     return rollbackAfterFailure(
       map,

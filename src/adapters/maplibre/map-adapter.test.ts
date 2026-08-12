@@ -723,6 +723,99 @@ test('pre-invoke listener failure never starts candidate mutation or rollback', 
   assert.equal(fake.setStyleCalls.length, 0);
 });
 
+test('deadline callbacks cannot mutate Map state between a successful guard and invoke', async () => {
+  for (const kind of ['prepared', 'object', 'url'] as const) {
+    const fake = new FakeMap(rawStyle());
+    const prepared = kind === 'prepared'
+      ? await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'))
+      : undefined;
+    if (prepared !== undefined && 'styleAuthority' in prepared) {
+      assert.fail('expected prepared handle');
+    }
+    let armed = false;
+    let guardedWindowCalls = 0;
+    fake.onListenerAdded = (type) => {
+      if (type === 'error') armed = true;
+    };
+    fake.onSetStyle = (input) => {
+      fake.install(typeof input === 'string' ? rawStyle('#fff') : input);
+    };
+    const deadline = {
+      expiresAt: 100,
+      now: (): number => {
+        if (armed) {
+          guardedWindowCalls += 1;
+          if (guardedWindowCalls === 4) fake.style = rawStyle('#123');
+        }
+        return 0;
+      },
+    };
+    const result = kind === 'prepared'
+      ? await applyPreparedStyleToMap(fake.asMap(), prepared!, { deadline })
+      : await applyStyleDocumentOrUrlToMap(
+        fake.asMap(),
+        kind === 'object' ? strictStyle('#fff') : 'https://example.test/window.json',
+        { deadline },
+      );
+    assert.equal(result.ok, false);
+    assert.equal(result.styleAuthority, 'current');
+    assert.equal(result.error.code, 'REVISION_CONFLICT');
+    assert.equal(result.style.layers[0]?.paint?.['line-color'], '#123');
+    assert.equal(fake.setStyleCalls.length, 0);
+  }
+});
+
+test('listener setup failures resolve fresh authority even after the deadline is exhausted', async () => {
+  for (const kind of ['prepared', 'object', 'url'] as const) {
+    for (const freshState of ['valid', 'invalid', 'throws'] as const) {
+      const fake = new FakeMap(rawStyle());
+      const prepared = kind === 'prepared'
+        ? await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'))
+        : undefined;
+      if (prepared !== undefined && 'styleAuthority' in prepared) {
+        assert.fail('expected prepared handle');
+      }
+      let now = 0;
+      fake.onListenerAdded = (type) => {
+        if (type !== 'error') return;
+        now = 100;
+        if (freshState === 'valid') fake.style = rawStyle('#123');
+        if (freshState === 'invalid') {
+          fake.style = {
+            version: 8,
+            sources: {},
+            layers: [{ id: '', type: 'background' }],
+          };
+        }
+        if (freshState === 'throws') {
+          fake.onGetStyle = () => { throw new Error('fresh authority unavailable'); };
+        }
+        throw new Error('error listener setup failed');
+      };
+      const deadline = { expiresAt: 100, now: () => now };
+      const result = kind === 'prepared'
+        ? await applyPreparedStyleToMap(fake.asMap(), prepared!, { deadline })
+        : await applyStyleDocumentOrUrlToMap(
+          fake.asMap(),
+          kind === 'object' ? strictStyle('#fff') : 'https://example.test/setup.json',
+          { deadline },
+        );
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'INTERNAL');
+      assert.equal(isStyleToolError(result.error), true);
+      assert.equal(result.styleAuthority, freshState === 'valid' ? 'current' : 'pre-operation');
+      assert.equal(result.style.layers[0]?.paint?.['line-color'],
+        freshState === 'valid' ? '#123' : '#000');
+      assert.equal(Object.hasOwn(result, 'rolledBack'), false);
+      assert.equal(fake.setStyleCalls.length, 0);
+      assert.deepEqual(
+        fake.calls.filter((call) => call.method === 'off').map((call) => call.value),
+        ['style.load', 'error'],
+      );
+    }
+  }
+});
+
 test('whole-style async hashing and preparation failures return freshly guarded authority', async () => {
   for (const kind of ['object', 'url'] as const) {
     const fake = new FakeMap(rawStyle());
