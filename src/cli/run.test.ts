@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  mkdtemp, readFile, readdir, rename, stat, writeFile,
+  mkdtemp, readFile, readdir, rename, stat, symlink, writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,9 +11,12 @@ import {
   DEFAULT_MAX_STYLE_BYTES, jsonUtf8ByteLength,
 } from '../core/index.js';
 import type { JsonValue, StyleDocument } from '../core/index.js';
+import { replaceStyleFileAtomically } from './file-output.js';
 import { readJsonInput } from './input.js';
 import {
-  POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC, runCli,
+  POST_COMMIT_DURABILITY_STDOUT_FAILURE_DIAGNOSTIC,
+  POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC,
+  runCli, runCliWithDependencies,
 } from './run.js';
 
 class BufferWriter extends Writable {
@@ -699,5 +702,172 @@ describe('runCli apply', () => {
     ], makeIo(inputs.cwd, '', dryStdout, dryStderr));
     assert.equal(dryCode, 3);
     assert.doesNotMatch(dryStderr.text, /File committed/);
+  });
+
+  it('replaces an exact 5 MiB style in place and backs up the descriptor bytes', async () => {
+    const exactStyle = makeExactStyle();
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'background',
+      paint: { 'background-color': '#ffffff' },
+    }];
+    const inputs = await writeApplyInputs(exactStyle, operations);
+    const originalBytes = await readFile(inputs.stylePath);
+    const result = await invokeApply(inputs.cwd, [
+      'apply', 'style.json', '--operations', 'operations.json',
+      '--in-place', '--backup',
+    ]);
+    assert.equal(result.code, 0);
+    const installed = await readFile(inputs.stylePath);
+    assert.equal(installed.byteLength, DEFAULT_MAX_STYLE_BYTES);
+    assert.equal(installed.at(-1), '}'.charCodeAt(0));
+    assert.deepEqual(await readFile(`${inputs.stylePath}.bak`), originalBytes);
+    assert.deepEqual(
+      JSON.parse(installed.toString('utf8')),
+      (result.json as { style: JsonValue }).style,
+    );
+    assert.deepEqual(
+      (await readdir(inputs.cwd)).filter((name) => name.startsWith('.') && name.endsWith('.tmp')),
+      [],
+    );
+
+    const noopPath = join(inputs.cwd, 'noop-in-place.json');
+    await writeFile(noopPath, JSON.stringify(operations));
+    const followups = await Promise.all([
+      invokeApply(inputs.cwd, ['validate', inputs.stylePath]),
+      invokeApply(inputs.cwd, ['inspect', inputs.stylePath]),
+      invokeApply(inputs.cwd, [
+        'apply', inputs.stylePath, '--operations', noopPath, '--dry-run',
+      ]),
+    ]);
+    assert.deepEqual(followups.map(({ code }) => code), [0, 0, 0]);
+  });
+
+  it('rejects in-place symlinks and existing backups before stdout', async () => {
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 },
+    }];
+    const inputs = await writeApplyInputs(baseStyle, operations);
+    const targetPath = join(inputs.cwd, 'target.json');
+    const linkPath = join(inputs.cwd, 'link.json');
+    await writeFile(targetPath, JSON.stringify(baseStyle));
+    await symlink(targetPath, linkPath);
+    const targetBefore = await readFile(targetPath);
+    const linkIo = makeIo(inputs.cwd);
+    assert.equal(await runCli([
+      'apply', linkPath, '--operations', inputs.operationsPath, '--in-place', '--backup',
+    ], linkIo), 3);
+    assert.equal((linkIo.stdout as BufferWriter).text, '');
+    assert.doesNotMatch((linkIo.stderr as BufferWriter).text, /File committed/);
+    assert.deepEqual(await readFile(targetPath), targetBefore);
+    await assert.rejects(stat(`${linkPath}.bak`), { code: 'ENOENT' });
+
+    await writeFile(`${inputs.stylePath}.bak`, 'preexisting backup');
+    const stdout = new RejectingWriter();
+    const stderr = new BufferWriter();
+    const styleBefore = await readFile(inputs.stylePath);
+    assert.equal(await runCli([
+      'apply', inputs.stylePath, '--operations', inputs.operationsPath,
+      '--in-place', '--backup',
+    ], makeIo(inputs.cwd, '', stdout, stderr)), 3);
+    assert.equal(stdout.writes, 0);
+    assert.deepEqual(await readFile(inputs.stylePath), styleBefore);
+    assert.equal(await readFile(`${inputs.stylePath}.bak`, 'utf8'), 'preexisting backup');
+    assert.doesNotMatch(stderr.text, /File committed/);
+  });
+
+  it('acknowledges a real post-rename durability failure with the core transaction result', async () => {
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 },
+    }];
+    const inputs = await writeApplyInputs(baseStyle, operations);
+    const expected = applyStyleTransaction(baseStyle, { operations, validate: true });
+    const eio = Object.assign(new Error('replacement directory sync failed'), { code: 'EIO' });
+    const io = makeIo(inputs.cwd);
+    const code = await runCliWithDependencies([
+      'apply', inputs.stylePath, '--operations', inputs.operationsPath, '--in-place',
+    ], io, {
+      replaceStyleFileAtomically: async (path, next, options) =>
+        replaceStyleFileAtomically(path, next, {
+          ...options,
+          hooks: {
+            syncDirectory: async (_directory, phase) => {
+              if (phase === 'replacement') throw eio;
+            },
+          },
+        }),
+    });
+    assert.equal(code, 3);
+    const acknowledgement = JSON.parse((io.stdout as BufferWriter).text) as {
+      ok: boolean;
+      committed: boolean;
+      durable: boolean;
+      error: { code: string; message: string };
+      transactionResult: JsonValue;
+    };
+    assert.deepEqual(Object.keys(acknowledgement), [
+      'ok', 'committed', 'durable', 'error', 'transactionResult',
+    ]);
+    assert.equal(acknowledgement.ok, false);
+    assert.equal(acknowledgement.committed, true);
+    assert.equal(acknowledgement.durable, false);
+    assert.equal(acknowledgement.error.code, 'OUTPUT_DURABILITY_UNCERTAIN');
+    assert.deepEqual(acknowledgement.transactionResult, expected);
+    assert.match((io.stderr as BufferWriter).text, /replacement directory sync failed/);
+    assert.equal(
+      (JSON.parse(await readFile(inputs.stylePath, 'utf8')) as StyleDocument)
+        .layers[0]?.paint?.['line-width'],
+      2,
+    );
+  });
+
+  it('keeps in-place commits when normal or durability acknowledgement streams fail', async () => {
+    const operations: JsonValue = [{
+      op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 },
+    }];
+    for (const durabilityFailure of [false, true]) {
+      for (const rejectStderr of [false, true]) {
+        const inputs = await writeApplyInputs(baseStyle, operations);
+        const stdout = new RejectingWriter();
+        const stderr: Writable = rejectStderr ? new RejectingWriter() : new BufferWriter();
+        const stdoutBaseline = stdout.listenerCount('error');
+        const stderrBaseline = stderr.listenerCount('error');
+        const eio = Object.assign(new Error('directory durability uncertain'), { code: 'EIO' });
+        const code = durabilityFailure
+          ? await runCliWithDependencies([
+              'apply', inputs.stylePath, '--operations', inputs.operationsPath, '--in-place',
+            ], makeIo(inputs.cwd, '', stdout, stderr), {
+              replaceStyleFileAtomically: async (path, next, options) =>
+                replaceStyleFileAtomically(path, next, {
+                  ...options,
+                  hooks: {
+                    syncDirectory: async (_directory, phase) => {
+                      if (phase === 'replacement') throw eio;
+                    },
+                  },
+                }),
+            })
+          : await runCli([
+              'apply', inputs.stylePath, '--operations', inputs.operationsPath, '--in-place',
+            ], makeIo(inputs.cwd, '', stdout, stderr));
+        assert.equal(code, 3);
+        assert.equal(stdout.writes, 1);
+        assert.equal(
+          (JSON.parse(await readFile(inputs.stylePath, 'utf8')) as StyleDocument)
+            .layers[0]?.paint?.['line-width'],
+          2,
+        );
+        if (!rejectStderr) {
+          assert.equal(
+            (stderr as BufferWriter).text,
+            `${durabilityFailure
+              ? POST_COMMIT_DURABILITY_STDOUT_FAILURE_DIAGNOSTIC
+              : POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC}\n`,
+          );
+        }
+        await immediate();
+        assert.equal(stdout.listenerCount('error'), stdoutBaseline);
+        assert.equal(stderr.listenerCount('error'), stderrBaseline);
+      }
+    }
   });
 });

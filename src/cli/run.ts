@@ -1,6 +1,8 @@
 import { applyStyleTransaction, validateStyleDocument } from '../core/index.js';
 import { parseCliArgs } from './args.js';
-import { CliOutputError, writeNewOutputFile } from './file-output.js';
+import {
+  CliOutputError, replaceStyleFileAtomically, writeNewOutputFile,
+} from './file-output.js';
 import { CliInputError, readJsonInput } from './input.js';
 import { inspectStyle } from './inspect.js';
 import { writeDiagnostic, writeJson } from './output.js';
@@ -19,6 +21,12 @@ export const CLI_HELP = {
 
 export const POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC =
   'File committed, but stdout result delivery failed; do not retry as though no file was written.';
+export const POST_COMMIT_DURABILITY_STDOUT_FAILURE_DIAGNOSTIC =
+  'File committed and directory durability is uncertain; stdout acknowledgement failed; do not retry as though no file was written.';
+
+export interface CliRunDependencies {
+  replaceStyleFileAtomically: typeof replaceStyleFileAtomically;
+}
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -48,9 +56,10 @@ const writeResult = async (
   }
 };
 
-export async function runCli(
+export async function runCliWithDependencies(
   argv: readonly string[],
   io: CliIo,
+  dependencies: CliRunDependencies,
 ): Promise<CliExitCode> {
   let command;
   try {
@@ -158,6 +167,63 @@ export async function runCli(
           return 3;
         }
       }
+      if (result.ok && command.inPlace) {
+        if (styleRead.source.kind !== 'file') {
+          await writeDiagnosticBestEffort(
+            io,
+            'In-place replacement requires a file-backed Style input.',
+          );
+          return 3;
+        }
+        try {
+          await dependencies.replaceStyleFileAtomically(
+            styleRead.source.absolutePath,
+            result.style,
+            {
+              backup: command.backup,
+              expectedIdentity: styleRead.source.identity,
+              originalBytes: styleRead.source.originalBytes,
+            },
+          );
+        } catch (error) {
+          if (!(error instanceof CliOutputError)) throw error;
+          if (!error.state.committed) {
+            await writeDiagnosticBestEffort(io, error.message);
+            return 3;
+          }
+          const acknowledgement = {
+            ok: false,
+            committed: true,
+            durable: false,
+            error: {
+              code: 'OUTPUT_DURABILITY_UNCERTAIN',
+              message: error.message,
+            },
+            transactionResult: result,
+          };
+          try {
+            await writeJson(io.stdout, acknowledgement);
+          } catch {
+            await writeDiagnosticBestEffort(
+              io,
+              POST_COMMIT_DURABILITY_STDOUT_FAILURE_DIAGNOSTIC,
+            );
+            return 3;
+          }
+          await writeDiagnosticBestEffort(io, error.message);
+          return 3;
+        }
+        try {
+          await writeJson(io.stdout, result);
+          return 0;
+        } catch {
+          await writeDiagnosticBestEffort(
+            io,
+            POST_COMMIT_STDOUT_FAILURE_DIAGNOSTIC,
+          );
+          return 3;
+        }
+      }
       return writeResult(io, result, result.ok ? 0 : 1);
     } catch (error) {
       if (error instanceof CliInputError) {
@@ -171,4 +237,11 @@ export async function runCli(
 
   await writeDiagnosticBestEffort(io, 'Internal error: command is not implemented.');
   return 3;
+}
+
+export async function runCli(
+  argv: readonly string[],
+  io: CliIo,
+): Promise<CliExitCode> {
+  return runCliWithDependencies(argv, io, { replaceStyleFileAtomically });
 }
