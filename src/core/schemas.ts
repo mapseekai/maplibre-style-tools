@@ -31,14 +31,21 @@ const INVALID_SNAPSHOT = Symbol('invalidSnapshot');
 const INVALID_JSON_MESSAGE = 'Input must be a strict JSON tree';
 
 type JsonContainer = JsonValue[] | { [key: string]: JsonValue };
+type PathToken = string | number;
+type PathNode = {
+  parent: PathNode | undefined;
+  token: PathToken;
+  depth: number;
+};
+type Path = PathNode | undefined;
 type SnapshotWork = {
   source: object;
   target: JsonContainer;
-  path: (string | number)[];
+  path: Path;
 };
 type SnapshotResult =
   | { success: true; value: JsonValue }
-  | { success: false; path: (string | number)[] };
+  | { success: false; path: Path };
 type SanitizedIssue = z.core.$ZodIssue;
 type SanitizedCheck = (value: JsonValue) => SanitizedIssue | undefined;
 type FallbackValidator = (value: JsonValue) => JsonValue | undefined;
@@ -70,7 +77,7 @@ function createSnapshotValue(
   value: unknown,
   seen: WeakSet<object>,
   work: SnapshotWork[],
-  path: (string | number)[],
+  path: Path,
 ): JsonValue | typeof INVALID_SNAPSHOT {
   if (isJsonPrimitive(value)) return value;
   if (typeof value !== 'object' || value === null || seen.has(value)) {
@@ -82,16 +89,23 @@ function createSnapshotValue(
   return target;
 }
 
-function pathWith(
-  path: readonly (string | number)[],
-  token: string | number,
-): (string | number)[] {
-  const result: (string | number)[] = [];
-  for (let index = 0; index < path.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(path, String(index));
-    if (descriptor !== undefined && 'value' in descriptor) appendOwn(result, descriptor.value);
+function childPath(parent: Path, token: PathToken): PathNode {
+  return { parent, token, depth: (parent?.depth ?? 0) + 1 };
+}
+
+function materializePath(path: Path): PathToken[] {
+  if (path === undefined) return [];
+  const result: PathToken[] = [];
+  let current: Path = path;
+  while (current !== undefined) {
+    Reflect.defineProperty(result, current.depth - 1, {
+      configurable: true,
+      enumerable: true,
+      value: current.token,
+      writable: true,
+    });
+    current = current.parent;
   }
-  appendOwn(result, token);
   return result;
 }
 
@@ -117,16 +131,18 @@ function descriptorsMatchKeys(
 function sanitizeJsonTree(input: unknown): SnapshotResult {
   try {
     if (isJsonPrimitive(input)) return { success: true, value: input };
-    if (typeof input !== 'object' || input === null) return { success: false, path: [] };
+    if (typeof input !== 'object' || input === null) {
+      return { success: false, path: undefined };
+    }
 
     const seen = new WeakSet<object>();
     const work: SnapshotWork[] = [];
-    const root = createSnapshotValue(input, seen, work, []);
-    if (root === INVALID_SNAPSHOT) return { success: false, path: [] };
+    const root = createSnapshotValue(input, seen, work, undefined);
+    if (root === INVALID_SNAPSHOT) return { success: false, path: undefined };
 
     while (work.length > 0) {
       const current = work.pop();
-      if (current === undefined) return { success: false, path: [] };
+      if (current === undefined) return { success: false, path: undefined };
       const sourceIsArray = Array.isArray(current.source);
       const prototype = Object.getPrototypeOf(current.source);
       if (
@@ -158,33 +174,33 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
       let arrayIndexes = 0;
       for (const key of keys) {
         if (typeof key !== 'string') return { success: false, path: current.path };
-        const childPath = sourceIsArray && key === 'length'
+        const valuePath = sourceIsArray && key === 'length'
           ? current.path
-          : pathWith(current.path, sourceIsArray ? Number(key) : key);
+          : childPath(current.path, sourceIsArray ? Number(key) : key);
         const descriptor = descriptors[key];
         if (descriptor === undefined || !('value' in descriptor)) {
-          return { success: false, path: childPath };
+          return { success: false, path: valuePath };
         }
         if (sourceIsArray && key === 'length') continue;
         if (!descriptor.enumerable || DANGEROUS_KEYS.has(key)) {
-          return { success: false, path: childPath };
+          return { success: false, path: valuePath };
         }
         if (sourceIsArray) {
           if (!isCanonicalArrayIndex(key, arrayLength)) {
-            return { success: false, path: childPath };
+            return { success: false, path: valuePath };
           }
           arrayIndexes += 1;
         }
-        const snapshotValue = createSnapshotValue(descriptor.value, seen, work, childPath);
+        const snapshotValue = createSnapshotValue(descriptor.value, seen, work, valuePath);
         if (snapshotValue === INVALID_SNAPSHOT) {
-          return { success: false, path: childPath };
+          return { success: false, path: valuePath };
         }
         if (!Reflect.defineProperty(current.target, sourceIsArray ? Number(key) : key, {
           configurable: true,
           enumerable: true,
           value: snapshotValue,
           writable: true,
-        })) return { success: false, path: childPath };
+        })) return { success: false, path: valuePath };
       }
       if (sourceIsArray && arrayIndexes !== arrayLength) {
         return { success: false, path: current.path };
@@ -192,7 +208,7 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
     }
     return { success: true, value: root };
   } catch {
-    return { success: false, path: [] };
+    return { success: false, path: undefined };
   }
 }
 
@@ -441,7 +457,8 @@ function createSafeBoundary<Schema extends z.ZodType>(
   const fallbackSafeParse = (input: unknown): z.ZodSafeParseResult<z.output<Schema>> => {
     const sanitized = sanitizeJsonTree(input);
     if (!sanitized.success) return safeFailure({
-      code: 'custom', message: INVALID_JSON_MESSAGE, path: sanitized.path,
+      code: 'custom', message: INVALID_JSON_MESSAGE,
+      path: materializePath(sanitized.path),
     });
     const boundaryIssue = check?.(sanitized.value);
     if (boundaryIssue !== undefined) return safeFailure(boundaryIssue);
@@ -496,7 +513,8 @@ function sanitizeBefore<Schema extends z.ZodType>(
     const result = sanitizeJsonTree(input);
     if (!result.success) {
       context.addIssue({
-        code: 'custom', message: INVALID_JSON_MESSAGE, path: result.path,
+        code: 'custom', message: INVALID_JSON_MESSAGE,
+        path: materializePath(result.path),
       });
       return z.NEVER;
     }
@@ -541,42 +559,42 @@ type GeoJsonStructuralWork =
   | {
       kind: 'object';
       value: JsonValue;
-      path: (string | number)[];
+      path: Path;
       role: GeoJsonObjectRole;
     }
   | {
       kind: 'coordinates';
       value: JsonValue;
-      path: (string | number)[];
+      path: Path;
       role: CoordinateRole;
     }
   | {
       kind: 'ringClosure';
       value: JsonValue[];
-      path: (string | number)[];
+      path: Path;
     };
 
 function geoJsonIssue(
   message: string,
-  path: (string | number)[],
+  path: Path,
 ): SanitizedIssue {
-  return { code: 'custom', message, path };
+  return { code: 'custom', message, path: materializePath(path) };
 }
 
 function validateBbox(
   value: { [key: string]: JsonValue },
-  path: readonly (string | number)[],
+  path: Path,
 ): SanitizedIssue | undefined {
   const bbox = ownValue(value, 'bbox');
   if (bbox === undefined) return undefined;
-  const bboxPath = pathWith(path, 'bbox');
+  const bboxPath = childPath(path, 'bbox');
   if (!Array.isArray(bbox) || (bbox.length !== 4 && bbox.length !== 6)) {
     return geoJsonIssue('bbox must contain exactly four or six numbers', bboxPath);
   }
   for (let index = 0; index < bbox.length; index += 1) {
     const component = ownValue(bbox, String(index));
     if (typeof component !== 'number' || !Number.isFinite(component)) {
-      return geoJsonIssue('bbox components must be finite numbers', pathWith(bboxPath, index));
+      return geoJsonIssue('bbox components must be finite numbers', childPath(bboxPath, index));
     }
   }
   return undefined;
@@ -585,7 +603,7 @@ function validateBbox(
 function pushStructuralObject(
   work: GeoJsonStructuralWork[],
   value: JsonValue,
-  path: (string | number)[],
+  path: Path,
   role: GeoJsonObjectRole,
 ): void {
   appendOwn(work, { kind: 'object', value, path, role });
@@ -594,7 +612,7 @@ function pushStructuralObject(
 function pushCoordinates(
   work: GeoJsonStructuralWork[],
   value: JsonValue,
-  path: (string | number)[],
+  path: Path,
   role: CoordinateRole,
 ): void {
   appendOwn(work, { kind: 'coordinates', value, path, role });
@@ -603,11 +621,11 @@ function pushCoordinates(
 function pushArrayCoordinateChildren(
   work: GeoJsonStructuralWork[],
   values: JsonValue[],
-  path: (string | number)[],
+  path: Path,
   role: CoordinateRole,
 ): void {
   for (let index = values.length - 1; index >= 0; index -= 1) {
-    pushCoordinates(work, ownValue(values, String(index)) as JsonValue, pathWith(path, index), role);
+    pushCoordinates(work, ownValue(values, String(index)) as JsonValue, childPath(path, index), role);
   }
 }
 
@@ -627,7 +645,7 @@ function checkCoordinateWork(
       const component = ownValue(values, String(index));
       if (typeof component !== 'number' || !Number.isFinite(component)) {
         return geoJsonIssue(
-          'position components must be finite numbers', pathWith(current.path, index),
+          'position components must be finite numbers', childPath(current.path, index),
         );
       }
     }
@@ -655,32 +673,32 @@ function checkCoordinateWork(
 
 function checkFeatureObject(
   value: { [key: string]: JsonValue },
-  path: (string | number)[],
+  path: Path,
   work: GeoJsonStructuralWork[],
 ): SanitizedIssue | undefined {
   if (ownValue(value, 'type') !== 'Feature') {
-    return geoJsonIssue("Feature type must be 'Feature'", pathWith(path, 'type'));
+    return geoJsonIssue("Feature type must be 'Feature'", childPath(path, 'type'));
   }
   const bboxIssue = validateBbox(value, path);
   if (bboxIssue !== undefined) return bboxIssue;
   const id = ownValue(value, 'id');
   if (id !== undefined && !(
     typeof id === 'string' || (typeof id === 'number' && Number.isFinite(id))
-  )) return geoJsonIssue('Feature id must be a string or finite number', pathWith(path, 'id'));
+  )) return geoJsonIssue('Feature id must be a string or finite number', childPath(path, 'id'));
   const geometry = ownValue(value, 'geometry');
   if (geometry === undefined) {
-    return geoJsonIssue('Feature geometry is required', pathWith(path, 'geometry'));
+    return geoJsonIssue('Feature geometry is required', childPath(path, 'geometry'));
   }
   if (geometry !== null) {
     if (!isJsonObject(geometry)) {
-      return geoJsonIssue('Feature geometry must be a geometry or null', pathWith(path, 'geometry'));
+      return geoJsonIssue('Feature geometry must be a geometry or null', childPath(path, 'geometry'));
     }
-    pushStructuralObject(work, geometry, pathWith(path, 'geometry'), 'geometry');
+    pushStructuralObject(work, geometry, childPath(path, 'geometry'), 'geometry');
   }
   const properties = ownValue(value, 'properties');
   if (properties !== null && !isJsonObject(properties)) {
     return geoJsonIssue(
-      'Feature properties must be an object or null', pathWith(path, 'properties'),
+      'Feature properties must be an object or null', childPath(path, 'properties'),
     );
   }
   return undefined;
@@ -688,13 +706,13 @@ function checkFeatureObject(
 
 function checkFeatureCollectionObject(
   value: { [key: string]: JsonValue },
-  path: (string | number)[],
+  path: Path,
   work: GeoJsonStructuralWork[],
 ): SanitizedIssue | undefined {
   const bboxIssue = validateBbox(value, path);
   if (bboxIssue !== undefined) return bboxIssue;
   const features = ownValue(value, 'features');
-  const featuresPath = pathWith(path, 'features');
+  const featuresPath = childPath(path, 'features');
   if (!Array.isArray(features)) {
     return geoJsonIssue('FeatureCollection features must be an array', featuresPath);
   }
@@ -702,7 +720,7 @@ function checkFeatureCollectionObject(
     pushStructuralObject(
       work,
       ownValue(features, String(index)) as JsonValue,
-      pathWith(featuresPath, index),
+      childPath(featuresPath, index),
       'feature',
     );
   }
@@ -711,18 +729,18 @@ function checkFeatureCollectionObject(
 
 function checkGeometryObject(
   value: { [key: string]: JsonValue },
-  path: (string | number)[],
+  path: Path,
   work: GeoJsonStructuralWork[],
 ): SanitizedIssue | undefined {
   const type = ownValue(value, 'type');
   if (typeof type !== 'string' || !GEOJSON_GEOMETRY_TYPES.has(type)) {
-    return geoJsonIssue('Unknown GeoJSON geometry type', pathWith(path, 'type'));
+    return geoJsonIssue('Unknown GeoJSON geometry type', childPath(path, 'type'));
   }
   const bboxIssue = validateBbox(value, path);
   if (bboxIssue !== undefined) return bboxIssue;
   if (type === 'GeometryCollection') {
     const geometries = ownValue(value, 'geometries');
-    const geometriesPath = pathWith(path, 'geometries');
+    const geometriesPath = childPath(path, 'geometries');
     if (!Array.isArray(geometries)) {
       return geoJsonIssue('GeometryCollection geometries must be an array', geometriesPath);
     }
@@ -730,14 +748,14 @@ function checkGeometryObject(
       pushStructuralObject(
         work,
         ownValue(geometries, String(index)) as JsonValue,
-        pathWith(geometriesPath, index),
+        childPath(geometriesPath, index),
         'geometry',
       );
     }
     return undefined;
   }
   const coordinates = ownValue(value, 'coordinates');
-  const coordinatesPath = pathWith(path, 'coordinates');
+  const coordinatesPath = childPath(path, 'coordinates');
   if (coordinates === undefined) {
     return geoJsonIssue('Geometry coordinates are required', coordinatesPath);
   }
@@ -752,10 +770,10 @@ function checkGeometryObject(
 
 function inlineGeoJsonIssue(value: JsonValue): SanitizedIssue | undefined {
   const work: GeoJsonStructuralWork[] = [];
-  pushStructuralObject(work, value, [], 'top');
+  pushStructuralObject(work, value, undefined, 'top');
   while (work.length > 0) {
     const current = work.pop();
-    if (current === undefined) return geoJsonIssue('GeoJSON validation failed', []);
+    if (current === undefined) return geoJsonIssue('GeoJSON validation failed', undefined);
     if (current.kind === 'ringClosure') {
       const first = ownValue(current.value, '0') as JsonValue;
       const last = ownValue(current.value, String(current.value.length - 1)) as JsonValue;
@@ -784,7 +802,7 @@ function inlineGeoJsonIssue(value: JsonValue): SanitizedIssue | undefined {
     }
     const type = ownValue(current.value, 'type');
     if (typeof type !== 'string' || !GEOJSON_TYPES.has(type)) {
-      return geoJsonIssue('Unknown GeoJSON type', pathWith(current.path, 'type'));
+      return geoJsonIssue('Unknown GeoJSON type', childPath(current.path, 'type'));
     }
     const issue = type === 'Feature'
       ? checkFeatureObject(current.value, current.path, work)

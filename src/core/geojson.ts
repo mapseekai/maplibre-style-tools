@@ -33,34 +33,41 @@ type CoordinateRole =
   | 'ring'
   | 'polygon'
   | 'polygons';
+type PathToken = string | number;
+type PathNode = {
+  parent: PathNode | undefined;
+  token: PathToken;
+  depth: number;
+};
+type Path = PathNode | undefined;
 type TraversalWork =
   | {
       kind: 'feature';
       value: GeoJsonFeature;
-      path: (string | number)[];
+      path: Path;
     }
   | {
       kind: 'geometry';
       value: GeoJsonGeometry;
-      path: (string | number)[];
+      path: Path;
       geometryDepth: number;
     }
   | {
       kind: 'coordinates';
       value: JsonValue;
-      path: (string | number)[];
+      path: Path;
       geometryDepth: number;
       coordinateRole: CoordinateRole;
     }
   | {
       kind: 'ringClosure';
       value: JsonValue[];
-      path: (string | number)[];
+      path: Path;
       geometryDepth: number;
     };
 type PropertyWork = {
   value: JsonValue;
-  path: (string | number)[];
+  path: Path;
   propertyDepth: number;
 };
 type Counts = { featureCount: number; coordinatePositionCount: number };
@@ -81,25 +88,33 @@ function appendOwn<T>(values: T[], value: T): void {
   });
 }
 
-function pathWith(
-  path: readonly (string | number)[],
-  token: string | number,
-): (string | number)[] {
-  const result: (string | number)[] = [];
-  for (let index = 0; index < path.length; index += 1) {
-    appendOwn(result, path[index]!);
+function childPath(parent: Path, token: PathToken): PathNode {
+  return { parent, token, depth: (parent?.depth ?? 0) + 1 };
+}
+
+function materializePath(path: Path): PathToken[] {
+  if (path === undefined) return [];
+  const result: PathToken[] = [];
+  let current: Path = path;
+  while (current !== undefined) {
+    Reflect.defineProperty(result, current.depth - 1, {
+      configurable: true,
+      enumerable: true,
+      value: current.token,
+      writable: true,
+    });
+    current = current.parent;
   }
-  appendOwn(result, token);
   return result;
 }
 
-function invalidInput(message: string, path: readonly (string | number)[]): StyleToolError {
-  return createStyleToolError('INVALID_INPUT', message, toJsonPointer(path));
+function invalidInput(message: string, path: Path): StyleToolError {
+  return createStyleToolError('INVALID_INPUT', message, toJsonPointer(materializePath(path)));
 }
 
 function schemaFailure(error: ZodError): StyleToolError {
   const issue = error.issues[0];
-  if (issue === undefined) return invalidInput('GeoJSON input is invalid.', []);
+  if (issue === undefined) return invalidInput('GeoJSON input is invalid.', undefined);
   return createStyleToolError(
     'INVALID_INPUT',
     issue.message,
@@ -111,7 +126,7 @@ function limitFailure(
   reason: keyof GeoJsonLimits,
   max: number,
   actual: number,
-  path: readonly (string | number)[],
+  path: Path,
 ): StyleToolError {
   if (reason === 'maxBytes') {
     return createStyleToolError(
@@ -128,7 +143,7 @@ function limitFailure(
   return createStyleToolError(
     'INVALID_INPUT',
     `GeoJSON exceeds the configured ${reason} limit.`,
-    toJsonPointer(path),
+    toJsonPointer(materializePath(path)),
     { reason, [reason]: max, [actualName]: actual },
   );
 }
@@ -148,7 +163,7 @@ function resolveLimits(limits: unknown):
   try {
     parsed = geoJsonLimitsSchema.safeParse(limits === undefined ? {} : limits);
   } catch {
-    return { ok: false, error: invalidInput('GeoJSON limits are invalid.', []) };
+    return { ok: false, error: invalidInput('GeoJSON limits are invalid.', undefined) };
   }
   if (!parsed.success) return { ok: false, error: schemaFailure(parsed.error) };
   return {
@@ -166,7 +181,7 @@ function resolveLimits(limits: unknown):
 function pushCoordinateChildren(
   stack: TraversalWork[],
   values: JsonValue[],
-  path: (string | number)[],
+  path: Path,
   geometryDepth: number,
   coordinateRole: CoordinateRole,
 ): void {
@@ -174,7 +189,7 @@ function pushCoordinateChildren(
     appendOwn(stack, {
       kind: 'coordinates',
       value: ownValue(values, String(index))!,
-      path: pathWith(path, index),
+      path: childPath(path, index),
       geometryDepth,
       coordinateRole,
     });
@@ -199,7 +214,7 @@ function walkCoordinates(
       const component = ownValue(values, String(index));
       if (typeof component !== 'number' || !Number.isFinite(component)) {
         return invalidInput(
-          'position components must be finite numbers', pathWith(current.path, index),
+          'position components must be finite numbers', childPath(current.path, index),
         );
       }
     }
@@ -246,7 +261,7 @@ function walkCoordinates(
 function pushGeometryCoordinates(
   stack: TraversalWork[],
   geometry: GeoJsonGeometry,
-  path: (string | number)[],
+  path: Path,
   geometryDepth: number,
 ): void {
   const coordinates = ownValue(geometry, 'coordinates')!;
@@ -258,7 +273,7 @@ function pushGeometryCoordinates(
   appendOwn(stack, {
     kind: 'coordinates',
     value: coordinates,
-    path: pathWith(path, 'coordinates'),
+    path: childPath(path, 'coordinates'),
     geometryDepth,
     coordinateRole,
   });
@@ -282,13 +297,23 @@ function walkGeometry(
     return undefined;
   }
   const geometries = ownValue(current.value, 'geometries') as GeoJsonGeometry[];
-  const geometriesPath = pathWith(current.path, 'geometries');
+  const geometriesPath = childPath(current.path, 'geometries');
   for (let index = geometries.length - 1; index >= 0; index -= 1) {
+    const childGeometryPath = childPath(geometriesPath, index);
+    const childGeometryDepth = current.geometryDepth + 1;
+    if (childGeometryDepth > limits.maxGeometryDepth) {
+      return limitFailure(
+        'maxGeometryDepth',
+        limits.maxGeometryDepth,
+        childGeometryDepth,
+        childGeometryPath,
+      );
+    }
     appendOwn(stack, {
       kind: 'geometry',
       value: ownValue(geometries, String(index)) as GeoJsonGeometry,
-      path: pathWith(geometriesPath, index),
-      geometryDepth: current.geometryDepth + 1,
+      path: childGeometryPath,
+      geometryDepth: childGeometryDepth,
     });
   }
   return undefined;
@@ -297,7 +322,7 @@ function walkGeometry(
 function pushPropertyChildren(
   stack: PropertyWork[],
   value: JsonObject | JsonValue[],
-  path: (string | number)[],
+  path: Path,
   propertyDepth: number,
 ): void {
   const keys = Reflect.ownKeys(value);
@@ -308,7 +333,7 @@ function pushPropertyChildren(
     const childIsContainer = typeof child === 'object' && child !== null;
     appendOwn(stack, {
       value: child,
-      path: pathWith(path, Array.isArray(value) ? Number(key) : key),
+      path: childPath(path, Array.isArray(value) ? Number(key) : key),
       propertyDepth: propertyDepth + (childIsContainer ? 1 : 0),
     });
   }
@@ -320,7 +345,9 @@ function walkProperties(
 ): StyleToolError | undefined {
   while (stack.length > 0) {
     const current = stack.pop();
-    if (current === undefined) return invalidInput('GeoJSON property validation failed.', []);
+    if (current === undefined) {
+      return invalidInput('GeoJSON property validation failed.', undefined);
+    }
     if (current.propertyDepth > limits.maxPropertyDepth) {
       return limitFailure(
         'maxPropertyDepth',
@@ -349,21 +376,28 @@ function countGeoJson(
   const stack: TraversalWork[] = [];
   const propertyStack: PropertyWork[] = [];
   if (value.type === 'Feature') {
-    appendOwn(stack, { kind: 'feature', value, path: [] });
+    appendOwn(stack, { kind: 'feature', value, path: undefined });
   } else if (value.type === 'FeatureCollection') {
+    const featuresPath = childPath(undefined, 'features');
     for (let index = value.features.length - 1; index >= 0; index -= 1) {
       appendOwn(stack, {
-        kind: 'feature', value: value.features[index]!, path: ['features', index],
+        kind: 'feature',
+        value: value.features[index]!,
+        path: childPath(featuresPath, index),
       });
     }
   } else {
-    appendOwn(stack, { kind: 'geometry', value, path: [], geometryDepth: 1 });
+    appendOwn(stack, {
+      kind: 'geometry', value, path: undefined, geometryDepth: 1,
+    });
   }
 
   while (stack.length > 0) {
     const current = stack.pop();
     if (current === undefined) {
-      return { ok: false, error: invalidInput('GeoJSON traversal failed.', []) };
+      return {
+        ok: false, error: invalidInput('GeoJSON traversal failed.', undefined),
+      };
     }
     if (current.kind === 'ringClosure') {
       const first = ownValue(current.value, '0')!;
@@ -395,7 +429,7 @@ function countGeoJson(
     if (current.value.properties !== null) {
       appendOwn(propertyStack, {
         value: current.value.properties,
-        path: pathWith(current.path, 'properties'),
+        path: childPath(current.path, 'properties'),
         propertyDepth: 0,
       });
       const propertyError = walkProperties(propertyStack, limits);
@@ -405,7 +439,7 @@ function countGeoJson(
       appendOwn(stack, {
         kind: 'geometry',
         value: current.value.geometry,
-        path: pathWith(current.path, 'geometry'),
+        path: childPath(current.path, 'geometry'),
         geometryDepth: 1,
       });
     }
@@ -424,7 +458,9 @@ export function validateInlineGeoJson(
   try {
     parsed = inlineGeoJsonSchema.safeParse(value);
   } catch {
-    return { ok: false, error: invalidInput('GeoJSON input is invalid.', []) };
+    return {
+      ok: false, error: invalidInput('GeoJSON input is invalid.', undefined),
+    };
   }
   if (!parsed.success) return { ok: false, error: schemaFailure(parsed.error) };
 
@@ -455,7 +491,9 @@ export function validateInlineGeoJson(
   if (actualBytes > resolved.limits.maxBytes) {
     return {
       ok: false,
-      error: limitFailure('maxBytes', resolved.limits.maxBytes, actualBytes, []),
+      error: limitFailure(
+        'maxBytes', resolved.limits.maxBytes, actualBytes, undefined,
+      ),
     };
   }
 

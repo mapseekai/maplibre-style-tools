@@ -62,6 +62,14 @@ const ring = (): GeoJsonLinearRing => [
   position(0, 0), position(2, 0), position(1, 1), position(0, 0),
 ];
 
+function nestedGeometryCollection(depth: number): JsonObject {
+  let geometry: JsonObject = { type: 'Point', coordinates: [0, 0] };
+  for (let currentDepth = 1; currentDepth < depth; currentDepth += 1) {
+    geometry = { type: 'GeometryCollection', geometries: [geometry] };
+  }
+  return geometry;
+}
+
 const geometries: readonly GeoJsonGeometry[] = [
   { type: 'Point', coordinates: position(1, 2, 3) },
   { type: 'MultiPoint', coordinates: [position(1, 2), position(3, 4)] },
@@ -264,15 +272,18 @@ test('whole-tree sanitization rejects hostile values independently in known and 
 
 test('transparent descriptor-safe proxies become fresh plain snapshots with zero get calls', () => {
   let getCalls = 0;
-  const original = {
-    type: 'Feature' as const,
-    geometry: { type: 'Point' as const, coordinates: [1, 2] },
-    properties: { nested: { value: 'kept' } },
-    foreign: { safe: true },
-  };
-  const proxied = new Proxy(original, {
+  const transparent = <Value extends object>(value: Value): Value => new Proxy(value, {
     get() { getCalls += 1; throw new Error('must not run'); },
   });
+  const original = {
+    type: 'Feature' as const,
+    geometry: transparent({
+      type: 'Point' as const, coordinates: transparent([1, 2]),
+    }),
+    properties: transparent({ nested: transparent({ value: 'kept' }) }),
+    foreign: transparent({ safe: true }),
+  };
+  const proxied = transparent(original);
   const parsed = inlineGeoJsonSchema.safeParse(proxied);
   assert.equal(parsed.success, true);
   assert.equal(getCalls, 0);
@@ -285,6 +296,66 @@ test('transparent descriptor-safe proxies become fresh plain snapshots with zero
   assert.equal(validated.ok, true);
   assert.equal(getCalls, 0);
   if (validated.ok) assert.notStrictEqual(validated.value, original);
+});
+
+test('deep structural path bookkeeping grows linearly without materializing every prefix', () => {
+  const descriptorCalls = (depth: number): number => {
+    const descriptor = Reflect.getOwnPropertyDescriptor(
+      Object, 'getOwnPropertyDescriptor',
+    );
+    if (descriptor === undefined) assert.fail('missing reflection descriptor');
+    let calls = 0;
+    Object.defineProperty(Object, 'getOwnPropertyDescriptor', {
+      ...descriptor,
+      value(target: object, key: PropertyKey) {
+        calls += 1;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    try {
+      assert.equal(inlineGeoJsonSchema.safeParse(
+        nestedGeometryCollection(depth),
+      ).success, true);
+    } finally {
+      Object.defineProperty(Object, 'getOwnPropertyDescriptor', descriptor);
+    }
+    return calls;
+  };
+
+  const depth64Calls = descriptorCalls(64);
+  const depth128Calls = descriptorCalls(128);
+  assert.equal(
+    depth128Calls < depth64Calls * 3,
+    true,
+    `depth64=${depth64Calls}, depth128=${depth128Calls}`,
+  );
+});
+
+test('rejects a 4000-level geometry at the configured depth with the exact bounded path', {
+  timeout: 5_000,
+}, () => {
+  const result = validateInlineGeoJson(
+    nestedGeometryCollection(4_000),
+    { maxGeometryDepth: 16 },
+  );
+  assertFailure(result, '/geometries/0'.repeat(16), 'maxGeometryDepth');
+  if (!result.ok) {
+    assert.deepEqual(result.error.details, {
+      reason: 'maxGeometryDepth',
+      maxGeometryDepth: 16,
+      actualGeometryDepth: 17,
+    });
+  }
+});
+
+test('structural schema remains independent from the default aggregate feature budget', () => {
+  const features = Array.from(
+    { length: DEFAULT_GEOJSON_LIMITS.maxFeatures + 1 },
+    () => ({ type: 'Feature', geometry: null, properties: null }),
+  );
+  assert.equal(inlineGeoJsonSchema.safeParse({
+    type: 'FeatureCollection', features,
+  }).success, true);
 });
 
 test('parses strict descriptor-safe positive-integer limit overrides before GeoJSON', () => {
