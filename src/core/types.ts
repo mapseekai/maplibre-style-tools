@@ -261,12 +261,27 @@ export type AddLayerFromSourceOperation = Placement & {
   maxzoom?: number;
   metadata?: JsonObject;
 };
+export type AddGeoJsonLayerOperation = Placement & {
+  op: 'addGeoJsonLayer';
+  sourceId: string;
+  layerId: string;
+  data: InlineGeoJson | string;
+  sourceOptions?: JsonObject;
+  type: 'fill' | 'line' | 'symbol' | 'circle' | 'heatmap' | 'fill-extrusion';
+  paint?: JsonObject;
+  layout?: JsonObject;
+  filter?: JsonValue[];
+  minzoom?: number;
+  maxzoom?: number;
+  metadata?: JsonObject;
+};
 export type LayerLifecycleOperation =
   | DuplicateLayerOperation
   | MoveLayerOperation
   | ReorderLayersOperation
   | RemoveLayerOperation
-  | AddLayerFromSourceOperation;
+  | AddLayerFromSourceOperation
+  | AddGeoJsonLayerOperation;
 export type SetStyleRootPropertiesOperation = {
   op: 'setStyleRootProperties';
   properties: JsonObject;

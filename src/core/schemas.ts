@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  AddLayerFromSourceOperation, AddSourceOperation,
+  AddGeoJsonLayerOperation, AddLayerFromSourceOperation, AddSourceOperation,
   DuplicateLayerOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
   InlineGeoJson, JsonObject, JsonPrimitive, JsonValue,
@@ -342,6 +342,15 @@ const ADD_LAYER_FROM_SOURCE_OPERATION_KEYS = new Set([
   'paint', 'layout', 'filter', 'minzoom', 'maxzoom', 'metadata',
   'beforeId', 'afterId',
 ]);
+const ADD_GEOJSON_LAYER_OPERATION_KEYS = new Set([
+  'op', 'sourceId', 'layerId', 'data', 'sourceOptions', 'type',
+  'paint', 'layout', 'filter', 'minzoom', 'maxzoom', 'metadata',
+  'beforeId', 'afterId',
+]);
+const GEOJSON_LAYER_TYPE_VALUES = [
+  'fill', 'line', 'symbol', 'circle', 'heatmap', 'fill-extrusion',
+] as const;
+const GEOJSON_LAYER_TYPES = new Set<string>(GEOJSON_LAYER_TYPE_VALUES);
 const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
 
 function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
@@ -525,6 +534,38 @@ function fallbackLayerLifecycleOperation(
       return typeof minzoom === 'number' && typeof maxzoom === 'number'
         && minzoom > maxzoom ? undefined : value;
     }
+    case 'addGeoJsonLayer': {
+      if (!hasOnlyKeys(value, ADD_GEOJSON_LAYER_OPERATION_KEYS)
+        || !validLayerLifecycleId(ownValue(value, 'sourceId'))
+        || !validLayerLifecycleId(ownValue(value, 'layerId'))
+        || !GEOJSON_LAYER_TYPES.has(ownValue(value, 'type') as string)) return undefined;
+      const data = ownValue(value, 'data') as JsonValue | undefined;
+      if (!((typeof data === 'string' && data.trim().length > 0)
+        || (data !== undefined && inlineGeoJsonIssue(data) === undefined))) return undefined;
+      const sourceOptions = ownValue(value, 'sourceOptions');
+      if (sourceOptions !== undefined && (
+        !isJsonObject(sourceOptions)
+        || Object.hasOwn(sourceOptions, 'type')
+        || Object.hasOwn(sourceOptions, 'data')
+      )) return undefined;
+      for (const field of ['paint', 'layout', 'metadata'] as const) {
+        const fieldValue = ownValue(value, field);
+        if (fieldValue !== undefined && !isJsonObject(fieldValue)) return undefined;
+      }
+      const filter = ownValue(value, 'filter');
+      if (filter !== undefined && !Array.isArray(filter)) return undefined;
+      const minzoom = ownValue(value, 'minzoom');
+      const maxzoom = ownValue(value, 'maxzoom');
+      if ((minzoom !== undefined && !(
+        typeof minzoom === 'number' && Number.isFinite(minzoom)
+        && minzoom >= 0 && minzoom <= 24
+      )) || (maxzoom !== undefined && !(
+        typeof maxzoom === 'number' && Number.isFinite(maxzoom)
+        && maxzoom >= 0 && maxzoom <= 24
+      ))) return undefined;
+      return typeof minzoom === 'number' && typeof maxzoom === 'number'
+        && minzoom > maxzoom ? undefined : value;
+    }
     default:
       return undefined;
   }
@@ -687,6 +728,103 @@ function fallbackAddLayerFromSourceIssue(
     : undefined;
 }
 
+function geoJsonLayerTypeIssue(value: unknown): LayerLifecycleIssue | undefined {
+  return typeof value === 'string' && GEOJSON_LAYER_TYPES.has(value)
+    ? undefined
+    : {
+        code: 'invalid_value', values: [...GEOJSON_LAYER_TYPE_VALUES], path: ['type'],
+        message: 'Invalid option: expected one of '
+          + GEOJSON_LAYER_TYPE_VALUES.map((item) => `"${item}"`).join('|'),
+      } as LayerLifecycleIssue;
+}
+
+function fallbackGeoJsonLayerDataIssue(
+  data: JsonValue | undefined,
+): LayerLifecycleIssue | undefined {
+  if (typeof data === 'string') {
+    return data.trim().length > 0 ? undefined : nonEmptyStringIssue(['data']);
+  }
+  const inlineIssue = data === undefined
+    ? { code: 'custom', message: INVALID_JSON_MESSAGE, path: [] }
+    : inlineGeoJsonIssue(data);
+  if (inlineIssue === undefined) return undefined;
+  return {
+    code: 'invalid_union',
+    errors: [
+      [invalidTypeIssue('string', data, [])],
+      [{ ...inlineIssue, path: inlineIssue.path ?? [] }],
+    ],
+    path: ['data'],
+    message: 'Invalid input',
+  } as LayerLifecycleIssue;
+}
+
+function fallbackAddGeoJsonLayerIssue(
+  value: JsonObject,
+): LayerLifecycleIssue | undefined {
+  const fieldIssue = requiredNonEmptyStringIssue(value, 'sourceId')
+    ?? requiredNonEmptyStringIssue(value, 'layerId');
+  if (fieldIssue !== undefined) return fieldIssue;
+
+  const dataIssue = fallbackGeoJsonLayerDataIssue(
+    ownValue(value, 'data') as JsonValue | undefined,
+  );
+  if (dataIssue !== undefined) return dataIssue;
+
+  const sourceOptions = ownValue(value, 'sourceOptions');
+  if (sourceOptions !== undefined && !isJsonObject(sourceOptions)) {
+    return invalidTypeIssue('record', sourceOptions, ['sourceOptions']);
+  }
+  if (isJsonObject(sourceOptions)) {
+    if (Object.hasOwn(sourceOptions, 'type')) {
+      return {
+        code: 'custom', path: ['sourceOptions', 'type'],
+        message: 'sourceOptions cannot include the authority key type',
+      };
+    }
+    if (Object.hasOwn(sourceOptions, 'data')) {
+      return {
+        code: 'custom', path: ['sourceOptions', 'data'],
+        message: 'sourceOptions cannot include the authority key data',
+      };
+    }
+  }
+
+  const laterFieldIssue = geoJsonLayerTypeIssue(ownValue(value, 'type'))
+    ?? optionalObjectIssue(value, 'paint')
+    ?? optionalObjectIssue(value, 'layout');
+  if (laterFieldIssue !== undefined) return laterFieldIssue;
+  const filter = ownValue(value, 'filter');
+  if (filter !== undefined && !Array.isArray(filter)) {
+    return invalidTypeIssue('array', filter, ['filter']);
+  }
+  const finalFieldIssue = optionalZoomIssue(value, 'minzoom')
+    ?? optionalZoomIssue(value, 'maxzoom')
+    ?? optionalObjectIssue(value, 'metadata')
+    ?? optionalNonEmptyStringIssue(value, 'beforeId')
+    ?? optionalNonEmptyStringIssue(value, 'afterId');
+  if (finalFieldIssue !== undefined) return finalFieldIssue;
+
+  const unknownKeysIssue = unrecognizedKeysIssue(value, ADD_GEOJSON_LAYER_OPERATION_KEYS);
+  if (unknownKeysIssue !== undefined) return unknownKeysIssue;
+  if (ownValue(value, 'beforeId') !== undefined
+    && ownValue(value, 'afterId') !== undefined) {
+    return {
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    };
+  }
+  const minzoom = ownValue(value, 'minzoom');
+  const maxzoom = ownValue(value, 'maxzoom');
+  return typeof minzoom === 'number' && typeof maxzoom === 'number'
+    && minzoom > maxzoom
+    ? {
+        code: 'custom', message: 'minzoom must be less than or equal to maxzoom',
+        path: ['maxzoom'],
+      }
+    : undefined;
+}
+
 function fallbackLayerLifecycleOperationIssue(
   value: JsonValue,
   expectedOperation?: LayerLifecycleOperation['op'],
@@ -743,6 +881,8 @@ function fallbackLayerLifecycleOperationIssue(
         ?? unrecognizedKeysIssue(value, REMOVE_LAYER_OPERATION_KEYS);
     case 'addLayerFromSource':
       return fallbackAddLayerFromSourceIssue(value);
+    case 'addGeoJsonLayer':
+      return fallbackAddGeoJsonLayerIssue(value);
     default:
       return undefined;
   }
@@ -875,6 +1015,7 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     || operation === 'reorderLayers'
     || operation === 'removeLayer'
     || operation === 'addLayerFromSource'
+    || operation === 'addGeoJsonLayer'
     ? undefined
     : fallbackSetLayerOperationIssue(value);
 }
@@ -1759,6 +1900,58 @@ export const addLayerFromSourceOperationSchema = sanitizeBefore(
   (value) => fallbackLayerLifecycleOperationIssue(value, 'addLayerFromSource'),
 );
 
+const addGeoJsonLayerOperationInnerSchema = z.object({
+  op: z.literal('addGeoJsonLayer'),
+  sourceId: nonEmptyStringSchema,
+  layerId: nonEmptyStringSchema,
+  data: z.union([nonEmptyStringSchema, inlineGeoJsonSchema]),
+  sourceOptions: jsonObjectInnerSchema.optional(),
+  type: z.enum(GEOJSON_LAYER_TYPE_VALUES),
+  paint: jsonObjectInnerSchema.optional(),
+  layout: jsonObjectInnerSchema.optional(),
+  filter: filterArrayInnerSchema.optional(),
+  minzoom: z.number().finite().min(0).max(24).optional(),
+  maxzoom: z.number().finite().min(0).max(24).optional(),
+  metadata: jsonObjectInnerSchema.optional(),
+  beforeId: nonEmptyStringSchema.optional(),
+  afterId: nonEmptyStringSchema.optional(),
+}).strict().superRefine((operation, context) => {
+  if (operation.sourceOptions !== undefined) {
+    if (Object.hasOwn(operation.sourceOptions, 'type')) {
+      context.addIssue({
+        code: 'custom', message: 'sourceOptions cannot include the authority key type',
+        path: ['sourceOptions', 'type'],
+      });
+    }
+    if (Object.hasOwn(operation.sourceOptions, 'data')) {
+      context.addIssue({
+        code: 'custom', message: 'sourceOptions cannot include the authority key data',
+        path: ['sourceOptions', 'data'],
+      });
+    }
+  }
+  if (operation.beforeId !== undefined && operation.afterId !== undefined) {
+    context.addIssue({
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    });
+  }
+  if (operation.minzoom !== undefined && operation.maxzoom !== undefined
+    && operation.minzoom > operation.maxzoom) {
+    context.addIssue({
+      code: 'custom', message: 'minzoom must be less than or equal to maxzoom',
+      path: ['maxzoom'],
+    });
+  }
+}) satisfies z.ZodType<AddGeoJsonLayerOperation>;
+
+export const addGeoJsonLayerOperationSchema = sanitizeBefore(
+  addGeoJsonLayerOperationInnerSchema,
+  undefined,
+  (value) => fallbackLayerLifecycleOperation(value, 'addGeoJsonLayer'),
+  (value) => fallbackLayerLifecycleOperationIssue(value, 'addGeoJsonLayer'),
+);
+
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
   setStyleRootPropertiesOperationInnerSchema,
@@ -1775,6 +1968,7 @@ const styleOperationInnerSchema = z.discriminatedUnion('op', [
   reorderLayersOperationInnerSchema,
   removeLayerOperationInnerSchema,
   addLayerFromSourceOperationInnerSchema,
+  addGeoJsonLayerOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
 type StyleOperationSchemaOutput = StyleOperation & Pick<

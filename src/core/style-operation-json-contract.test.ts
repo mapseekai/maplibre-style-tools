@@ -33,6 +33,15 @@ const addLayerFromSourceJsonContract = {
   beforeId: 'labels',
 } satisfies StyleOperation;
 
+const addGeoJsonLayerJsonContract = {
+  op: 'addGeoJsonLayer',
+  sourceId: 'incidents',
+  layerId: 'incidents-circle',
+  data: { type: 'FeatureCollection', features: [] },
+  type: 'circle',
+  afterId: 'roads',
+} satisfies StyleOperation;
+
 type AssertTrue<T extends true> = T;
 type StyleOperationIsJsonObject = AssertTrue<
   StyleOperation extends JsonObject ? true : false
@@ -45,4 +54,8 @@ it('keeps every StyleOperation variant JSON-backed', () => {
   assert.equal(addSourceJsonContract.op, 'addSource');
   assert.equal(duplicateLayerJsonContract.op, 'duplicateLayer');
   assert.equal(addLayerFromSourceJsonContract.op, 'addLayerFromSource');
+});
+
+it('keeps addGeoJsonLayer in the closed JSON-backed union', () => {
+  assert.equal(addGeoJsonLayerJsonContract.op, 'addGeoJsonLayer');
 });

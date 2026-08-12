@@ -327,6 +327,7 @@ type HandledStyleOperation = Extract<
       | 'reorderLayers'
       | 'removeLayer'
       | 'addLayerFromSource'
+      | 'addGeoJsonLayer'
       | 'setStyleRootProperties'
       | 'setLayerFilter'
       | 'setGeoJsonSourceFilter'
@@ -354,6 +355,7 @@ function applyOperation(
       case 'reorderLayers':
       case 'removeLayer':
       case 'addLayerFromSource':
+      case 'addGeoJsonLayer':
         return applyLayerOperation(style, operation, context);
       case 'setStyleRootProperties':
         return applyRootOperation(style, operation, context);

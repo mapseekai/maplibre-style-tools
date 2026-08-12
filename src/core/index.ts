@@ -1,4 +1,5 @@
 export type {
+  AddGeoJsonLayerOperation,
   AddLayerFromSourceOperation,
   AddSourceOperation,
   CoreExecutionLimits,
@@ -92,6 +93,7 @@ export {
   utf8ByteLength,
 } from './utf8.js';
 export {
+  addGeoJsonLayerOperationSchema,
   addLayerFromSourceOperationSchema,
   addSourceOperationSchema,
   duplicateLayerOperationSchema,

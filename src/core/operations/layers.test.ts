@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { replayStyleDiff } from '../diff.js';
+import { isStyleToolError } from '../errors.js';
 import {
+  addGeoJsonLayerOperationSchema,
   addLayerFromSourceOperationSchema,
   createStyleTransactionSchema,
   duplicateLayerOperationSchema,
@@ -13,14 +15,17 @@ import {
 import { applyStyleTransaction } from '../transaction.js';
 import {
   DEFAULT_MAX_DIFF_BYTES, DEFAULT_MAX_OPERATIONS, DEFAULT_MAX_STYLE_BYTES,
+  jsonUtf8ByteLength,
 } from '../utf8.js';
 import type {
+  AddGeoJsonLayerOperation,
   AddLayerFromSourceOperation,
   CoreExecutionLimits,
   JsonObject,
   JsonValue,
   LayerLifecycleOperation,
   OperationContext,
+  StyleDiffEntry,
   StyleDocument,
 } from '../types.js';
 import { applyLayerOperation, applySetLayerProperties } from './layers.js';
@@ -1660,4 +1665,465 @@ test('addLayerFromSource reads no source metadata beyond the source object type'
   }]);
   assert.deepEqual([...context.changedLayerIds], ['authoritative']);
   assert.deepEqual([...context.changedSourceIds], []);
+});
+
+test('addGeoJsonLayer atomically creates an inline source and its first layer', () => {
+  const style = makeStyle([]);
+  const data = {
+    type: 'FeatureCollection' as const,
+    features: [{
+      type: 'Feature' as const,
+      id: 'incident-1',
+      geometry: { type: 'Point' as const, coordinates: [120, 30] as [number, number] },
+      properties: { severity: 4 },
+    }],
+  };
+  const operation = {
+    op: 'addGeoJsonLayer',
+    sourceId: 'incidents',
+    layerId: 'incidents-circle',
+    data,
+    type: 'circle',
+    paint: { 'circle-color': '#ff0000', 'circle-radius': 6 },
+  } as const;
+
+  assert.equal(addGeoJsonLayerOperationSchema.safeParse(operation).success, true);
+  assert.equal(styleOperationSchema.safeParse(operation).success, true);
+  const result = applyStyleTransaction(style, { operations: [operation] });
+  const expectedSource = { type: 'geojson', data };
+  const expectedLayer = {
+    id: 'incidents-circle', source: 'incidents', type: 'circle',
+    paint: { 'circle-color': '#ff0000', 'circle-radius': 6 },
+  };
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.style.sources, { incidents: expectedSource });
+  assert.deepEqual(result.style.layers, [expectedLayer]);
+  assert.notStrictEqual(result.style.sources.incidents?.data, data);
+  assert.deepEqual(result.changedSources, ['incidents']);
+  assert.deepEqual(result.changedLayers, ['incidents-circle']);
+  assert.deepEqual(result.diff, [
+    {
+      op: 'add', path: '/layers/0', after: expectedLayer,
+      target: { kind: 'layer', id: 'incidents-circle' },
+    },
+    {
+      op: 'add', path: '/sources/incidents', after: expectedSource,
+      target: { kind: 'source', id: 'incidents' },
+    },
+  ]);
+  assertReplay(style, result);
+});
+
+test('addGeoJsonLayer preserves URL, source options, layer fields, and placement without fetching', () => {
+  const previousFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+  let fetchCalls = 0;
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    value: () => { fetchCalls += 1; throw new Error('must not fetch'); },
+    writable: true,
+  });
+  try {
+    const style = makeStyle(['roads', 'labels']);
+    const data = 'https://example.test/incidents.geojson';
+    const sourceOptions = {
+      cluster: true,
+      clusterRadius: 64,
+      clusterMaxZoom: 13,
+      promoteId: 'incident_id',
+    };
+    const operation = {
+      op: 'addGeoJsonLayer', sourceId: 'incidents', layerId: 'incidents-symbol',
+      data, sourceOptions, type: 'symbol', afterId: 'roads',
+      layout: { 'icon-image': 'incident' },
+      filter: ['==', ['get', 'visible'], true],
+      minzoom: 2, maxzoom: 18, metadata: { owner: 'response' },
+    } as const;
+    const result = applyStyleTransaction(style, { operations: [operation] });
+    const expectedSource = { ...sourceOptions, type: 'geojson', data };
+    const expectedLayer = {
+      id: 'incidents-symbol', source: 'incidents', type: 'symbol',
+      layout: { 'icon-image': 'incident' },
+      filter: ['==', ['get', 'visible'], true],
+      minzoom: 2, maxzoom: 18, metadata: { owner: 'response' },
+    };
+
+    assert.equal(result.ok, true);
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(result.style.sources.incidents, expectedSource);
+    assert.deepEqual(result.style.layers.map(({ id }) => id), [
+      'roads', 'incidents-symbol', 'labels',
+    ]);
+    assert.deepEqual(result.style.layers[1], expectedLayer);
+    assert.deepEqual(result.changedSources, ['incidents']);
+    assert.deepEqual(result.changedLayers, ['incidents-symbol']);
+    assert.deepEqual(result.diff, [
+      {
+        op: 'add', path: '/layers/1', after: expectedLayer,
+        target: { kind: 'layer', id: 'incidents-symbol' },
+      },
+      {
+        op: 'add', path: '/sources/incidents', after: expectedSource,
+        target: { kind: 'source', id: 'incidents' },
+      },
+    ]);
+    assertReplay(style, result);
+  } finally {
+    if (previousFetch === undefined) Reflect.deleteProperty(globalThis, 'fetch');
+    else Object.defineProperty(globalThis, 'fetch', previousFetch);
+  }
+});
+
+test('addGeoJsonLayer schema is closed and rejects authority injection and empty IDs', () => {
+  const base = {
+    op: 'addGeoJsonLayer', sourceId: 'incidents', layerId: 'incidents-circle',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+  } as const;
+  const fixtures = [
+    { ...base, sourceOptions: { type: 'vector' } },
+    { ...base, sourceOptions: { data: 'stolen' } },
+    { ...base, 'source-layer': 'stolen' },
+    { ...base, sourceLayer: 'stolen' },
+    { ...base, id: 'stolen' },
+    { ...base, source: 'stolen' },
+    { ...base, unknown: true },
+    { ...base, sourceId: '' },
+    { ...base, layerId: ' \t' },
+    { ...base, type: 'raster' },
+  ];
+
+  for (const operation of fixtures) {
+    assert.equal(addGeoJsonLayerOperationSchema.safeParse(operation).success, false);
+    assert.equal(styleOperationSchema.safeParse(operation).success, false);
+    const style = makeStyle([]);
+    const sources = style.sources;
+    const layers = style.layers;
+    const result = assertAtomicFailure(style, operation, 'INVALID_INPUT');
+    assert.strictEqual(result.style.sources, sources);
+    assert.strictEqual(result.style.layers, layers);
+    assert.deepEqual(style.sources, {});
+    assert.deepEqual(style.layers, []);
+  }
+});
+
+test('addGeoJsonLayer rejects hostile source options with zero getter calls', () => {
+  const base = {
+    op: 'addGeoJsonLayer', sourceId: 'incidents', layerId: 'incidents-circle',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+  } as const;
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  const dangerous = JSON.parse('{"__proto__":{"polluted":true}}') as JsonObject;
+  class Exotic { readonly cluster = true; }
+  let getterCalls = 0;
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, 'cluster', {
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('must not run'); },
+  });
+  const beforePollution = Object.getOwnPropertyDescriptor(Object.prototype, 'polluted');
+
+  for (const sourceOptions of [cyclic, dangerous, new Date(0), new Exotic(), accessor]) {
+    const operation = { ...base, sourceOptions };
+    assert.equal(addGeoJsonLayerOperationSchema.safeParse(operation).success, false);
+    assert.equal(styleOperationSchema.safeParse(operation).success, false);
+    const style = makeStyle([]);
+    assertAtomicFailure(style, operation, 'INVALID_INPUT');
+
+    const directStyle = makeStyle([]);
+    const directContext = makeContext();
+    const direct = applyLayerOperation(
+      directStyle,
+      operation as unknown as AddGeoJsonLayerOperation,
+      directContext,
+    );
+    assert.equal(direct.ok, false);
+    assert.deepEqual(directStyle.sources, {});
+    assert.deepEqual(directStyle.layers, []);
+    assert.deepEqual([...directContext.changedSourceIds], []);
+    assert.deepEqual([...directContext.changedLayerIds], []);
+  }
+  assert.equal(getterCalls, 0);
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, 'polluted'),
+    beforePollution,
+  );
+});
+
+test('addGeoJsonLayer rejects source and layer collisions before either mutation', () => {
+  const sourceCollisionStyle = makeSourceStyle();
+  const sourceCollision = assertAtomicFailure(sourceCollisionStyle, {
+    op: 'addGeoJsonLayer', sourceId: 'geo', layerId: 'new-layer',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+  }, 'CONFLICT');
+  if (!sourceCollision.ok) assert.equal(sourceCollision.error.path, '/sourceId');
+
+  const layerCollisionStyle = makeStyle(['taken']);
+  const layerCollision = assertAtomicFailure(layerCollisionStyle, {
+    op: 'addGeoJsonLayer', sourceId: 'new-source', layerId: 'taken',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+  }, 'CONFLICT');
+  if (!layerCollision.ok) assert.equal(layerCollision.error.path, '/layerId');
+
+  const unsafeIdStyle = makeStyle([]);
+  const unsafeId = assertAtomicFailure(unsafeIdStyle, {
+    op: 'addGeoJsonLayer', sourceId: '__proto__', layerId: 'safe-layer',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+  }, 'INVALID_INPUT');
+  if (!unsafeId.ok) assert.equal(unsafeId.error.path, '/sourceId');
+});
+
+test('addGeoJsonLayer rolls back invalid GeoJSON, placement, and canonical layer fields', () => {
+  let geometry: JsonObject = { type: 'Point', coordinates: [0, 0] };
+  for (let depth = 1; depth <= 16; depth += 1) {
+    geometry = { type: 'GeometryCollection', geometries: [geometry] };
+  }
+  const deepStyle = makeStyle([]);
+  const deepFailure = assertAtomicFailure(deepStyle, {
+    op: 'addGeoJsonLayer', sourceId: 'deep', layerId: 'deep-layer',
+    data: geometry, type: 'circle',
+  }, 'INVALID_INPUT');
+  if (deepFailure.ok) assert.fail('expected GeoJSON depth failure');
+  assert.equal(deepFailure.error.path, `/data${'/geometries/0'.repeat(16)}`);
+  assert.deepEqual(deepFailure.error.details, {
+    reason: 'maxGeometryDepth', maxGeometryDepth: 16, actualGeometryDepth: 17,
+  });
+  assert.equal(isStyleToolError(deepFailure.error), true);
+
+  const invalidCoordinateStyle = makeStyle([]);
+  const invalidCoordinate = assertAtomicFailure(invalidCoordinateStyle, {
+    op: 'addGeoJsonLayer', sourceId: 'bad', layerId: 'bad-layer',
+    data: { type: 'Point', coordinates: [0] }, type: 'circle',
+  }, 'INVALID_INPUT');
+  if (!invalidCoordinate.ok) {
+    assert.equal(invalidCoordinate.error.path, '/operations/0/data');
+  }
+
+  const missingAnchorStyle = makeStyle(['roads']);
+  const missingAnchor = assertAtomicFailure(missingAnchorStyle, {
+    op: 'addGeoJsonLayer', sourceId: 'geo', layerId: 'geo-layer',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+    beforeId: 'missing',
+  }, 'NOT_FOUND');
+  if (!missingAnchor.ok) assert.equal(missingAnchor.error.path, '/beforeId');
+
+  const invalidPaintStyle = makeStyle([]);
+  const invalidPaint = assertAtomicFailure(invalidPaintStyle, {
+    op: 'addGeoJsonLayer', sourceId: 'areas', layerId: 'areas-fill',
+    data: { type: 'FeatureCollection', features: [] }, type: 'fill',
+    paint: { 'line-color': '#fff' },
+  }, 'STYLE_INVALID');
+  assert.strictEqual(invalidPaint.style, invalidPaintStyle);
+  assert.deepEqual(invalidPaintStyle.sources, {});
+  assert.deepEqual(invalidPaintStyle.layers, []);
+});
+
+test('addGeoJsonLayer uses resolved core maxStyleBytes for default, lower, and raised limits', () => {
+  const data = {
+    type: 'FeatureCollection' as const,
+    features: [{
+      type: 'Feature' as const,
+      geometry: null,
+      properties: { payload: 'x'.repeat(DEFAULT_MAX_STYLE_BYTES) },
+    }],
+  };
+  const dataBytes = jsonUtf8ByteLength(data);
+  assert.equal(dataBytes > DEFAULT_MAX_STYLE_BYTES, true);
+
+  const style = makeStyle([]);
+  const expectedSource: StyleDocument['sources'][string] = { type: 'geojson', data };
+  const expectedLayer: StyleDocument['layers'][number] = {
+    id: 'huge-layer', source: 'huge', type: 'circle',
+  };
+  const expectedStyle: StyleDocument = {
+    version: 8,
+    sources: { huge: expectedSource },
+    layers: [expectedLayer],
+  };
+  const expectedDiff: StyleDiffEntry[] = [
+    {
+      op: 'add', path: '/layers/0', after: expectedLayer,
+      target: { kind: 'layer', id: 'huge-layer' },
+    },
+    {
+      op: 'add', path: '/sources/huge', after: expectedSource,
+      target: { kind: 'source', id: 'huge' },
+    },
+  ];
+  const expectedStyleBytes = jsonUtf8ByteLength(expectedStyle);
+  const expectedDiffBytes = jsonUtf8ByteLength(expectedDiff as JsonValue);
+  assert.equal(jsonUtf8ByteLength(style) < dataBytes - 1, true);
+  assert.equal(jsonUtf8ByteLength(style) < expectedStyleBytes, true);
+
+  const operation = {
+    op: 'addGeoJsonLayer', sourceId: 'huge', layerId: 'huge-layer', data, type: 'circle',
+  } as const;
+  const omitted = applyStyleTransaction(style, { operations: [operation] });
+  assert.equal(omitted.ok, false);
+  assert.strictEqual(omitted.style, style);
+  assert.deepEqual(omitted.changedSources, []);
+  assert.deepEqual(omitted.changedLayers, []);
+  assert.deepEqual(omitted.diff, []);
+  if (omitted.ok) assert.fail('expected default maxBytes failure');
+  assert.equal(omitted.error.path, '/data');
+  assert.deepEqual(omitted.error.details, {
+    reason: 'maxBytes', maxBytes: DEFAULT_MAX_STYLE_BYTES, actualBytes: dataBytes,
+  });
+
+  const lowered = applyStyleTransaction(style, { operations: [operation] }, {
+    maxStyleBytes: dataBytes - 1,
+    maxDiffBytes: expectedDiffBytes,
+  });
+  assert.equal(lowered.ok, false);
+  assert.strictEqual(lowered.style, style);
+  assert.deepEqual(lowered.changedSources, []);
+  assert.deepEqual(lowered.changedLayers, []);
+  assert.deepEqual(lowered.diff, []);
+  if (lowered.ok) assert.fail('expected lowered maxBytes failure');
+  assert.equal(lowered.error.path, '/data');
+  assert.deepEqual(lowered.error.details, {
+    reason: 'maxBytes', maxBytes: dataBytes - 1, actualBytes: dataBytes,
+  });
+
+  const raised = applyStyleTransaction(style, { operations: [operation] }, {
+    maxStyleBytes: expectedStyleBytes,
+    maxDiffBytes: expectedDiffBytes,
+  });
+  assert.equal(raised.ok, true);
+  assert.deepEqual(raised.style, expectedStyle);
+  assert.notStrictEqual(raised.style.sources.huge?.data, data);
+  assert.deepEqual(raised.changedSources, ['huge']);
+  assert.deepEqual(raised.changedLayers, ['huge-layer']);
+  assert.deepEqual(raised.diff, expectedDiff);
+  assertReplay(style, raised);
+});
+
+test('addGeoJsonLayer URL bypasses inline validation but remains under final style limits', () => {
+  const style = makeStyle([]);
+  const data = `https://example.test/${'x'.repeat(512)}.geojson`;
+  const expected: StyleDocument = {
+    version: 8,
+    sources: { remote: { type: 'geojson', data } },
+    layers: [{ id: 'remote-layer', source: 'remote', type: 'circle' }],
+  };
+  const baselineBytes = jsonUtf8ByteLength(style);
+  const completedBytes = jsonUtf8ByteLength(expected);
+  assert.equal(completedBytes > baselineBytes, true);
+
+  const result = applyStyleTransaction(style, { operations: [{
+    op: 'addGeoJsonLayer', sourceId: 'remote', layerId: 'remote-layer', data, type: 'circle',
+  }] }, {
+    maxStyleBytes: completedBytes - 1,
+    maxDiffBytes: 4096,
+  });
+  assert.equal(result.ok, false);
+  assert.strictEqual(result.style, style);
+  assert.deepEqual(result.changedSources, []);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.diff, []);
+  if (result.ok) assert.fail('expected final style size failure');
+  assert.equal(result.error.path, '');
+  assert.deepEqual(result.error.details, {
+    reason: 'maxStyleBytes', maxBytes: completedBytes - 1, actualBytes: completedBytes,
+  });
+});
+
+test('addGeoJsonLayer handles 20k-deep source options without stack overflow', () => {
+  const style = makeStyle([]);
+  const extension = makeDeepJsonObject(DEEP_JSON_DEPTH, 'leaf');
+  const result = applyStyleTransaction(style, {
+    validate: false,
+    operations: [{
+      op: 'addGeoJsonLayer', sourceId: 'deep', layerId: 'deep-layer',
+      data: { type: 'FeatureCollection', features: [] },
+      sourceOptions: { extension }, type: 'circle',
+    }],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail('expected deep atomic creation success');
+  assertDeepJsonObject(result.style.sources.deep?.extension, DEEP_JSON_DEPTH, 'leaf');
+  assertDeepJsonObject(
+    (result.diff[1]?.after as JsonObject | undefined)?.extension,
+    DEEP_JSON_DEPTH,
+    'leaf',
+  );
+  assert.deepEqual(result.changedSources, ['deep']);
+  assert.deepEqual(result.changedLayers, ['deep-layer']);
+  const replayed = replayStyleDiff(style, result.diff);
+  assertDeepJsonObject(replayed.sources.deep?.extension, DEEP_JSON_DEPTH, 'leaf');
+  assert.deepEqual(replayed.layers, [{ id: 'deep-layer', source: 'deep', type: 'circle' }]);
+});
+
+test('addGeoJsonLayer polluted fallback matches clean descriptor and authority contracts', () => {
+  const valid = {
+    op: 'addGeoJsonLayer', sourceId: ' incidents ', layerId: ' incidents-circle ',
+    data: { type: 'FeatureCollection', features: [] }, type: 'circle',
+    sourceOptions: { cluster: true }, afterId: ' roads ',
+  } as const;
+  const invalid = [
+    {
+      op: 'addGeoJsonLayer', sourceId: ' incidents ', layerId: ' incidents-circle ',
+      type: 'circle',
+    },
+    { ...valid, data: 1 },
+    { ...valid, data: { type: 'Point', coordinates: [0] } },
+    { ...valid, sourceId: ' ' },
+    { ...valid, layerId: '\t' },
+    { ...valid, type: 'raster' },
+    { ...valid, sourceOptions: { type: 'geojson' } },
+    { ...valid, sourceOptions: { data: 'stolen' } },
+    { ...valid, 'source-layer': 'stolen' },
+    { ...valid, unknown: true },
+    { ...valid, beforeId: 'a', afterId: 'b' },
+  ];
+  const transactionSchema = createStyleTransactionSchema(2);
+  const cleanIssues = invalid.map((operation) => {
+    const direct = addGeoJsonLayerOperationSchema.safeParse(operation);
+    const union = styleOperationSchema.safeParse(operation);
+    const transaction = transactionSchema.safeParse({ operations: [operation] });
+    assert.equal(direct.success, false);
+    assert.equal(union.success, false);
+    assert.equal(transaction.success, false);
+    if (direct.success || union.success || transaction.success) {
+      assert.fail('expected clean schema rejection');
+    }
+    return {
+      direct: direct.error.issues,
+      union: union.error.issues,
+      transaction: transaction.error.issues,
+    };
+  });
+  assert.equal(addGeoJsonLayerOperationSchema.safeParse(valid).success, true);
+  assert.equal(styleOperationSchema.safeParse(valid).success, true);
+  assert.equal(transactionSchema.safeParse({ operations: [valid] }).success, true);
+
+  const key = 'addGeoJsonLayerFallbackProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true, value: true, writable: true,
+    });
+    assert.equal(addGeoJsonLayerOperationSchema.safeParse(valid).success, true);
+    assert.equal(styleOperationSchema.safeParse(valid).success, true);
+    assert.equal(transactionSchema.safeParse({ operations: [valid] }).success, true);
+    for (let index = 0; index < invalid.length; index += 1) {
+      const operation = invalid[index]!;
+      const direct = addGeoJsonLayerOperationSchema.safeParse(operation);
+      const union = styleOperationSchema.safeParse(operation);
+      const transaction = transactionSchema.safeParse({ operations: [operation] });
+      assert.equal(direct.success, false);
+      assert.equal(union.success, false);
+      assert.equal(transaction.success, false);
+      if (direct.success || union.success || transaction.success) {
+        assert.fail('expected polluted schema rejection');
+      }
+      assert.deepEqual(direct.error.issues, cleanIssues[index]!.direct);
+      assert.deepEqual(union.error.issues, cleanIssues[index]!.union);
+      assert.deepEqual(transaction.error.issues, cleanIssues[index]!.transaction);
+    }
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, key);
+    else Object.defineProperty(Object.prototype, key, originalDescriptor);
+  }
 });

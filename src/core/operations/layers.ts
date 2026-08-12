@@ -1,5 +1,6 @@
 import { jsonValuesEqual } from '../diff.js';
 import { createStyleToolError } from '../errors.js';
+import { validateInlineGeoJson } from '../geojson.js';
 import type {
   JsonObject,
   JsonValue,
@@ -9,6 +10,8 @@ import type {
   SetLayerPropertiesOperation,
   StyleDocument,
   StyleLayer,
+  StyleSource,
+  StyleToolError,
 } from '../types.js';
 import {
   applyMergePatch,
@@ -274,6 +277,7 @@ function removeLayer(
 const SOURCE_LAYER_FORBIDDEN_TYPES = new Set([
   'geojson', 'raster', 'raster-dem', 'image', 'video',
 ]);
+const DANGEROUS_SOURCE_IDS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function addLayerFromSource(
   style: StyleDocument,
@@ -358,6 +362,132 @@ function addLayerFromSource(
   return { ok: true, changed: true };
 }
 
+function geoJsonLayerDataError(error: StyleToolError): OperationApplyResult {
+  const nestedPath = error.path;
+  const path = nestedPath === undefined || nestedPath === ''
+    ? '/data'
+    : `/data${nestedPath}`;
+  return {
+    ok: false,
+    error: createStyleToolError(
+      error.code,
+      error.message,
+      path,
+      error.details,
+    ),
+  };
+}
+
+function addGeoJsonLayer(
+  style: StyleDocument,
+  operation: Extract<LayerLifecycleOperation, { op: 'addGeoJsonLayer' }>,
+  context: OperationContext,
+): OperationApplyResult {
+  if (DANGEROUS_SOURCE_IDS.has(operation.sourceId)) {
+    return invalidInput(
+      `Source ID "${operation.sourceId}" is not a safe JSON object key.`,
+      '/sourceId',
+      { sourceId: operation.sourceId },
+    );
+  }
+  if (Object.hasOwn(style.sources, operation.sourceId)) {
+    return {
+      ok: false,
+      error: createStyleToolError(
+        'CONFLICT',
+        `Source "${operation.sourceId}" already exists.`,
+        '/sourceId',
+        { sourceId: operation.sourceId },
+      ),
+    };
+  }
+  if (style.layers.some((layer) => layer.id === operation.layerId)) {
+    return {
+      ok: false,
+      error: createStyleToolError(
+        'CONFLICT',
+        `Layer "${operation.layerId}" already exists.`,
+        '/layerId',
+        { layerId: operation.layerId },
+      ),
+    };
+  }
+  const placementFailure = placementError(operation);
+  if (placementFailure !== undefined) return placementFailure;
+
+  let sourceOptions: JsonObject;
+  try {
+    sourceOptions = cloneStrictJsonValue(operation.sourceOptions ?? {});
+  } catch {
+    return invalidInput(
+      'sourceOptions must be a strict JSON object.',
+      '/sourceOptions',
+    );
+  }
+  for (const authorityKey of ['type', 'data'] as const) {
+    if (Object.hasOwn(sourceOptions, authorityKey)) {
+      return invalidInput(
+        `sourceOptions cannot include the authority key ${authorityKey}.`,
+        `/sourceOptions/${authorityKey}`,
+      );
+    }
+  }
+
+  const insertion = resolveLayerInsertionIndex(
+    style.layers,
+    operation,
+    style.layers.length,
+  );
+  if (typeof insertion !== 'number') return insertion;
+
+  let data: JsonValue;
+  if (typeof operation.data === 'string') {
+    data = operation.data;
+  } else {
+    const validated = validateInlineGeoJson(operation.data, {
+      maxBytes: context.limits.maxStyleBytes,
+    });
+    if (!validated.ok) return geoJsonLayerDataError(validated.error);
+    data = validated.value;
+  }
+
+  const source = {
+    ...sourceOptions,
+    type: 'geojson',
+    data,
+  } as StyleSource;
+  const layer = {
+    id: operation.layerId,
+    source: operation.sourceId,
+    type: operation.type,
+  } as StyleLayer;
+  for (const field of [
+    'paint', 'layout', 'filter', 'minzoom', 'maxzoom', 'metadata',
+  ] as const) {
+    if (!Object.hasOwn(operation, field)) continue;
+    const value = operation[field];
+    if (value !== undefined) {
+      Reflect.defineProperty(layer, field, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+      });
+    }
+  }
+
+  Reflect.defineProperty(style.sources, operation.sourceId, {
+    configurable: true,
+    enumerable: true,
+    value: source,
+    writable: true,
+  });
+  style.layers.splice(insertion, 0, layer);
+  context.changedSourceIds.add(operation.sourceId);
+  context.changedLayerIds.add(operation.layerId);
+  return { ok: true, changed: true };
+}
+
 function assertNever(value: never): never {
   throw new Error(`Unhandled layer lifecycle operation: ${JSON.stringify(value)}`);
 }
@@ -378,6 +508,8 @@ export function applyLayerOperation(
       return removeLayer(style, operation, context);
     case 'addLayerFromSource':
       return addLayerFromSource(style, operation, context);
+    case 'addGeoJsonLayer':
+      return addGeoJsonLayer(style, operation, context);
     default:
       return assertNever(operation);
   }
