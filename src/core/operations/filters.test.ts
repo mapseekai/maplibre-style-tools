@@ -299,11 +299,13 @@ test('legacy history replays temporarily invalid transitions and compact applies
 
   let setStyleCalls = 0;
   let appliedStyle: LegacyStyleDocument | undefined;
+  let currentStyle = structuredClone(style);
   const map = {
-    getStyle: () => structuredClone(style),
+    getStyle: () => structuredClone(currentStyle),
     setStyle: (nextStyle: LegacyStyleDocument) => {
       setStyleCalls += 1;
       appliedStyle = nextStyle;
+      currentStyle = structuredClone(nextStyle);
     },
   } as unknown as Map;
   const compact = createCompactMapLibreStyleTools({ getMap: () => map });
@@ -389,11 +391,13 @@ test('legacy batches count 51 combined paint and filter updates as public operat
 
   let setStyleCalls = 0;
   let appliedStyle: LegacyStyleDocument | undefined;
+  let currentStyle = structuredClone(style);
   const map = {
-    getStyle: () => structuredClone(style),
+    getStyle: () => structuredClone(currentStyle),
     setStyle: (nextStyle: LegacyStyleDocument) => {
       setStyleCalls += 1;
       appliedStyle = nextStyle;
+      currentStyle = structuredClone(nextStyle);
     },
   } as unknown as Map;
   const compact = createCompactMapLibreStyleTools({ getMap: () => map });

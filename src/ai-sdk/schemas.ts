@@ -62,6 +62,12 @@ const executionShape = {
   diff: z.boolean().default(true),
 };
 
+function descriptorSafeInputSchema<Schema extends z.ZodType>(
+  schema: Schema,
+): z.ZodType<z.output<Schema>> {
+  return jsonValueSchema.pipe(schema as never) as z.ZodType<z.output<Schema>>;
+}
+
 const validatePlacement = (
   input: { beforeId?: string; afterId?: string },
   context: z.RefinementCtx,
@@ -89,16 +95,43 @@ const validateZooms = (
   }
 };
 
-export const compactAnalyzeGeoJsonInputSchema = z.object({
+export const compactGetStyleContextInputSchema = descriptorSafeInputSchema(z.object({
+  layerLimit: z.number().min(1).max(300).default(120),
+}).strict());
+
+export const compactSearchLayersInputSchema = descriptorSafeInputSchema(z.object({
+  query: z.string().optional(),
+  type: z.string().optional(),
+  source: z.string().optional(),
+  sourceLayer: z.string().optional(),
+  limit: z.number().min(1).max(300).default(80),
+}).strict());
+
+export const compactInspectLayersCompactInputSchema = descriptorSafeInputSchema(z.object({
+  layerIdsJson: z.string().describe('JSON array of layer ids.'),
+  fields: z.array(z.enum(['paint', 'layout', 'filter', 'zoom']))
+    .default(['paint', 'layout']),
+}).strict());
+
+export const compactApplyStyleOperationsInputSchema = descriptorSafeInputSchema(z.object({
+  operationsJson: legacyOperationsTextSchema,
+  ...executionShape,
+}).strict());
+
+export const compactValidateStylePatchJsonInputSchema = descriptorSafeInputSchema(z.object({
+  patchJson: z.string(),
+}).strict());
+
+export const compactAnalyzeGeoJsonInputSchema = descriptorSafeInputSchema(z.object({
   data: geoJsonAnalysisInputSchema,
   options: geoJsonAnalysisOptionsSchema.optional(),
-}).strict();
+}).strict());
 
-export const compactListSourceLayersInputSchema = z.object({
+export const compactListSourceLayersInputSchema = descriptorSafeInputSchema(z.object({
   sourceId: nonEmptyStringSchema.optional(),
-}).strict();
+}).strict());
 
-export const compactDuplicateLayerInputSchema = z.object({
+export const compactDuplicateLayerInputSchema = descriptorSafeInputSchema(z.object({
   layerId: nonEmptyStringSchema,
   newLayerId: nonEmptyStringSchema,
   overrides: jsonObjectSchema.optional(),
@@ -112,9 +145,9 @@ export const compactDuplicateLayerInputSchema = z.object({
       path: ['overrides', 'id'],
     });
   }
-});
+}));
 
-export const compactAddLayerFromSourceInputSchema = z.object({
+export const compactAddLayerFromSourceInputSchema = descriptorSafeInputSchema(z.object({
   layerId: nonEmptyStringSchema,
   sourceId: nonEmptyStringSchema,
   sourceLayer: nonEmptyStringSchema.optional(),
@@ -130,9 +163,9 @@ export const compactAddLayerFromSourceInputSchema = z.object({
 }).strict().superRefine((input, context) => {
   validatePlacement(input, context);
   validateZooms(input, context);
-});
+}));
 
-export const compactAddGeoJsonLayerInputSchema = z.object({
+export const compactAddGeoJsonLayerInputSchema = descriptorSafeInputSchema(z.object({
   sourceId: nonEmptyStringSchema,
   layerId: nonEmptyStringSchema,
   data: geoJsonAnalysisInputSchema,
@@ -158,10 +191,10 @@ export const compactAddGeoJsonLayerInputSchema = z.object({
       });
     }
   }
-});
+}));
 
-export const compactApplyStyleTransactionInputSchema = z.object({
+export const compactApplyStyleTransactionInputSchema = descriptorSafeInputSchema(z.object({
   transaction: styleTransactionSchema,
   dryRun: z.boolean().default(false),
   diff: z.boolean().default(true),
-}).strict();
+}).strict());

@@ -6,6 +6,13 @@ import {
   createMapLibreStyleTools,
 } from './index.js';
 import { COMPACT_LEGACY_TOOL_NAMES } from './ai-sdk/tool-contracts.js';
+import {
+  compactApplyStyleOperationsInputSchema,
+  compactGetStyleContextInputSchema,
+  compactInspectLayersCompactInputSchema,
+  compactSearchLayersInputSchema,
+  compactValidateStylePatchJsonInputSchema,
+} from './ai-sdk/index.js';
 import type { StyleDocument } from './types.js';
 
 type ToolResult = {
@@ -68,6 +75,20 @@ test('keeps the existing full and compact tool-name surfaces', () => {
   ];
   for (const name of approvedStructuredNames) assert.equal(name in compact, true, name);
   assert.deepEqual(names, [...COMPACT_LEGACY_TOOL_NAMES, ...approvedStructuredNames]);
+});
+
+test('publishes named schemas for every legacy compact tool', () => {
+  assert.equal(compactGetStyleContextInputSchema.safeParse({}).success, true);
+  assert.equal(compactSearchLayersInputSchema.safeParse({}).success, true);
+  assert.equal(compactInspectLayersCompactInputSchema.safeParse({
+    layerIdsJson: '[]',
+  }).success, true);
+  assert.equal(compactApplyStyleOperationsInputSchema.safeParse({
+    operationsJson: '[]',
+  }).success, true);
+  assert.equal(compactValidateStylePatchJsonInputSchema.safeParse({
+    patchJson: '{}',
+  }).success, true);
 });
 
 test('ordinary delegated tools preserve the exact missing-layer result', async () => {
