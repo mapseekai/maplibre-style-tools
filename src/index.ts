@@ -313,6 +313,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
+        }
         const parsedValue = parseStyleValue(valueJson);
         const result = applyLegacyPropertyOperationToMap(map, {
           layerId,
@@ -348,6 +351,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const map = getMap();
         if (!map) {
           return mapReadyError(style);
+        }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
         }
         const parsedValue = parseStyleValue(valueJson);
         const result = applyLegacyPropertyOperationToMap(map, {
@@ -522,6 +528,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
+        }
         const parsedProps = parseObjectInput(propertiesJson, 'propertiesJson');
         if (!parsedProps.ok) {
           return buildResult(parsedProps.message, style, false);
@@ -561,6 +570,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
+        }
         const parsedProps = parseObjectInput(propertiesJson, 'propertiesJson');
         if (!parsedProps.ok) {
           return buildResult(parsedProps.message, style, false);
@@ -599,6 +611,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         if (!map) {
           return mapReadyError(style);
         }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
+        }
         const result = applyLegacyPropertyOperationToMap(map, {
           layerId,
           paint: { [property]: null },
@@ -625,6 +640,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const map = getMap();
         if (!map) {
           return mapReadyError(style);
+        }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
         }
         const result = applyLegacyPropertyOperationToMap(map, {
           layerId,
@@ -656,6 +674,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const map = getMap();
         if (!map) {
           return mapReadyError(style);
+        }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
         }
         const parsedFilter = parseStyleValue(filterJson);
         const result = applyLegacyPropertyOperationToMap(map, {
@@ -723,6 +744,9 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const map = getMap();
         if (!map) {
           return mapReadyError(style);
+        }
+        if (!map.getLayer(layerId)) {
+          return missingLayerError(layerId, style);
         }
         const result = applyLegacyPropertyOperationToMap(map, {
           layerId,

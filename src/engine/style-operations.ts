@@ -1,8 +1,9 @@
 import { applyStyleTransaction } from '../core/transaction.js';
-import { diffStyleDocuments } from '../core/diff.js';
+import { diffStyleDocuments, jsonValuesEqual } from '../core/diff.js';
 import { applySetLayerProperties } from '../core/operations/layers.js';
 import type {
   CoreExecutionLimits,
+  JsonValue as CoreJsonValue,
   JsonObject as CoreJsonObject,
   OperationContext,
   SetLayerPropertiesOperation,
@@ -220,14 +221,30 @@ const applyLegacyFilterCompatibility = (
     return {};
   }
   const layer = findLayer(workingStyle, operation.layerId);
-  if (!layer || Object.is(layer.filter, operation.filter)) {
+  if (!layer) {
     return {};
   }
 
   const before = layer.filter;
   if (operation.filter === null) {
+    if (!Object.hasOwn(layer, 'filter')) {
+      return {};
+    }
     delete layer.filter;
   } else {
+    if (
+      Object.is(before, operation.filter)
+      || (
+        before !== undefined
+        && operation.filter !== undefined
+        && jsonValuesEqual(
+          before as CoreJsonValue,
+          operation.filter as CoreJsonValue
+        )
+      )
+    ) {
+      return {};
+    }
     layer.filter = operation.filter;
   }
   return {

@@ -75,6 +75,38 @@ test('property adapter returns a successful no-op without setting style', () => 
   assert.equal(calls, 0);
 });
 
+test('property adapter does not set style for a structurally equal filter', () => {
+  let calls = 0;
+  const filteredStyle = structuredClone(style);
+  filteredStyle.layers[0]!.filter = ['==', ['get', 'class'], 'primary'];
+  const map = {
+    getStyle: () => structuredClone(filteredStyle),
+    setStyle: () => { calls += 1; },
+  } as unknown as Map;
+  const result = applyLegacyPropertyOperationToMap(map, {
+    layerId: 'roads',
+    filter: ['==', ['get', 'class'], 'primary'],
+  });
+  assert.equal(result.success, true);
+  assert.deepEqual(result.diffSummary, []);
+  assert.equal(calls, 0);
+});
+
+test('property adapter does not set style when clearing an absent filter', () => {
+  let calls = 0;
+  const map = {
+    getStyle: () => structuredClone(style),
+    setStyle: () => { calls += 1; },
+  } as unknown as Map;
+  const result = applyLegacyPropertyOperationToMap(map, {
+    layerId: 'roads',
+    filter: null,
+  });
+  assert.equal(result.success, true);
+  assert.deepEqual(result.diffSummary, []);
+  assert.equal(calls, 0);
+});
+
 test('property adapter normalizes an invalid current style', () => {
   let calls = 0;
   const map = {

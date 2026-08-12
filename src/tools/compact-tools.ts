@@ -281,7 +281,7 @@ export const createCompactMapLibreStyleTools = ({
         }, false);
       }
 
-      if (!dryRun) {
+      if (!dryRun && result.diffSummary.length > 0) {
         try {
           map.setStyle(result.style as never, { diff } as never);
         } catch (error) {

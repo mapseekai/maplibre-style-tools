@@ -42,6 +42,28 @@ test('legacy filter remains supported without entering strict core StyleOperatio
   assert.equal('filter' in cleared.style.layers[0]!, false);
 });
 
+test('legacy structurally equal filters are successful no-ops', () => {
+  const style = makeStyle();
+  style.layers[0]!.filter = ['==', ['get', 'class'], 'primary'];
+  const result = applyStyleOperations(style, [{
+    layerId: 'roads',
+    filter: ['==', ['get', 'class'], 'primary'],
+  }]);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.diffSummary, []);
+});
+
+test('legacy clearing an absent filter is a successful no-op', () => {
+  const result = applyStyleOperations(makeStyle(), [{
+    layerId: 'roads',
+    filter: null,
+  }]);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.diffSummary, []);
+});
+
 test('legacy failure returns success false and the original style', () => {
   const style = makeStyle();
   const result = applyStyleOperations(style, [{
