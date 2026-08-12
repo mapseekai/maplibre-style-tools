@@ -5,6 +5,7 @@ import {
   createCompactMapLibreStyleTools,
   createMapLibreStyleTools,
 } from './index.js';
+import { COMPACT_LEGACY_TOOL_NAMES } from './ai-sdk/tool-contracts.js';
 import type { StyleDocument } from './types.js';
 
 type ToolResult = {
@@ -57,10 +58,16 @@ test('keeps the existing full and compact tool-name surfaces', () => {
   ]) assert.equal(name in full, true, name);
 
   const compact = createCompactMapLibreStyleTools({ getMap: () => null });
-  assert.deepEqual(Object.keys(compact), [
-    'getStyleContext', 'searchLayers', 'inspectLayersCompact',
-    'applyStyleOperations', 'validateStylePatchJson',
+  const names = Object.keys(compact);
+  assert.deepEqual(names.slice(0, COMPACT_LEGACY_TOOL_NAMES.length), [
+    ...COMPACT_LEGACY_TOOL_NAMES,
   ]);
+  const approvedStructuredNames = [
+    'analyzeGeoJson', 'listSourceLayers', 'duplicateLayer',
+    'addLayerFromSource', 'addGeoJsonLayer', 'applyStyleTransaction',
+  ];
+  for (const name of approvedStructuredNames) assert.equal(name in compact, true, name);
+  assert.deepEqual(names, [...COMPACT_LEGACY_TOOL_NAMES, ...approvedStructuredNames]);
 });
 
 test('ordinary delegated tools preserve the exact missing-layer result', async () => {

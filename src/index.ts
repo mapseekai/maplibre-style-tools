@@ -6,7 +6,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl';
 import { z } from 'zod';
 import { validateStyleDocument } from './core/validation.js';
 import { applyLegacyPropertyOperationToMap } from './tools/legacy-property-adapter.js';
-export { createCompactMapLibreStyleTools } from './tools/compact-tools.js';
+export { createCompactMapLibreStyleTools } from './ai-sdk/compact-tools.js';
 export { FULL_LEGACY_TOOL_NAMES } from './ai-sdk/tool-contracts.js';
 export type {
   LayerSearchQuery,
