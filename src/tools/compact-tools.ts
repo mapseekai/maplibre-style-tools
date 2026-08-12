@@ -4,10 +4,11 @@ import { z } from 'zod';
 import { buildStyleContext, searchLayers } from '../engine/style-context.js';
 import { applyStyleOperations } from '../engine/style-operations.js';
 import { validateStyleDocument } from '../core/validation.js';
-import type { StyleDocument } from '../core/types.js';
+import type { StyleDocument as CoreStyleDocument } from '../core/types.js';
 import type {
   JsonObject,
   LayerSummary,
+  StyleDocument as LegacyStyleDocument,
   StyleOperation,
 } from '../types.js';
 
@@ -84,7 +85,7 @@ const parseOperations = (
 
 const getStyleDocument = (
   map: MapLibreMap
-): { ok: true; style: StyleDocument } | { ok: false; message: string } => {
+): { ok: true; style: CoreStyleDocument } | { ok: false; message: string } => {
   const result = validateStyleDocument(map.getStyle());
   if (!result.ok) {
     return {
@@ -95,8 +96,11 @@ const getStyleDocument = (
   return { ok: true, style: result.style };
 };
 
+const toLegacyStyleDocument = (style: CoreStyleDocument): LegacyStyleDocument =>
+  style as unknown as LegacyStyleDocument;
+
 const inspectLayer = (
-  style: StyleDocument,
+  style: CoreStyleDocument,
   layerId: string,
   fields: Array<'paint' | 'layout' | 'filter' | 'zoom'>
 ): JsonObject | null => {
@@ -266,7 +270,10 @@ export const createCompactMapLibreStyleTools = ({
         return compactResult(parsedOperations.message, undefined, false);
       }
 
-      const result = applyStyleOperations(styleResult.style, parsedOperations.value);
+      const result = applyStyleOperations(
+        toLegacyStyleDocument(styleResult.style),
+        parsedOperations.value,
+      );
       if (!result.success) {
         return compactResult(result.message, {
           changedLayers: result.changedLayers,

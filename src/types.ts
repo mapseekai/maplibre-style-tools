@@ -10,7 +10,7 @@ export interface StyleLayer {
   filter?: unknown;
   minzoom?: number;
   maxzoom?: number;
-  metadata?: unknown;
+  metadata?: JsonObject;
   [key: string]: unknown;
 }
 
