@@ -1500,6 +1500,105 @@ test('configured transaction fallback reports the first invalid operation in ord
   }
 });
 
+test('duplicateLayer fallback preserves native field issue order', () => {
+  const fixtures: Array<{
+    name: string;
+    operation: Record<string, unknown>;
+    issue: Record<string, unknown> & { path: Array<string | number> };
+  }> = [
+    {
+      name: 'layerId before every later field',
+      operation: {
+        op: 'duplicateLayer', layerId: 1, newLayerId: 2,
+        overrides: [], beforeId: 3, afterId: 4,
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['layerId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'newLayerId before overrides and placement',
+      operation: {
+        op: 'duplicateLayer', layerId: 'l', newLayerId: 2,
+        overrides: [], beforeId: 3, afterId: 4,
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['newLayerId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'overrides before placement',
+      operation: {
+        op: 'duplicateLayer', layerId: 'l', newLayerId: 'n',
+        overrides: [], beforeId: 1,
+      },
+      issue: {
+        expected: 'record', code: 'invalid_type', path: ['overrides'],
+        message: 'Invalid input: expected record, received array',
+      },
+    },
+    {
+      name: 'beforeId before afterId',
+      operation: {
+        op: 'duplicateLayer', layerId: 'l', newLayerId: 'n',
+        beforeId: 1, afterId: 2,
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['beforeId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'afterId last',
+      operation: {
+        op: 'duplicateLayer', layerId: 'l', newLayerId: 'n', afterId: 2,
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['afterId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+  ];
+  const transactionSchema = createStyleTransactionSchema(2);
+  const firstIssue = (result: {
+    success: boolean;
+    error?: { issues: unknown[] };
+  }): unknown => {
+    assert.equal(result.success, false);
+    if (result.success || result.error === undefined) assert.fail('expected schema failure');
+    return result.error.issues[0];
+  };
+  const assertMatrix = (): void => {
+    for (const { name, operation, issue } of fixtures) {
+      assert.deepEqual(
+        firstIssue(duplicateLayerOperationSchema.safeParse(operation)),
+        issue,
+        `direct: ${name}`,
+      );
+      assert.deepEqual(
+        firstIssue(transactionSchema.safeParse({ operations: [operation] })),
+        { ...issue, path: ['operations', 0, ...issue.path] },
+        `transaction: ${name}`,
+      );
+    }
+  };
+
+  assertMatrix();
+  const pollutionKey = 'duplicateLayerIssueOrderProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true, value: true, writable: true,
+    });
+    assertMatrix();
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, pollutionKey);
+    else Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+  }
+});
+
 test('addLayerFromSource handles 20k-deep JSON fields without stack overflow', () => {
   const style = makeSourceStyle();
   const deep = makeDeepJsonObject(DEEP_JSON_DEPTH, 'leaf');

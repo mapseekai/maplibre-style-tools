@@ -700,15 +700,15 @@ function fallbackLayerLifecycleOperationIssue(
   switch (operation) {
     case 'duplicateLayer': {
       const issue = requiredNonEmptyStringIssue(value, 'layerId')
-        ?? requiredNonEmptyStringIssue(value, 'newLayerId')
-        ?? optionalNonEmptyStringIssue(value, 'beforeId')
-        ?? optionalNonEmptyStringIssue(value, 'afterId');
+        ?? requiredNonEmptyStringIssue(value, 'newLayerId');
       if (issue !== undefined) return issue;
       const overrides = ownValue(value, 'overrides');
       if (overrides !== undefined && !isJsonObject(overrides)) {
         return invalidTypeIssue('record', overrides, ['overrides']);
       }
-      return unrecognizedKeysIssue(value, DUPLICATE_LAYER_OPERATION_KEYS);
+      return optionalNonEmptyStringIssue(value, 'beforeId')
+        ?? optionalNonEmptyStringIssue(value, 'afterId')
+        ?? unrecognizedKeysIssue(value, DUPLICATE_LAYER_OPERATION_KEYS);
     }
     case 'moveLayer': {
       const issue = requiredNonEmptyStringIssue(value, 'layerId')
