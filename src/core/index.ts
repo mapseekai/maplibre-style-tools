@@ -1,6 +1,7 @@
 export type {
   AddSourceOperation,
   CoreExecutionLimits,
+  DuplicateLayerOperation,
   DuplicateSourceOperation,
   GeoJsonBbox,
   GeoJsonBbox2D,
@@ -39,13 +40,17 @@ export type {
   LayerSearchQuery,
   LayerSearchResult,
   LayerSummary,
+  LayerLifecycleOperation,
   ListSourceLayersOptions,
+  MoveLayerOperation,
   OperationApplyResult,
   OperationContext,
   PatchSourceOperation,
   Placement,
+  RemoveLayerOperation,
   RemoveSourceOperation,
   RenameSourceOperation,
+  ReorderLayersOperation,
   SetGeoJsonSourceFilterOperation,
   SetGeoJsonDataOperation,
   SetLayerFilterOperation,
@@ -87,6 +92,7 @@ export {
 } from './utf8.js';
 export {
   addSourceOperationSchema,
+  duplicateLayerOperationSchema,
   createStyleTransactionSchema,
   duplicateSourceOperationSchema,
   geoJsonAnalysisInputSchema,
@@ -95,9 +101,12 @@ export {
   inlineGeoJsonSchema,
   jsonValueSchema,
   listSourceLayersOptionsSchema,
+  moveLayerOperationSchema,
   patchSourceOperationSchema,
+  removeLayerOperationSchema,
   removeSourceOperationSchema,
   renameSourceOperationSchema,
+  reorderLayersOperationSchema,
   setGeoJsonSourceFilterOperationSchema,
   setGeoJsonDataOperationSchema,
   setLayerFilterOperationSchema,
@@ -118,6 +127,7 @@ export { validateStyleDocument } from './validation.js';
 export { buildStyleContext } from './context.js';
 export { listSourceLayers, searchLayers } from './search.js';
 export { applyRootOperation } from './operations/root.js';
+export { applyLayerOperation } from './operations/layers.js';
 export { applySourceOperation } from './operations/sources.js';
 export {
   applySetGeoJsonSourceFilter,

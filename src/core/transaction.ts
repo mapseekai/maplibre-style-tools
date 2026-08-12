@@ -5,7 +5,10 @@ import {
   applySetGeoJsonSourceFilter,
   applySetLayerFilter,
 } from './operations/filters.js';
-import { applySetLayerProperties } from './operations/layers.js';
+import {
+  applyLayerOperation,
+  applySetLayerProperties,
+} from './operations/layers.js';
 import { applyRootOperation } from './operations/root.js';
 import { cloneStrictJsonValue } from './operations/shared.js';
 import { applySourceOperation } from './operations/sources.js';
@@ -319,6 +322,10 @@ type HandledStyleOperation = Extract<
   StyleOperation, {
     op:
       | 'setLayerProperties'
+      | 'duplicateLayer'
+      | 'moveLayer'
+      | 'reorderLayers'
+      | 'removeLayer'
       | 'setStyleRootProperties'
       | 'setLayerFilter'
       | 'setGeoJsonSourceFilter'
@@ -341,6 +348,11 @@ function applyOperation(
     switch (operation.op) {
       case 'setLayerProperties':
         return applySetLayerProperties(style, operation, context);
+      case 'duplicateLayer':
+      case 'moveLayer':
+      case 'reorderLayers':
+      case 'removeLayer':
+        return applyLayerOperation(style, operation, context);
       case 'setStyleRootProperties':
         return applyRootOperation(style, operation, context);
       case 'setLayerFilter':

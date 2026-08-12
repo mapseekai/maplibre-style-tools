@@ -230,6 +230,29 @@ export type Placement = {
   beforeId?: string;
   afterId?: string;
 };
+export type DuplicateLayerOperation = Placement & {
+  op: 'duplicateLayer';
+  layerId: string;
+  newLayerId: string;
+  overrides?: JsonObject;
+};
+export type MoveLayerOperation = Placement & {
+  op: 'moveLayer';
+  layerId: string;
+};
+export type ReorderLayersOperation = Placement & {
+  op: 'reorderLayers';
+  layerIds: string[];
+};
+export type RemoveLayerOperation = {
+  op: 'removeLayer';
+  layerId: string;
+};
+export type LayerLifecycleOperation =
+  | DuplicateLayerOperation
+  | MoveLayerOperation
+  | ReorderLayersOperation
+  | RemoveLayerOperation;
 export type SetStyleRootPropertiesOperation = {
   op: 'setStyleRootProperties';
   properties: JsonObject;
@@ -290,6 +313,7 @@ export type SourceOperation =
   | SetGeoJsonDataOperation;
 export type StyleOperation =
   | SetLayerPropertiesOperation
+  | LayerLifecycleOperation
   | SetStyleRootPropertiesOperation
   | SetLayerFilterOperation
   | SetGeoJsonSourceFilterOperation

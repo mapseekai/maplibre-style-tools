@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  AddSourceOperation, DuplicateSourceOperation,
+  AddSourceOperation, DuplicateLayerOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
   InlineGeoJson, JsonPrimitive, JsonValue,
-  ListSourceLayersOptions,
-  PatchSourceOperation, RemoveSourceOperation, RenameSourceOperation,
+  LayerLifecycleOperation, ListSourceLayersOptions,
+  MoveLayerOperation, PatchSourceOperation,
+  RemoveLayerOperation, RemoveSourceOperation, RenameSourceOperation,
+  ReorderLayersOperation,
   SetGeoJsonSourceFilterOperation,
   SetGeoJsonDataOperation,
   SetLayerFilterOperation, SetLayerPropertiesOperation,
@@ -325,6 +327,14 @@ const RENAME_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'newSourceId']);
 const REMOVE_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'cascadeLayers']);
 const PATCH_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'patch']);
 const SET_GEOJSON_DATA_OPERATION_KEYS = new Set(['op', 'sourceId', 'data']);
+const DUPLICATE_LAYER_OPERATION_KEYS = new Set([
+  'op', 'layerId', 'newLayerId', 'overrides', 'beforeId', 'afterId',
+]);
+const MOVE_LAYER_OPERATION_KEYS = new Set(['op', 'layerId', 'beforeId', 'afterId']);
+const REORDER_LAYERS_OPERATION_KEYS = new Set([
+  'op', 'layerIds', 'beforeId', 'afterId',
+]);
+const REMOVE_LAYER_OPERATION_KEYS = new Set(['op', 'layerId']);
 const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
 
 function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
@@ -426,12 +436,71 @@ function fallbackSourceOperation(
   }
 }
 
+function validPlacement(value: JsonValue): boolean {
+  if (!isJsonObject(value)) return false;
+  const beforeId = ownValue(value, 'beforeId');
+  const afterId = ownValue(value, 'afterId');
+  return (beforeId === undefined || validSourceId(beforeId))
+    && (afterId === undefined || validSourceId(afterId))
+    && !(beforeId !== undefined && afterId !== undefined);
+}
+
+function fallbackLayerLifecycleOperation(
+  value: JsonValue,
+  expectedOperation?: LayerLifecycleOperation['op'],
+): JsonValue | undefined {
+  if (!isJsonObject(value) || !validPlacement(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  if (expectedOperation !== undefined && operation !== expectedOperation) return undefined;
+
+  switch (operation) {
+    case 'duplicateLayer': {
+      if (!hasOnlyKeys(value, DUPLICATE_LAYER_OPERATION_KEYS)
+        || !validSourceId(ownValue(value, 'layerId'))
+        || !validSourceId(ownValue(value, 'newLayerId'))) return undefined;
+      const overrides = ownValue(value, 'overrides');
+      return (overrides === undefined
+        || (isJsonObject(overrides) && !Object.hasOwn(overrides, 'id')))
+        ? value
+        : undefined;
+    }
+    case 'moveLayer': {
+      if (!hasOnlyKeys(value, MOVE_LAYER_OPERATION_KEYS)) return undefined;
+      const layerId = ownValue(value, 'layerId');
+      if (!validSourceId(layerId)) return undefined;
+      return ownValue(value, 'beforeId') === layerId
+        || ownValue(value, 'afterId') === layerId
+        ? undefined
+        : value;
+    }
+    case 'reorderLayers': {
+      if (!hasOnlyKeys(value, REORDER_LAYERS_OPERATION_KEYS)) return undefined;
+      const layerIds = ownValue(value, 'layerIds');
+      if (!Array.isArray(layerIds) || layerIds.length === 0) return undefined;
+      const seen = new Set<string>();
+      for (let index = 0; index < layerIds.length; index += 1) {
+        const layerId = ownValue(layerIds, String(index));
+        if (!validSourceId(layerId) || seen.has(layerId)) return undefined;
+        seen.add(layerId);
+      }
+      const anchorId = ownValue(value, 'beforeId') ?? ownValue(value, 'afterId');
+      return typeof anchorId === 'string' && seen.has(anchorId) ? undefined : value;
+    }
+    case 'removeLayer':
+      return hasOnlyKeys(value, REMOVE_LAYER_OPERATION_KEYS)
+        && validSourceId(ownValue(value, 'layerId')) ? value : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function fallbackOperation(value: JsonValue): JsonValue | undefined {
   return fallbackSetLayerOperation(value)
     ?? fallbackRootOperation(value)
     ?? fallbackFilterOperation(value, 'setLayerFilter')
     ?? fallbackFilterOperation(value, 'setGeoJsonSourceFilter')
-    ?? fallbackSourceOperation(value);
+    ?? fallbackSourceOperation(value)
+    ?? fallbackLayerLifecycleOperation(value);
 }
 
 function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
@@ -467,6 +536,10 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     || operation === 'removeSource'
     || operation === 'patchSource'
     || operation === 'setGeoJsonData'
+    || operation === 'duplicateLayer'
+    || operation === 'moveLayer'
+    || operation === 'reorderLayers'
+    || operation === 'removeLayer'
     ? undefined
     : fallbackSetLayerOperationIssue(value);
 }
@@ -1171,6 +1244,119 @@ export const setGeoJsonDataOperationSchema = sanitizeBefore(
   (value) => fallbackSourceOperation(value, 'setGeoJsonData'),
 );
 
+const duplicateLayerOperationInnerSchema = z.object({
+  op: z.literal('duplicateLayer'),
+  layerId: nonEmptyStringSchema,
+  newLayerId: nonEmptyStringSchema,
+  overrides: jsonObjectInnerSchema.optional(),
+  beforeId: nonEmptyStringSchema.optional(),
+  afterId: nonEmptyStringSchema.optional(),
+}).strict().superRefine((operation, context) => {
+  if (operation.beforeId !== undefined && operation.afterId !== undefined) {
+    context.addIssue({
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    });
+  }
+  if (operation.overrides !== undefined && Object.hasOwn(operation.overrides, 'id')) {
+    context.addIssue({
+      code: 'custom', message: 'Layer overrides cannot include id', path: ['overrides', 'id'],
+    });
+  }
+}) satisfies z.ZodType<DuplicateLayerOperation>;
+
+export const duplicateLayerOperationSchema = sanitizeBefore(
+  duplicateLayerOperationInnerSchema,
+  undefined,
+  (value) => fallbackLayerLifecycleOperation(value, 'duplicateLayer'),
+);
+
+const moveLayerOperationInnerSchema = z.object({
+  op: z.literal('moveLayer'),
+  layerId: nonEmptyStringSchema,
+  beforeId: nonEmptyStringSchema.optional(),
+  afterId: nonEmptyStringSchema.optional(),
+}).strict().superRefine((operation, context) => {
+  if (operation.beforeId !== undefined && operation.afterId !== undefined) {
+    context.addIssue({
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    });
+  }
+  if (operation.beforeId === operation.layerId) {
+    context.addIssue({
+      code: 'custom', message: 'A layer cannot be placed relative to itself',
+      path: ['beforeId'],
+    });
+  }
+  if (operation.afterId === operation.layerId) {
+    context.addIssue({
+      code: 'custom', message: 'A layer cannot be placed relative to itself',
+      path: ['afterId'],
+    });
+  }
+}) satisfies z.ZodType<MoveLayerOperation>;
+
+export const moveLayerOperationSchema = sanitizeBefore(
+  moveLayerOperationInnerSchema,
+  undefined,
+  (value) => fallbackLayerLifecycleOperation(value, 'moveLayer'),
+);
+
+const reorderLayersOperationInnerSchema = z.object({
+  op: z.literal('reorderLayers'),
+  layerIds: z.array(nonEmptyStringSchema).min(1),
+  beforeId: nonEmptyStringSchema.optional(),
+  afterId: nonEmptyStringSchema.optional(),
+}).strict().superRefine((operation, context) => {
+  if (operation.beforeId !== undefined && operation.afterId !== undefined) {
+    context.addIssue({
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    });
+  }
+  const seen = new Set<string>();
+  for (let index = 0; index < operation.layerIds.length; index += 1) {
+    const layerId = operation.layerIds[index]!;
+    if (seen.has(layerId)) {
+      context.addIssue({
+        code: 'custom', message: 'layerIds must contain unique IDs',
+        path: ['layerIds', index],
+      });
+    }
+    seen.add(layerId);
+  }
+  if (operation.beforeId !== undefined && seen.has(operation.beforeId)) {
+    context.addIssue({
+      code: 'custom', message: 'A reorder anchor cannot be a moving layer',
+      path: ['beforeId'],
+    });
+  }
+  if (operation.afterId !== undefined && seen.has(operation.afterId)) {
+    context.addIssue({
+      code: 'custom', message: 'A reorder anchor cannot be a moving layer',
+      path: ['afterId'],
+    });
+  }
+}) satisfies z.ZodType<ReorderLayersOperation>;
+
+export const reorderLayersOperationSchema = sanitizeBefore(
+  reorderLayersOperationInnerSchema,
+  undefined,
+  (value) => fallbackLayerLifecycleOperation(value, 'reorderLayers'),
+);
+
+const removeLayerOperationInnerSchema = z.object({
+  op: z.literal('removeLayer'),
+  layerId: nonEmptyStringSchema,
+}).strict() satisfies z.ZodType<RemoveLayerOperation>;
+
+export const removeLayerOperationSchema = sanitizeBefore(
+  removeLayerOperationInnerSchema,
+  undefined,
+  (value) => fallbackLayerLifecycleOperation(value, 'removeLayer'),
+);
+
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
   setStyleRootPropertiesOperationInnerSchema,
@@ -1182,6 +1368,10 @@ const styleOperationInnerSchema = z.discriminatedUnion('op', [
   removeSourceOperationInnerSchema,
   patchSourceOperationInnerSchema,
   setGeoJsonDataOperationInnerSchema,
+  duplicateLayerOperationInnerSchema,
+  moveLayerOperationInnerSchema,
+  reorderLayersOperationInnerSchema,
+  removeLayerOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
 type StyleOperationSchemaOutput = StyleOperation & Pick<
