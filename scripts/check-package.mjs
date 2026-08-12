@@ -50,25 +50,39 @@ const declarationSpecifier = (node) => {
   return undefined;
 };
 
+const assertCoreDeclarationIsTransportNeutral = (file, text) => {
+  assertion(!/\/\/\/\s*<reference\s+types=["']node["']/.test(text),
+    `${file} references Node ambient types`);
+  assertion(!text.includes('@types/node'), `${file} depends on @types/node`);
+  const preprocessed = typescript.preProcessFile(text, true, true);
+  for (const reference of preprocessed.libReferenceDirectives) {
+    assertion(/^es(?:\d+|next)(?:\.|$)/.test(reference.fileName),
+      `${file} references non-core ambient library ${reference.fileName}`);
+  }
+  const document = typescript.createSourceFile(file, text,
+    typescript.ScriptTarget.Latest, true);
+  const visit = (node) => {
+    const specifier = declarationSpecifier(node);
+    if (specifier !== undefined) {
+      assertion(!specifier.startsWith('node:') && !require('node:module').isBuiltin(specifier),
+        `${file} leaks Node builtin ${specifier}`);
+    }
+    typescript.forEachChild(node, visit);
+  };
+  visit(document);
+};
+
+assert.throws(
+  () => assertCoreDeclarationIsTransportNeutral('dist/core/dom-leak.d.ts', '/// <reference lib="dom" />'),
+  /non-core ambient library dom/,
+  'the declaration checker must reject DOM triple-slash references',
+);
+
 const assertCoreDeclarationsAreTransportNeutral = (files, packageRoot) => {
   const coreDeclarations = files.filter((file) => file.startsWith('dist/core/')
     && file.endsWith('.d.ts'));
   for (const file of coreDeclarations) {
-    const text = source(join(packageRoot, file));
-    assertion(!/\/\/\/\s*<reference\s+types=["']node["']/.test(text),
-      `${file} references Node ambient types`);
-    assertion(!text.includes('@types/node'), `${file} depends on @types/node`);
-    const document = typescript.createSourceFile(file, text,
-      typescript.ScriptTarget.Latest, true);
-    const visit = (node) => {
-      const specifier = declarationSpecifier(node);
-      if (specifier !== undefined) {
-        assertion(!specifier.startsWith('node:') && !require('node:module').isBuiltin(specifier),
-          `${file} leaks Node builtin ${specifier}`);
-      }
-      typescript.forEachChild(node, visit);
-    };
-    visit(document);
+    assertCoreDeclarationIsTransportNeutral(file, source(join(packageRoot, file)));
   }
 };
 
@@ -98,6 +112,10 @@ const result: StyleTransactionResult = applyStyleTransaction(style, transaction)
 void Buffer;
 // @ts-expect-error /core must not load the NodeJS namespace.
 type CoreMustNotLoadNode = NodeJS.Process;
+// @ts-expect-error /core must not load the DOM document global.
+void document;
+// @ts-expect-error /core must not load the DOM Window interface.
+type CoreMustNotLoadDom = Window;
 void result;
 void validateStyleDocument(style);
 void DEFAULT_MAX_STYLE_BYTES;
@@ -250,9 +268,18 @@ try {
   writeFileSync(join(consumer, 'tsconfig.root-consumer.json'), rootConfig);
   const installedManifest = JSON.parse(source(join(consumer, 'node_modules/maplibre-style-tools/package.json')));
   assert.equal(installedManifest.dependencies['@types/geojson'], '^7946.0.16');
+  assert.equal(installedManifest.dependencies['@types/json-schema'], '^7.0.15');
   assert.equal(installedManifest.dependencies['@types/node'], '^22.20.1');
   assertion(installedManifest.devDependencies?.['@types/node'] === undefined,
     'the packed manifest must not retain @types/node in devDependencies');
+  for (const dependencyType of ['peerDependencies', 'devDependencies', 'optionalDependencies']) {
+    assertion(installedManifest[dependencyType]?.['@types/json-schema'] === undefined,
+      `the packed manifest must not duplicate @types/json-schema in ${dependencyType}`);
+  }
+  assert.deepEqual(JSON.parse(source(join(consumer, 'package.json'))), {
+    private: true,
+    type: 'module',
+  });
   command(process.execPath, [tsc, '-p', 'tsconfig.core-consumer.json', '--noEmit'], consumer);
   command(process.execPath, [tsc, '-p', 'tsconfig.root-consumer.json', '--noEmit'], consumer);
   writeFileSync(join(consumer, 'runtime-smoke.mjs'), runtimeSmoke);
