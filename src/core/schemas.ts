@@ -14,6 +14,13 @@ type SnapshotWork = { source: object; target: JsonContainer };
 type SnapshotResult =
   | { success: true; value: JsonValue }
   | { success: false };
+type SanitizedIssue = {
+  code: 'custom';
+  message: string;
+  path: (string | number)[];
+  params: { [key: string]: JsonValue };
+};
+type SanitizedCheck = (value: JsonValue) => SanitizedIssue | undefined;
 
 function isJsonPrimitive(value: unknown): value is JsonPrimitive {
   return value === null
@@ -143,10 +150,14 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
         if (snapshotValue === INVALID_SNAPSHOT) {
           return { success: false };
         }
-        if (sourceIsArray) {
-          (current.target as JsonValue[])[Number(key)] = snapshotValue;
-        } else {
-          (current.target as { [key: string]: JsonValue })[key] = snapshotValue;
+        const targetKey = sourceIsArray ? Number(key) : key;
+        if (!Reflect.defineProperty(current.target, targetKey, {
+          configurable: true,
+          enumerable: true,
+          value: snapshotValue,
+          writable: true,
+        })) {
+          return { success: false };
         }
       }
 
@@ -161,11 +172,19 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
   }
 }
 
-function sanitizeBefore<Schema extends z.ZodType>(schema: Schema) {
+function sanitizeBefore<Schema extends z.ZodType>(
+  schema: Schema,
+  check?: SanitizedCheck,
+) {
   return z.preprocess((input, context) => {
     const result = sanitizeJsonTree(input);
     if (!result.success) {
       context.addIssue({ code: 'custom', message: INVALID_JSON_MESSAGE });
+      return z.NEVER;
+    }
+    const issue = check?.(result.value);
+    if (issue !== undefined) {
+      context.addIssue(issue);
       return z.NEVER;
     }
     return result.value;
@@ -228,22 +247,27 @@ export function createStyleTransactionSchema(
   const transactionInnerSchema = z.object({
     operations: z.array(styleOperationInnerSchema).min(1),
     validate: z.boolean().default(true),
-  }).strict().superRefine((transaction, context) => {
-    if (transaction.operations.length > maxOperations) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Too many operations',
-        path: ['operations'],
-        params: {
-          reason: 'maxOperations',
-          maxOperations,
-          actualOperations: transaction.operations.length,
-        },
-      });
-    }
-  }) satisfies z.ZodType<StyleTransaction>;
+  }).strict() satisfies z.ZodType<StyleTransaction>;
 
-  return sanitizeBefore(transactionInnerSchema);
+  return sanitizeBefore(transactionInnerSchema, (value) => {
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const operationsDescriptor = Object.getOwnPropertyDescriptor(value, 'operations');
+      const operations = operationsDescriptor?.value;
+      if (Array.isArray(operations) && operations.length > maxOperations) {
+        return {
+          code: 'custom',
+          message: 'Too many operations',
+          path: ['operations'],
+          params: {
+            reason: 'maxOperations',
+            maxOperations,
+            actualOperations: operations.length,
+          },
+        };
+      }
+    }
+    return undefined;
+  });
 }
 
 export const styleTransactionSchema = createStyleTransactionSchema();

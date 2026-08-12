@@ -89,6 +89,28 @@ test('reports one deterministic issue when operations exceed the configured limi
   }).success, true);
 });
 
+test('reports the maxOperations issue even when an over-limit operation is invalid', () => {
+  const operations: unknown[] = Array.from(
+    { length: 101 }, (_, index) => operation(index),
+  );
+  operations[0] = { layerId: 'missing-discriminator' };
+
+  const result = styleTransactionSchema.safeParse({ operations });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.deepEqual(result.error.issues.find((issue) => (
+      issue.path.length === 1 && issue.path[0] === 'operations'
+    )), {
+      code: 'custom',
+      message: 'Too many operations',
+      path: ['operations'],
+      params: {
+        reason: 'maxOperations', maxOperations: 100, actualOperations: 101,
+      },
+    });
+  }
+});
+
 test('rejects invalid configured operation limits synchronously', () => {
   for (const limit of [0, -1, 1.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => createStyleTransactionSchema(limit));
@@ -248,5 +270,62 @@ test('sanitizes transparent proxies before Zod or cloning can invoke get traps',
     assert.notStrictEqual(parsed.data, original);
     assert.doesNotThrow(() => structuredClone(parsed.data));
     assert.equal(Object.getPrototypeOf(parsed.data), Object.prototype);
+  }
+});
+
+test('defines snapshot values without invoking inherited prototype setters', () => {
+  const objectKey = 'schemaSnapshotObjectSetterProbe';
+  const arrayKey = '777';
+  const objectInput = { [objectKey]: 1 };
+  const arrayInput = Array.from({ length: 778 }, (_, index) => index);
+  const originalObjectDescriptor = Object.getOwnPropertyDescriptor(
+    Object.prototype, objectKey,
+  );
+  const originalArrayDescriptor = Object.getOwnPropertyDescriptor(
+    Array.prototype, arrayKey,
+  );
+  let setterCalls = 0;
+
+  try {
+    Object.defineProperty(Object.prototype, objectKey, {
+      configurable: true,
+      set(value: unknown) { setterCalls += 1; void value; },
+    });
+    Object.defineProperty(Array.prototype, arrayKey, {
+      configurable: true,
+      set(value: unknown) { setterCalls += 1; void value; },
+    });
+
+    const objectResult = jsonValueSchema.safeParse(objectInput);
+    const arrayResult = jsonValueSchema.safeParse(arrayInput);
+    assert.equal(setterCalls, 0);
+    assert.equal(objectResult.success, true);
+    assert.equal(arrayResult.success, true);
+    if (
+      !objectResult.success
+      || typeof objectResult.data !== 'object'
+      || objectResult.data === null
+      || Array.isArray(objectResult.data)
+    ) {
+      assert.fail('expected an object snapshot');
+    }
+    assert.equal(Object.hasOwn(objectResult.data, objectKey), true);
+    assert.equal(objectResult.data[objectKey], 1);
+    if (!arrayResult.success || !Array.isArray(arrayResult.data)) {
+      assert.fail('expected an array snapshot');
+    }
+    assert.equal(Object.hasOwn(arrayResult.data, arrayKey), true);
+    assert.equal(arrayResult.data[777], 777);
+  } finally {
+    if (originalObjectDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, objectKey);
+    } else {
+      Object.defineProperty(Object.prototype, objectKey, originalObjectDescriptor);
+    }
+    if (originalArrayDescriptor === undefined) {
+      Reflect.deleteProperty(Array.prototype, arrayKey);
+    } else {
+      Object.defineProperty(Array.prototype, arrayKey, originalArrayDescriptor);
+    }
   }
 });
