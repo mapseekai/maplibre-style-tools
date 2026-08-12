@@ -107,6 +107,13 @@ export function normalizeLegacyOperations(raw: string): ParseResult<StyleTransac
     return invalidInput('operationsJson must be a JSON array.');
   }
 
+  // Legacy compact callers treat an empty batch as a no-op. This sentinel is
+  // deliberately outside styleTransactionSchema: Task 15 must short-circuit it
+  // rather than sending an empty transaction to the strict core boundary.
+  if (parsed.value.length === 0) {
+    return { ok: true, value: { operations: [], validate: true } };
+  }
+
   const operations: unknown[] = [];
   for (const value of parsed.value) {
     if (!isJsonObject(value)) return invalidInput('operationsJson entries must be JSON objects.');

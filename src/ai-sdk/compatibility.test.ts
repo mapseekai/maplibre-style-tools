@@ -9,10 +9,19 @@ import {
   FULL_LEGACY_TOOL_NAMES,
 } from './tool-contracts.js';
 import { createStyleToolError } from '../core/index.js';
+import { normalizeLegacyOperations } from './compatibility.js';
 import { toAiToolResult } from './result.js';
 import type { AiStyleToolResult, CommonResultInput } from './result.js';
 
 const noMap = () => null;
+
+const executeTool = async (toolValue: unknown, input: Record<string, unknown>) => {
+  const execute = (toolValue as {
+    execute?: (value: Record<string, unknown>) => unknown;
+  }).execute;
+  assert.ok(execute);
+  return execute(input);
+};
 
 describe('legacy AI tool contracts', () => {
   it('preserves all 53 full tool names', () => {
@@ -83,5 +92,33 @@ describe('unified AI result envelope', () => {
     // @ts-expect-error failures require an error.
     const missingError: AiStyleToolResult = { success: false, message: 'bad' };
     void missingError;
+  });
+});
+
+describe('legacy compact empty-operation compatibility', () => {
+  it('normalizes an empty compact operation array to a caller-handled no-op transaction', () => {
+    assert.deepEqual(normalizeLegacyOperations('[]'), {
+      ok: true,
+      value: { operations: [], validate: true },
+    });
+  });
+
+  it('preserves the old compact empty-batch success result without changing the map style', async () => {
+    const style = { version: 8, sources: {}, layers: [] };
+    let setStyleCalls = 0;
+    const map = {
+      getStyle: () => style,
+      setStyle: () => { setStyleCalls += 1; },
+    };
+    const tools = createCompactMapLibreStyleTools({ getMap: () => map as never });
+    const result = await executeTool(tools.applyStyleOperations, {
+      operationsJson: '[]', dryRun: false, diff: true,
+    }) as { success: boolean; message: string; data?: { changedLayers?: string[] } };
+
+    assert.equal(result.success, true);
+    assert.equal(result.message, 'Applied 0 style operations.');
+    assert.deepEqual(result.data?.changedLayers, []);
+    assert.equal(setStyleCalls, 0);
+    assert.equal(map.getStyle(), style);
   });
 });
