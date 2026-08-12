@@ -33,6 +33,47 @@ const operation = (index = 0) => ({
   paint: { 'line-width': index },
 });
 
+function withThrowingArrayZeroSetter<Result>(run: () => Result) {
+  const key = '0';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  let setterCalls = 0;
+  let result: Result | undefined;
+  let thrown: unknown;
+  try {
+    Object.defineProperty(Array.prototype, key, {
+      configurable: true,
+      set() { setterCalls += 1; throw new Error('must not run'); },
+    });
+    try {
+      result = run();
+    } catch (error) {
+      thrown = error;
+    }
+  } finally {
+    if (originalDescriptor === undefined) {
+      Reflect.deleteProperty(Array.prototype, key);
+    } else {
+      Object.defineProperty(Array.prototype, key, originalDescriptor);
+    }
+  }
+  return { result, setterCalls, thrown };
+}
+
+function assertSafeFailure<Result>(outcome: {
+  result: z.ZodSafeParseResult<Result> | undefined;
+  setterCalls: number;
+  thrown: unknown;
+}): z.ZodError {
+  assert.equal(outcome.thrown, undefined);
+  assert.equal(outcome.setterCalls, 0);
+  assert.equal(outcome.result?.success, false);
+  if (outcome.result === undefined || outcome.result.success) {
+    assert.fail('expected an authentic Zod failure');
+  }
+  assert.equal(outcome.result.error instanceof z.ZodError, true);
+  return outcome.result.error;
+}
+
 test('parses a strict transaction and defaults validate to true', () => {
   const parsed = styleTransactionSchema.parse({ operations: [{
     op: 'setLayerProperties', layerId: 'roads',
@@ -472,4 +513,154 @@ test('transaction schemas preserve array indexes without invoking inherited sett
   assert.deepEqual(
     Object.getOwnPropertyDescriptor(Array.prototype, key), originalArrayDescriptor,
   );
+});
+
+test('transaction defaults validate without invoking an inherited getter-only accessor', () => {
+  const key = 'validate';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  let getterCalls = 0;
+  let result: ReturnType<typeof styleTransactionSchema.safeParse> | undefined;
+  let thrown: unknown;
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true,
+      get() { getterCalls += 1; throw new Error('must not run'); },
+    });
+    try {
+      result = styleTransactionSchema.safeParse({ operations: [operation()] });
+    } catch (error) {
+      thrown = error;
+    }
+  } finally {
+    if (originalDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, key);
+    } else {
+      Object.defineProperty(Object.prototype, key, originalDescriptor);
+    }
+  }
+  assert.equal(thrown, undefined);
+  assert.equal(getterCalls, 0);
+  if (result === undefined || !result.success) assert.fail('expected a valid transaction');
+  assert.equal(Object.hasOwn(result.data, key), true);
+  assert.equal(result.data.validate, true);
+});
+
+test('jsonValueSchema fails safely when Array prototype index zero is a throwing setter', () => {
+  const error = assertSafeFailure(withThrowingArrayZeroSetter(() => (
+    jsonValueSchema.safeParse(undefined)
+  )));
+  assert.deepEqual(error.issues, [{
+    code: 'custom', message: 'Input must be a strict JSON tree', path: [],
+  }]);
+});
+
+test('styleDocumentSchema fails safely when Array prototype index zero is a throwing setter', () => {
+  const input = { version: 7, sources: {}, layers: [] };
+  const error = assertSafeFailure(withThrowingArrayZeroSetter(() => (
+    styleDocumentSchema.safeParse(input)
+  )));
+  assert.deepEqual(error.issues, [{
+    code: 'invalid_value', values: [8], path: ['version'],
+    message: 'Invalid input: expected 8',
+  }]);
+});
+
+test('styleOperationSchema fails safely when Array prototype index zero is a throwing setter', () => {
+  const input = { layerId: 'roads' };
+  const error = assertSafeFailure(withThrowingArrayZeroSetter(() => (
+    styleOperationSchema.safeParse(input)
+  )));
+  assert.deepEqual(error.issues, [{
+    code: 'invalid_union', errors: [], note: 'No matching discriminator',
+    discriminator: 'op', options: ['setLayerProperties'], path: ['op'],
+    message: "Invalid discriminator value. Expected 'setLayerProperties'",
+  }]);
+});
+
+test('configured transaction schema fails safely when Array index zero is a throwing setter', () => {
+  const input = { operations: [] };
+  const schema = createStyleTransactionSchema(1);
+  const error = assertSafeFailure(
+    withThrowingArrayZeroSetter(() => schema.safeParse(input)),
+  );
+  assert.deepEqual(error.issues, [{
+    origin: 'array', code: 'too_small', minimum: 1, inclusive: true,
+    path: ['operations'], message: 'Too small: expected array to have >=1 items',
+  }]);
+});
+
+test('polluted prototype preserves the deterministic maxOperations issue', () => {
+  const schema = createStyleTransactionSchema(1);
+  const input = { operations: [operation(), { layerId: 'invalid' }] };
+  const error = assertSafeFailure(
+    withThrowingArrayZeroSetter(() => schema.safeParse(input)),
+  );
+  assert.deepEqual(error.issues, [{
+    code: 'custom', message: 'Too many operations', path: ['operations'],
+    params: {
+      reason: 'maxOperations', maxOperations: 1, actualOperations: 2,
+    },
+  }]);
+});
+
+test('preserves the authoritative Zod issue contracts in clean environments', () => {
+  const missingDiscriminator = styleOperationSchema.safeParse({
+    layerId: 'roads', surprise: true,
+  });
+  const rootExtra = styleTransactionSchema.safeParse({
+    operations: [operation()], surprise: true,
+  });
+  const version = styleDocumentSchema.safeParse({
+    version: 7, sources: {}, layers: [],
+  });
+  const fieldType = styleOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 4,
+  });
+  const nonempty = styleTransactionSchema.safeParse({ operations: [] });
+  const zoomRange = styleOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', minzoom: -1,
+  });
+  const zoomOrder = styleOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', minzoom: 12, maxzoom: 8,
+  });
+  const failures = [
+    missingDiscriminator, rootExtra, version, fieldType,
+    nonempty, zoomRange, zoomOrder,
+  ];
+  assert.equal(failures.every((result) => !result.success), true);
+  const issueSets = failures.map((result) => {
+    if (result.success) assert.fail('expected every contract fixture to fail');
+    return result.error.issues;
+  });
+  assert.deepEqual(issueSets, [
+    [{
+      code: 'invalid_union', errors: [], note: 'No matching discriminator',
+      discriminator: 'op', options: ['setLayerProperties'], path: ['op'],
+      message: "Invalid discriminator value. Expected 'setLayerProperties'",
+    }],
+    [{
+      code: 'unrecognized_keys', keys: ['surprise'], path: [],
+      message: 'Unrecognized key: "surprise"',
+    }],
+    [{
+      code: 'invalid_value', values: [8], path: ['version'],
+      message: 'Invalid input: expected 8',
+    }],
+    [{
+      expected: 'string', code: 'invalid_type', path: ['layerId'],
+      message: 'Invalid input: expected string, received number',
+    }],
+    [{
+      origin: 'array', code: 'too_small', minimum: 1, inclusive: true,
+      path: ['operations'], message: 'Too small: expected array to have >=1 items',
+    }],
+    [{
+      origin: 'number', code: 'too_small', minimum: 0, inclusive: true,
+      path: ['minzoom'], message: 'Too small: expected number to be >=0',
+    }],
+    [{
+      code: 'custom', path: ['maxzoom'],
+      message: 'minzoom must be less than or equal to maxzoom',
+    }],
+  ]);
 });
