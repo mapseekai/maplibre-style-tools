@@ -306,7 +306,8 @@ function addLayerFromSource(
   if (placementFailure !== undefined) return placementFailure;
 
   const source = style.sources[operation.sourceId]!;
-  const sourceType = typeof source.type === 'string' ? source.type : 'unknown';
+  const rawSourceType = source.type;
+  const sourceType = typeof rawSourceType === 'string' ? rawSourceType : 'unknown';
   if (sourceType === 'vector'
     && (operation.sourceLayer === undefined || operation.sourceLayer.trim().length === 0)) {
     return invalidInput(

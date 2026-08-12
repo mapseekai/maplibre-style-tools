@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { replayStyleDiff } from '../diff.js';
 import {
   addLayerFromSourceOperationSchema,
+  createStyleTransactionSchema,
   duplicateLayerOperationSchema,
   moveLayerOperationSchema,
   removeLayerOperationSchema,
@@ -1144,6 +1145,249 @@ test('addLayerFromSource polluted fallback matches clean nonblank lifecycle cont
   }
 });
 
+test('addLayerFromSource polluted fallback preserves every native first issue', () => {
+  const base = {
+    op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+    sourceLayer: 'transportation', type: 'line',
+  } as const;
+  const fixtures: Array<{
+    name: string;
+    operation: Record<string, unknown>;
+    issue: Record<string, unknown> & { path: Array<string | number> };
+  }> = [
+    {
+      name: 'missing layerId',
+      operation: {
+        op: 'addLayerFromSource', sourceId: 'vector',
+        sourceLayer: 'transportation', type: 'line',
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['layerId'],
+        message: 'Invalid input: expected string, received undefined',
+      },
+    },
+    {
+      name: 'non-string layerId',
+      operation: { ...base, layerId: 1 },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['layerId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'missing sourceId',
+      operation: {
+        op: 'addLayerFromSource', layerId: 'roads',
+        sourceLayer: 'transportation', type: 'line',
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['sourceId'],
+        message: 'Invalid input: expected string, received undefined',
+      },
+    },
+    {
+      name: 'non-string sourceId',
+      operation: { ...base, sourceId: 1 },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['sourceId'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'missing type',
+      operation: {
+        op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+        sourceLayer: 'transportation',
+      },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['type'],
+        message: 'Invalid input: expected string, received undefined',
+      },
+    },
+    {
+      name: 'non-string type',
+      operation: { ...base, type: 1 },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['type'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'non-string sourceLayer',
+      operation: { ...base, sourceLayer: 1 },
+      issue: {
+        expected: 'string', code: 'invalid_type', path: ['sourceLayer'],
+        message: 'Invalid input: expected string, received number',
+      },
+    },
+    {
+      name: 'blank sourceLayer',
+      operation: { ...base, sourceLayer: ' ' },
+      issue: {
+        code: 'custom', path: ['sourceLayer'], message: 'Expected a non-empty string',
+      },
+    },
+    {
+      name: 'non-object paint',
+      operation: { ...base, paint: [] },
+      issue: {
+        expected: 'record', code: 'invalid_type', path: ['paint'],
+        message: 'Invalid input: expected record, received array',
+      },
+    },
+    {
+      name: 'non-object layout',
+      operation: { ...base, layout: [] },
+      issue: {
+        expected: 'record', code: 'invalid_type', path: ['layout'],
+        message: 'Invalid input: expected record, received array',
+      },
+    },
+    {
+      name: 'non-object metadata',
+      operation: { ...base, metadata: [] },
+      issue: {
+        expected: 'record', code: 'invalid_type', path: ['metadata'],
+        message: 'Invalid input: expected record, received array',
+      },
+    },
+    {
+      name: 'non-array filter',
+      operation: { ...base, filter: {} },
+      issue: {
+        expected: 'array', code: 'invalid_type', path: ['filter'],
+        message: 'Invalid input: expected array, received object',
+      },
+    },
+    {
+      name: 'non-number minzoom',
+      operation: { ...base, minzoom: '1' },
+      issue: {
+        expected: 'number', code: 'invalid_type', path: ['minzoom'],
+        message: 'Invalid input: expected number, received string',
+      },
+    },
+    {
+      name: 'non-number maxzoom',
+      operation: { ...base, maxzoom: '2' },
+      issue: {
+        expected: 'number', code: 'invalid_type', path: ['maxzoom'],
+        message: 'Invalid input: expected number, received string',
+      },
+    },
+    {
+      name: 'reversed zoom',
+      operation: { ...base, minzoom: 3, maxzoom: 2 },
+      issue: {
+        code: 'custom', path: ['maxzoom'],
+        message: 'minzoom must be less than or equal to maxzoom',
+      },
+    },
+    {
+      name: 'dual placement',
+      operation: { ...base, beforeId: 'a', afterId: 'b' },
+      issue: {
+        code: 'custom', path: ['afterId'],
+        message: 'Placement cannot specify both beforeId and afterId',
+      },
+    },
+    {
+      name: 'unknown key',
+      operation: { ...base, unknown: true },
+      issue: {
+        code: 'unrecognized_keys', keys: ['unknown'], path: [],
+        message: 'Unrecognized key: "unknown"',
+      },
+    },
+  ];
+  const transactionSchema = createStyleTransactionSchema(5);
+  const padded = {
+    op: 'addLayerFromSource', layerId: ' roads ', sourceId: ' vector ',
+    sourceLayer: ' transportation ', type: ' line ', beforeId: ' labels ',
+  } as const;
+  let getterCalls = 0;
+  const accessorOperation: Record<string, unknown> = { ...base };
+  Object.defineProperty(accessorOperation, 'paint', {
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('must not run'); },
+  });
+
+  const issues = (result: {
+    success: boolean;
+    error?: { issues: unknown[] };
+  }): unknown[] => {
+    assert.equal(result.success, false);
+    if (result.success || result.error === undefined) assert.fail('expected schema failure');
+    return result.error.issues;
+  };
+  const assertMatrix = (): void => {
+    for (const { name, operation, issue } of fixtures) {
+      assert.deepEqual(
+        issues(addLayerFromSourceOperationSchema.safeParse(operation)),
+        [issue],
+        `direct: ${name}`,
+      );
+      assert.deepEqual(
+        issues(styleOperationSchema.safeParse(operation)),
+        [issue],
+        `union: ${name}`,
+      );
+      assert.deepEqual(
+        issues(transactionSchema.safeParse({ operations: [operation] })),
+        [{ ...issue, path: ['operations', 0, ...issue.path] }],
+        `transaction: ${name}`,
+      );
+    }
+
+    const directPadded = addLayerFromSourceOperationSchema.safeParse(padded);
+    const unionPadded = styleOperationSchema.safeParse(padded);
+    const transactionPadded = transactionSchema.safeParse({ operations: [padded] });
+    assert.equal(directPadded.success, true);
+    assert.equal(unionPadded.success, true);
+    assert.equal(transactionPadded.success, true);
+    if (!directPadded.success || !unionPadded.success || !transactionPadded.success) {
+      assert.fail('expected padded operations to remain valid');
+    }
+    if (unionPadded.data.op !== 'addLayerFromSource'
+      || transactionPadded.data.operations[0]?.op !== 'addLayerFromSource') {
+      assert.fail('expected addLayerFromSource outputs');
+    }
+    assert.equal(directPadded.data.layerId, ' roads ');
+    assert.equal(unionPadded.data.layerId, ' roads ');
+    assert.equal(transactionPadded.data.operations[0]?.layerId, ' roads ');
+
+    assert.equal(addLayerFromSourceOperationSchema.safeParse(accessorOperation).success, false);
+    assert.equal(styleOperationSchema.safeParse(accessorOperation).success, false);
+    assert.equal(transactionSchema.safeParse({ operations: [accessorOperation] }).success, false);
+  };
+
+  assertMatrix();
+  assert.equal(getterCalls, 0);
+
+  const pollutionKey = 'addLayerFromSourceDiagnosticFallbackProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true,
+      enumerable: false,
+      value: 'unrelated',
+      writable: true,
+    });
+    assertMatrix();
+  } finally {
+    if (originalDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, pollutionKey);
+    } else {
+      Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+    }
+  }
+  assert.equal(getterCalls, 0);
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey),
+    originalDescriptor,
+  );
+});
+
 test('addLayerFromSource handles 20k-deep JSON fields without stack overflow', () => {
   const style = makeSourceStyle();
   const deep = makeDeepJsonObject(DEEP_JSON_DEPTH, 'leaf');
@@ -1170,9 +1414,13 @@ test('addLayerFromSource handles 20k-deep JSON fields without stack overflow', (
 
 test('addLayerFromSource reads no source metadata beyond the source object type', () => {
   let metadataReads = 0;
+  let sourceTypeReads = 0;
   const source = new Proxy({ type: 'vector' }, {
     get(target, property, receiver) {
-      if (property !== 'type') {
+      if (property === 'type') {
+        sourceTypeReads += 1;
+        if (sourceTypeReads > 1) throw new Error('source type must be read exactly once');
+      } else {
         metadataReads += 1;
         throw new Error(`unexpected source metadata read: ${String(property)}`);
       }
@@ -1193,6 +1441,7 @@ test('addLayerFromSource reads no source metadata beyond the source object type'
   const result = applyLayerOperation(style, operation, context);
 
   assert.deepEqual(result, { ok: true, changed: true });
+  assert.equal(sourceTypeReads, 1);
   assert.equal(metadataReads, 0);
   assert.deepEqual(style.layers, [{
     id: 'authoritative', source: 'vector',

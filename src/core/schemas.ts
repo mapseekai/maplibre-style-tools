@@ -5,7 +5,7 @@ import type {
   AddLayerFromSourceOperation, AddSourceOperation,
   DuplicateLayerOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
-  InlineGeoJson, JsonPrimitive, JsonValue,
+  InlineGeoJson, JsonObject, JsonPrimitive, JsonValue,
   LayerLifecycleOperation, ListSourceLayersOptions,
   MoveLayerOperation, PatchSourceOperation,
   RemoveLayerOperation, RemoveSourceOperation, RenameSourceOperation,
@@ -534,6 +534,129 @@ function nonEmptyStringIssue(path: PathToken[]): LayerLifecycleIssue {
   return { code: 'custom', path, message: 'Expected a non-empty string' };
 }
 
+function receivedType(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function invalidTypeIssue(
+  expected: 'string' | 'record' | 'array' | 'number',
+  value: unknown,
+  path: PathToken[],
+): LayerLifecycleIssue {
+  return {
+    expected,
+    code: 'invalid_type',
+    path,
+    message: `Invalid input: expected ${expected}, received ${receivedType(value)}`,
+  } as LayerLifecycleIssue;
+}
+
+function requiredNonEmptyStringIssue(
+  value: JsonObject,
+  field: 'layerId' | 'sourceId' | 'type',
+): LayerLifecycleIssue | undefined {
+  const fieldValue = ownValue(value, field);
+  if (typeof fieldValue !== 'string') return invalidTypeIssue('string', fieldValue, [field]);
+  return validLayerLifecycleId(fieldValue) ? undefined : nonEmptyStringIssue([field]);
+}
+
+function optionalNonEmptyStringIssue(
+  value: JsonObject,
+  field: 'sourceLayer' | 'beforeId' | 'afterId',
+): LayerLifecycleIssue | undefined {
+  const fieldValue = ownValue(value, field);
+  if (fieldValue === undefined) return undefined;
+  if (typeof fieldValue !== 'string') return invalidTypeIssue('string', fieldValue, [field]);
+  return validLayerLifecycleId(fieldValue) ? undefined : nonEmptyStringIssue([field]);
+}
+
+function optionalObjectIssue(
+  value: JsonObject,
+  field: 'paint' | 'layout' | 'metadata',
+): LayerLifecycleIssue | undefined {
+  const fieldValue = ownValue(value, field);
+  return fieldValue === undefined || isJsonObject(fieldValue)
+    ? undefined
+    : invalidTypeIssue('record', fieldValue, [field]);
+}
+
+function optionalZoomIssue(
+  value: JsonObject,
+  field: 'minzoom' | 'maxzoom',
+): LayerLifecycleIssue | undefined {
+  const fieldValue = ownValue(value, field);
+  if (fieldValue === undefined) return undefined;
+  if (typeof fieldValue !== 'number') return invalidTypeIssue('number', fieldValue, [field]);
+  if (fieldValue < 0) {
+    return {
+      origin: 'number', code: 'too_small', minimum: 0, inclusive: true,
+      path: [field], message: 'Too small: expected number to be >=0',
+    } as LayerLifecycleIssue;
+  }
+  if (fieldValue > 24) {
+    return {
+      origin: 'number', code: 'too_big', maximum: 24, inclusive: true,
+      path: [field], message: 'Too big: expected number to be <=24',
+    } as LayerLifecycleIssue;
+  }
+  return undefined;
+}
+
+function fallbackAddLayerFromSourceIssue(
+  value: JsonObject,
+): LayerLifecycleIssue | undefined {
+  const fieldIssue = requiredNonEmptyStringIssue(value, 'layerId')
+    ?? requiredNonEmptyStringIssue(value, 'sourceId')
+    ?? optionalNonEmptyStringIssue(value, 'sourceLayer')
+    ?? requiredNonEmptyStringIssue(value, 'type')
+    ?? optionalObjectIssue(value, 'paint')
+    ?? optionalObjectIssue(value, 'layout');
+  if (fieldIssue !== undefined) return fieldIssue;
+
+  const filter = ownValue(value, 'filter');
+  if (filter !== undefined && !Array.isArray(filter)) {
+    return invalidTypeIssue('array', filter, ['filter']);
+  }
+  const laterFieldIssue = optionalZoomIssue(value, 'minzoom')
+    ?? optionalZoomIssue(value, 'maxzoom')
+    ?? optionalObjectIssue(value, 'metadata')
+    ?? optionalNonEmptyStringIssue(value, 'beforeId')
+    ?? optionalNonEmptyStringIssue(value, 'afterId');
+  if (laterFieldIssue !== undefined) return laterFieldIssue;
+
+  const unknownKeys = Reflect.ownKeys(value).filter((key): key is string => (
+    typeof key === 'string' && !ADD_LAYER_FROM_SOURCE_OPERATION_KEYS.has(key)
+  ));
+  if (unknownKeys.length > 0) {
+    const quoted = unknownKeys.map((key) => `"${key}"`).join(', ');
+    return {
+      code: 'unrecognized_keys', keys: unknownKeys, path: [],
+      message: unknownKeys.length === 1
+        ? `Unrecognized key: ${quoted}`
+        : `Unrecognized keys: ${quoted}`,
+    } as LayerLifecycleIssue;
+  }
+  if (ownValue(value, 'beforeId') !== undefined
+    && ownValue(value, 'afterId') !== undefined) {
+    return {
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    };
+  }
+  const minzoom = ownValue(value, 'minzoom');
+  const maxzoom = ownValue(value, 'maxzoom');
+  return typeof minzoom === 'number' && typeof maxzoom === 'number'
+    && minzoom > maxzoom
+    ? {
+        code: 'custom', message: 'minzoom must be less than or equal to maxzoom',
+        path: ['maxzoom'],
+      }
+    : undefined;
+}
+
 function fallbackLayerLifecycleOperationIssue(
   value: JsonValue,
   expectedOperation?: LayerLifecycleOperation['op'],
@@ -573,12 +696,7 @@ function fallbackLayerLifecycleOperationIssue(
     case 'removeLayer':
       return fieldIssue('layerId');
     case 'addLayerFromSource':
-      return fieldIssue('layerId')
-        ?? fieldIssue('sourceId')
-        ?? fieldIssue('sourceLayer')
-        ?? fieldIssue('type')
-        ?? fieldIssue('beforeId')
-        ?? fieldIssue('afterId');
+      return fallbackAddLayerFromSourceIssue(value);
     default:
       return undefined;
   }
@@ -674,7 +792,22 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
         const operation = ownValue(operations, String(index)) as JsonValue;
         const issue = fallbackLayerLifecycleOperationIssue(operation);
         if (issue !== undefined) {
-          return nonEmptyStringIssue(['operations', index, ...issue.path]);
+          const prefixedIssue: Record<string, unknown> = {};
+          for (const key of Reflect.ownKeys(issue)) {
+            if (typeof key !== 'string') continue;
+            const descriptor = Object.getOwnPropertyDescriptor(issue, key);
+            if (descriptor === undefined || !('value' in descriptor)) continue;
+            const issueValue = key === 'path'
+              ? ['operations', index, ...(descriptor.value as PathToken[])]
+              : descriptor.value;
+            Reflect.defineProperty(prefixedIssue, key, {
+              configurable: true,
+              enumerable: true,
+              value: issueValue,
+              writable: true,
+            });
+          }
+          return prefixedIssue as unknown as z.core.$ZodIssue;
         }
       }
     }
