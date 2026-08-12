@@ -5,36 +5,138 @@ import type {
 } from './types.js';
 
 type PointerToken = string | number;
+type PathNode = {
+  parent: PathNode | undefined;
+  token: PointerToken;
+  depth: number;
+};
+type DiffPath = PathNode | undefined;
+type CloneContainer = JsonValue[] | JsonObject;
+type CloneWork = { source: CloneContainer; target: CloneContainer };
+type DiffWork =
+  | {
+      kind: 'compare';
+      before: JsonValue;
+      after: JsonValue;
+      path: DiffPath;
+      layerId: string | undefined;
+    }
+  | {
+      kind: 'add';
+      after: JsonValue;
+      path: PathNode;
+      layerId: string | undefined;
+    }
+  | {
+      kind: 'remove';
+      before: JsonValue;
+      path: PathNode;
+      layerId: string | undefined;
+    }
+  | {
+      kind: 'layers';
+      before: readonly StyleLayer[];
+      after: readonly StyleLayer[];
+    };
 
 function isJsonObject(value: JsonValue): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function cloneJsonValue(value: JsonValue): JsonValue {
-  if (Array.isArray(value)) return value.map((item) => cloneJsonValue(item));
+function cloneContainer(value: JsonValue, work: CloneWork[]): JsonValue {
+  if (Array.isArray(value)) {
+    const clone: JsonValue[] = [];
+    work.push({ source: value, target: clone });
+    return clone;
+  }
   if (isJsonObject(value)) {
     const clone: JsonObject = {};
-    for (const key of Object.keys(value)) clone[key] = cloneJsonValue(value[key]!);
+    work.push({ source: value, target: clone });
     return clone;
   }
   return value;
 }
 
+function cloneJsonValue(value: JsonValue): JsonValue {
+  const work: CloneWork[] = [];
+  const root = cloneContainer(value, work);
+
+  while (work.length > 0) {
+    const frame = work.pop()!;
+    if (Array.isArray(frame.source)) {
+      const target = frame.target as JsonValue[];
+      for (let index = 0; index < frame.source.length; index += 1) {
+        Reflect.defineProperty(target, index, {
+          configurable: true,
+          enumerable: true,
+          value: cloneContainer(frame.source[index]!, work),
+          writable: true,
+        });
+      }
+      continue;
+    }
+
+    const target = frame.target as JsonObject;
+    for (const key of Object.keys(frame.source)) {
+      Reflect.defineProperty(target, key, {
+        configurable: true,
+        enumerable: true,
+        value: cloneContainer(frame.source[key]!, work),
+        writable: true,
+      });
+    }
+  }
+  return root;
+}
+
 export function jsonValuesEqual(left: JsonValue, right: JsonValue): boolean {
-  if (Array.isArray(left)) {
-    if (!Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((value, index) => jsonValuesEqual(value, right[index]!));
+  const work: Array<readonly [JsonValue, JsonValue]> = [[left, right]];
+  while (work.length > 0) {
+    const [leftValue, rightValue] = work.pop()!;
+    if (leftValue === rightValue) continue;
+    if (Array.isArray(leftValue)) {
+      if (!Array.isArray(rightValue) || leftValue.length !== rightValue.length) return false;
+      for (let index = 0; index < leftValue.length; index += 1) {
+        work.push([leftValue[index]!, rightValue[index]!]);
+      }
+      continue;
+    }
+    if (isJsonObject(leftValue)) {
+      if (!isJsonObject(rightValue)) return false;
+      const leftKeys = Object.keys(leftValue).sort();
+      const rightKeys = Object.keys(rightValue).sort();
+      if (leftKeys.length !== rightKeys.length) return false;
+      for (let index = 0; index < leftKeys.length; index += 1) {
+        const key = leftKeys[index]!;
+        if (key !== rightKeys[index]) return false;
+        work.push([leftValue[key]!, rightValue[key]!]);
+      }
+      continue;
+    }
+    return false;
   }
-  if (isJsonObject(left)) {
-    if (!isJsonObject(right)) return false;
-    const leftKeys = Object.keys(left).sort();
-    const rightKeys = Object.keys(right).sort();
-    if (leftKeys.length !== rightKeys.length) return false;
-    return leftKeys.every((key, index) => (
-      key === rightKeys[index] && jsonValuesEqual(left[key]!, right[key]!)
-    ));
+  return true;
+}
+
+function appendPath(parent: DiffPath, token: PointerToken): PathNode {
+  return { parent, token, depth: (parent?.depth ?? 0) + 1 };
+}
+
+function pathFromTokens(tokens: readonly PointerToken[]): DiffPath {
+  let path: DiffPath;
+  for (const token of tokens) path = appendPath(path, token);
+  return path;
+}
+
+function tokensFromPath(path: DiffPath): PointerToken[] {
+  if (path === undefined) return [];
+  const tokens = new Array<PointerToken>(path.depth);
+  let current: DiffPath = path;
+  while (current !== undefined) {
+    tokens[current.depth - 1] = current.token;
+    current = current.parent;
   }
-  return left === right;
+  return tokens;
 }
 
 function requireCandidate(target: StyleDiffTarget, context: OperationContext): StyleDiffTarget {
@@ -217,10 +319,9 @@ function reconcileLayerOrder(
 function diffObjects(
   before: JsonObject,
   after: JsonObject,
-  tokens: readonly PointerToken[],
+  path: DiffPath,
   layerId: string | undefined,
-  context: OperationContext,
-  entries: StyleDiffEntry[],
+  work: DiffWork[],
 ): void {
   const beforeKeys = Object.keys(before);
   const afterKeys = Object.keys(after);
@@ -231,23 +332,31 @@ function diffObjects(
   const sharedKeys = beforeKeys.filter((key) => afterKeySet.has(key)).sort();
   const addedKeys = afterKeys.filter((key) => !beforeKeySet.has(key)).sort();
 
-  for (const key of removedKeys) {
-    removeEntry(entries, [...tokens, key], before[key]!, layerId, context);
+  for (let index = addedKeys.length - 1; index >= 0; index -= 1) {
+    const key = addedKeys[index]!;
+    work.push({ kind: 'add', after: after[key]!, path: appendPath(path, key), layerId });
   }
-  for (const key of sharedKeys) {
-    if (tokens.length === 0 && key === 'layers') {
-      reconcileLayerOrder(
-        before[key] as StyleLayer[],
-        after[key] as StyleLayer[],
-        context,
-        entries,
-      );
-      continue;
+  for (let index = sharedKeys.length - 1; index >= 0; index -= 1) {
+    const key = sharedKeys[index]!;
+    if (path === undefined && key === 'layers') {
+      work.push({
+        kind: 'layers',
+        before: before[key] as StyleLayer[],
+        after: after[key] as StyleLayer[],
+      });
+    } else {
+      work.push({
+        kind: 'compare',
+        before: before[key]!,
+        after: after[key]!,
+        path: appendPath(path, key),
+        layerId,
+      });
     }
-    diffJsonValues(before[key]!, after[key]!, [...tokens, key], layerId, context, entries);
   }
-  for (const key of addedKeys) {
-    addEntry(entries, [...tokens, key], after[key]!, layerId, context);
+  for (let index = removedKeys.length - 1; index >= 0; index -= 1) {
+    const key = removedKeys[index]!;
+    work.push({ kind: 'remove', before: before[key]!, path: appendPath(path, key), layerId });
   }
 }
 
@@ -259,12 +368,39 @@ function diffJsonValues(
   context: OperationContext,
   entries: StyleDiffEntry[],
 ): void {
-  if (jsonValuesEqual(before, after)) return;
-  if (isJsonObject(before) && isJsonObject(after)) {
-    diffObjects(before, after, tokens, layerId, context, entries);
-    return;
+  const work: DiffWork[] = [{
+    kind: 'compare', before, after, path: pathFromTokens(tokens), layerId,
+  }];
+
+  while (work.length > 0) {
+    const action = work.pop()!;
+    if (action.kind === 'add') {
+      addEntry(entries, tokensFromPath(action.path), action.after, action.layerId, context);
+      continue;
+    }
+    if (action.kind === 'remove') {
+      removeEntry(entries, tokensFromPath(action.path), action.before, action.layerId, context);
+      continue;
+    }
+    if (action.kind === 'layers') {
+      reconcileLayerOrder(action.before, action.after, context, entries);
+      continue;
+    }
+    if (action.before === action.after) continue;
+    if (isJsonObject(action.before) && isJsonObject(action.after)) {
+      diffObjects(action.before, action.after, action.path, action.layerId, work);
+      continue;
+    }
+    if (jsonValuesEqual(action.before, action.after)) continue;
+    replaceEntry(
+      entries,
+      tokensFromPath(action.path),
+      action.before,
+      action.after,
+      action.layerId,
+      context,
+    );
   }
-  replaceEntry(entries, tokens, before, after, layerId, context);
 }
 
 export function diffStyleDocuments(

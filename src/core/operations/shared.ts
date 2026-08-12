@@ -22,21 +22,33 @@ function applySanitizedMergePatch(
   patch: JsonObject,
 ): JsonObject {
   const result = isJsonObject(target) ? target : {};
-  for (const key of Object.keys(patch)) {
-    const patchValue = patch[key]!;
-    if (patchValue === null) {
-      Reflect.deleteProperty(result, key);
-      continue;
+  const work: Array<{ target: JsonObject; patch: JsonObject }> = [{
+    target: result,
+    patch,
+  }];
+
+  while (work.length > 0) {
+    const frame = work.pop()!;
+    for (const key of Object.keys(frame.patch)) {
+      const patchValue = frame.patch[key]!;
+      if (patchValue === null) {
+        Reflect.deleteProperty(frame.target, key);
+        continue;
+      }
+      const targetValue = Object.hasOwn(frame.target, key) ? frame.target[key]! : null;
+      const nextValue = isJsonObject(patchValue)
+        ? (isJsonObject(targetValue) ? targetValue : {})
+        : patchValue;
+      Reflect.defineProperty(frame.target, key, {
+        configurable: true,
+        enumerable: true,
+        value: nextValue,
+        writable: true,
+      });
+      if (isJsonObject(patchValue)) {
+        work.push({ target: nextValue as JsonObject, patch: patchValue });
+      }
     }
-    const targetValue = Object.hasOwn(result, key) ? result[key]! : null;
-    Reflect.defineProperty(result, key, {
-      configurable: true,
-      enumerable: true,
-      value: isJsonObject(patchValue)
-        ? applySanitizedMergePatch(targetValue, patchValue)
-        : patchValue,
-      writable: true,
-    });
   }
   return result;
 }

@@ -1,5 +1,5 @@
 import { diffStyleDocuments } from './diff.js';
-import { createStyleToolError } from './errors.js';
+import { createStyleToolError, isStyleToolError } from './errors.js';
 import { toJsonPointer } from './json-pointer.js';
 import {
   applySetGeoJsonSourceFilter,
@@ -344,24 +344,33 @@ function applyOperation(
   operation: StyleOperation,
   context: OperationContext,
 ): OperationApplyResult {
-  switch (operation.op) {
-    case 'setLayerProperties':
-      return applySetLayerProperties(style, operation, context);
-    case 'setStyleRootProperties':
-      return applyRootOperation(style, operation, context);
-    case 'setLayerFilter':
-      return applySetLayerFilter(style, operation, context);
-    case 'setGeoJsonSourceFilter':
-      return applySetGeoJsonSourceFilter(style, operation, context);
-    case 'addSource':
-    case 'duplicateSource':
-    case 'renameSource':
-    case 'removeSource':
-    case 'patchSource':
-    case 'setGeoJsonData':
-      return applySourceOperation(style, operation, context);
-    default:
-      return assertNever(operation as UnhandledStyleOperation);
+  try {
+    switch (operation.op) {
+      case 'setLayerProperties':
+        return applySetLayerProperties(style, operation, context);
+      case 'setStyleRootProperties':
+        return applyRootOperation(style, operation, context);
+      case 'setLayerFilter':
+        return applySetLayerFilter(style, operation, context);
+      case 'setGeoJsonSourceFilter':
+        return applySetGeoJsonSourceFilter(style, operation, context);
+      case 'addSource':
+      case 'duplicateSource':
+      case 'renameSource':
+      case 'removeSource':
+      case 'patchSource':
+      case 'setGeoJsonData':
+        return applySourceOperation(style, operation, context);
+      default:
+        return assertNever(operation as UnhandledStyleOperation);
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: isStyleToolError(error)
+        ? error
+        : createStyleToolError('INTERNAL', 'Style operation failed unexpectedly.'),
+    };
   }
 }
 

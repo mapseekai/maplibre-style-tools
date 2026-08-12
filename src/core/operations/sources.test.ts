@@ -36,6 +36,37 @@ const TEST_LIMITS: Readonly<CoreExecutionLimits> = Object.freeze({
   maxOperations: DEFAULT_MAX_OPERATIONS,
 });
 
+const DEEP_JSON_DEPTH = 20_000;
+
+function makeDeepJsonObject(depth: number, leaf: JsonValue): JsonObject {
+  const root: JsonObject = {};
+  let current = root;
+  for (let index = 0; index < depth; index += 1) {
+    const next: JsonObject = {};
+    current.next = next;
+    current = next;
+  }
+  current.value = leaf;
+  return root;
+}
+
+function assertDeepJsonObject(value: JsonValue | undefined, depth: number, leaf: JsonValue): void {
+  let current = value;
+  for (let index = 0; index < depth; index += 1) {
+    assert.equal(typeof current, 'object');
+    assert.notEqual(current, null);
+    assert.equal(Array.isArray(current), false);
+    const object = current as JsonObject;
+    assert.deepEqual(Object.keys(object), ['next']);
+    current = object.next;
+  }
+  assert.equal(typeof current, 'object');
+  assert.notEqual(current, null);
+  assert.equal(Array.isArray(current), false);
+  assert.deepEqual(Object.keys(current as JsonObject), ['value']);
+  assert.equal((current as JsonObject).value, leaf);
+}
+
 function makeContext(limits: Readonly<CoreExecutionLimits> = TEST_LIMITS): OperationContext {
   return {
     limits,
@@ -292,6 +323,65 @@ test('patchSource applies own-key-safe Merge Patch and reports structural no-ops
   assert.notStrictEqual(noOp.style, style);
   assert.deepEqual(noOp.changedSources, []);
   assert.deepEqual(noOp.diff, []);
+});
+
+test('patchSource applies and diffs a 20k-deep extension without overflowing the stack', () => {
+  const style = makeStyle();
+  const extension = makeDeepJsonObject(DEEP_JSON_DEPTH, 'patched');
+  const result = applyStyleTransaction(style, {
+    validate: false,
+    operations: [{
+      op: 'patchSource', sourceId: 'geo', patch: { extension },
+    }],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail('expected deep patch transaction success');
+  assert.equal(jsonUtf8ByteLength(result.style) < DEFAULT_MAX_STYLE_BYTES, true);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.changedSources, ['geo']);
+  assert.deepEqual(result.diff.map(({ op, path, target }) => ({ op, path, target })), [{
+    op: 'add', path: '/sources/geo/extension', target: { kind: 'source', id: 'geo' },
+  }]);
+  assertDeepJsonObject(result.style.sources.geo!.extension, DEEP_JSON_DEPTH, 'patched');
+  assertDeepJsonObject(result.diff[0]?.after, DEEP_JSON_DEPTH, 'patched');
+
+  const replayed = replayStyleDiff(style, result.diff);
+  assertDeepJsonObject(replayed.sources.geo!.extension, DEEP_JSON_DEPTH, 'patched');
+});
+
+test('addSource emits a fully replayable diff for a 20k-deep extension', () => {
+  const style = makeStyle();
+  const sourceId = 'deep-added';
+  const extension = makeDeepJsonObject(DEEP_JSON_DEPTH, 'added');
+  const result = applyStyleTransaction(style, {
+    validate: false,
+    operations: [{
+      op: 'addSource',
+      sourceId,
+      source: {
+        type: 'vector',
+        tiles: ['https://example.test/deep/{z}/{x}/{y}.pbf'],
+        extension,
+      },
+    }],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail('expected deep add transaction success');
+  assert.equal(jsonUtf8ByteLength(result.style) < DEFAULT_MAX_STYLE_BYTES, true);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.changedSources, [sourceId]);
+  assert.deepEqual(result.diff.map(({ op, path, target }) => ({ op, path, target })), [{
+    op: 'add', path: '/sources/deep-added', target: { kind: 'source', id: sourceId },
+  }]);
+
+  const replayed = replayStyleDiff(style, result.diff);
+  assertDeepJsonObject(replayed.sources[sourceId]!.extension, DEEP_JSON_DEPTH, 'added');
+  assert.notStrictEqual(
+    replayed.sources[sourceId]!.extension,
+    result.style.sources[sourceId]!.extension,
+  );
 });
 
 test('patchSource rejects missing sources and canonical-invalid results with rollback', () => {

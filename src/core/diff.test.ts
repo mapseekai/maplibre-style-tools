@@ -4,7 +4,9 @@ import { diffStyleDocuments, jsonValuesEqual, replayStyleDiff } from './diff.js'
 import {
   DEFAULT_MAX_DIFF_BYTES, DEFAULT_MAX_OPERATIONS, DEFAULT_MAX_STYLE_BYTES,
 } from './utf8.js';
-import type { CoreExecutionLimits, OperationContext, StyleDocument } from './types.js';
+import type {
+  CoreExecutionLimits, JsonObject, JsonValue, OperationContext, StyleDocument,
+} from './types.js';
 
 const DEFAULT_TEST_LIMITS: Readonly<CoreExecutionLimits> = {
   maxStyleBytes: DEFAULT_MAX_STYLE_BYTES,
@@ -27,6 +29,37 @@ const contextWith = (
   changedSourceIds: new Set(changedSourceIds),
   warnings: [],
 });
+
+const DEEP_JSON_DEPTH = 20_000;
+
+function makeDeepJsonObject(depth: number, leaf: JsonValue): JsonObject {
+  const root: JsonObject = {};
+  let current = root;
+  for (let index = 0; index < depth; index += 1) {
+    const next: JsonObject = {};
+    current.next = next;
+    current = next;
+  }
+  current.value = leaf;
+  return root;
+}
+
+function assertDeepJsonObject(value: JsonValue | undefined, depth: number, leaf: JsonValue): void {
+  let current = value;
+  for (let index = 0; index < depth; index += 1) {
+    assert.equal(typeof current, 'object');
+    assert.notEqual(current, null);
+    assert.equal(Array.isArray(current), false);
+    const object = current as JsonObject;
+    assert.deepEqual(Object.keys(object), ['next']);
+    current = object.next;
+  }
+  assert.equal(typeof current, 'object');
+  assert.notEqual(current, null);
+  assert.equal(Array.isArray(current), false);
+  assert.deepEqual(Object.keys(current as JsonObject), ['value']);
+  assert.equal((current as JsonObject).value, leaf);
+}
 
 test('uses structural JSON equality rather than object identity', () => {
   assert.equal(jsonValuesEqual(['get', 'class'], ['get', 'class']), true);
@@ -155,4 +188,33 @@ test('classifies source changes from structure and requires source candidates', 
 test('omits candidate IDs that have no final structural diff', () => {
   const style = styleWithLayers(['roads']);
   assert.deepEqual(diffStyleDocuments(style, structuredClone(style), contextWith(['roads'])), []);
+});
+
+test('generates and replays a 20k-deep diff without recursive traversal', () => {
+  const before: StyleDocument = {
+    version: 8,
+    sources: {},
+    layers: [],
+    metadata: { extension: makeDeepJsonObject(DEEP_JSON_DEPTH, 'before') },
+  };
+  const after: StyleDocument = {
+    version: 8,
+    sources: {},
+    layers: [],
+    metadata: { extension: makeDeepJsonObject(DEEP_JSON_DEPTH, 'after') },
+  };
+
+  const entries = diffStyleDocuments(before, after, contextWith());
+  assert.deepEqual(entries.map(({ op, path, target }) => ({ op, path, target })), [{
+    op: 'replace',
+    path: `/metadata/extension${'/next'.repeat(DEEP_JSON_DEPTH)}/value`,
+    target: { kind: 'style' },
+  }]);
+
+  const replayed = replayStyleDiff(before, entries);
+  assertDeepJsonObject(
+    (replayed.metadata as JsonObject | undefined)?.extension,
+    DEEP_JSON_DEPTH,
+    'after',
+  );
 });
