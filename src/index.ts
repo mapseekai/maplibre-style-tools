@@ -14,6 +14,18 @@ export type {
   StyleOperation,
   StyleOperationResult,
 } from './types.js';
+export type {
+  CoreExecutionLimits,
+  StyleOperation as CoreStyleOperation,
+  StyleDiffEntry as CoreStyleDiffEntry,
+  StyleReplacementOptions,
+  StyleTransaction,
+  StyleTransactionOptions,
+  StyleTransactionResult as CoreStyleTransactionResult,
+  StyleToolError,
+  StyleWarning,
+} from './core/index.js';
+export { applyStyleTransaction, validateStyleDocument } from './core/index.js';
 
 export interface ToolCallResult<TStyle = unknown> {
   success: boolean;

@@ -5,12 +5,18 @@ import type { StyleDocument, StyleOperation } from '../types.js';
 
 const style: StyleDocument = {
   version: 8,
-  sources: { basemap: { type: 'vector' } },
+  sources: {
+    basemap: {
+      type: 'vector',
+      tiles: ['https://example.com/{z}/{x}/{y}.pbf'],
+    },
+  },
   layers: [
     {
       id: 'road-primary',
       type: 'line',
       source: 'basemap',
+      'source-layer': 'roads',
       paint: { 'line-color': '#64748b', 'line-width': 1 },
     },
   ],
