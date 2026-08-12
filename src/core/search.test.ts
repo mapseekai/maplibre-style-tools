@@ -176,3 +176,23 @@ test('listSourceLayers parses omitted or hostile options before any discovery', 
   assert.throws(() => listSourceLayers(hostileStyle));
   assert.equal(layerReads, 1);
 });
+
+test('listSourceLayers rejects null options before discovery', () => {
+  assert.equal(listSourceLayersOptionsSchema.safeParse(null).success, false);
+
+  let layerReads = 0;
+  const hostileStyle = {
+    version: 8,
+    sources: {},
+    get layers() {
+      layerReads += 1;
+      throw new Error('layers must not be read');
+    },
+  } as unknown as StyleDocument;
+
+  assert.throws(
+    () => listSourceLayers(hostileStyle, null as unknown as ListSourceLayersOptions),
+    (error: unknown) => error instanceof Error && error.name === 'ZodError',
+  );
+  assert.equal(layerReads, 0);
+});

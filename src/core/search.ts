@@ -74,7 +74,7 @@ export const listSourceLayers = (
   style: StyleDocument,
   options?: ListSourceLayersOptions,
 ): SourceLayerUsage[] => {
-  const parsedOptions = listSourceLayersOptionsSchema.parse(options ?? {});
+  const parsedOptions = listSourceLayersOptionsSchema.parse(options === undefined ? {} : options);
   const usages = new Map<string, SourceLayerUsage>();
   for (const layer of style.layers) {
     const sourceId = layer.source;
