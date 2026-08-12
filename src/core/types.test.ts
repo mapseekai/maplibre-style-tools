@@ -8,9 +8,10 @@ import {
   jsonUtf8ByteLength,
 } from './utf8.js';
 import type {
-  CoreExecutionLimits, JsonObject, JsonValue, OperationApplyResult, OperationContext,
-  StyleDiffEntry, StyleDiffTarget, StyleDocument, StyleLayer, StyleOperation,
-  StyleSource, StyleToolError, StyleTransaction, StyleTransactionResult, StyleWarning,
+  CoreExecutionLimits, JsonObject, JsonValue, LayerSearchResult, LayerSummary,
+  OperationApplyResult, OperationContext, StyleContext, StyleDiffEntry, StyleDiffTarget,
+  StyleDocument, StyleLayer, StyleOperation, StyleSource, StyleToolError, StyleTransaction,
+  StyleTransactionResult, StyleWarning,
 } from './types.js';
 
 type Extends<Actual, Expected> = [Actual] extends [Expected] ? true : false;
@@ -178,4 +179,55 @@ test('StyleDocument keeps MapLibre access while remaining a JSON value', () => {
   assert.deepEqual(compileAssertions, [
     true, true, true, true, true, true, true, true, true, true, true, true,
   ]);
+});
+
+type _LayerSummaryIsJsonObject = Assert<Extends<LayerSummary, JsonObject>>;
+type _StyleContextIsJsonObject = Assert<Extends<StyleContext, JsonObject>>;
+type _LayerSearchResultIsJsonObject = Assert<Extends<LayerSearchResult, JsonObject>>;
+const task5JsonAssertions: [
+  _LayerSummaryIsJsonObject, _StyleContextIsJsonObject, _LayerSearchResultIsJsonObject,
+] = [true, true, true];
+
+const summarizeLayerForTask5 = (layer: StyleLayer): LayerSummary => {
+  const source: LayerSummary['source'] =
+    typeof layer.source === 'string' ? layer.source : undefined;
+  const sourceLayer: LayerSummary['sourceLayer'] =
+    typeof layer['source-layer'] === 'string' ? layer['source-layer'] : undefined;
+  const visibility: JsonValue | undefined = layer.layout?.visibility;
+  return {
+    id: layer.id,
+    type: layer.type,
+    ...(source === undefined ? {} : { source }),
+    ...(sourceLayer === undefined ? {} : { sourceLayer }),
+    ...(layer.minzoom === undefined ? {} : { minzoom: layer.minzoom }),
+    ...(layer.maxzoom === undefined ? {} : { maxzoom: layer.maxzoom }),
+    ...(visibility === undefined ? {} : { visibility }),
+  };
+};
+
+test('Task 5 summary assignments narrow JSON-backed source fields exactly', () => {
+  const layer: StyleLayer = {
+    id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads',
+    minzoom: 3, maxzoom: 17, layout: { visibility: 'visible' },
+  };
+  const summary: LayerSummary = summarizeLayerForTask5(layer);
+  const source: string | undefined = summary.source;
+  const sourceLayer: string | undefined = summary.sourceLayer;
+  const visibility: JsonValue | undefined = summary.visibility;
+  const summaryObject: JsonObject = summary;
+  const summaryValue: JsonValue = summary;
+  assert.deepEqual(
+    { source, sourceLayer, minzoom: summary.minzoom, maxzoom: summary.maxzoom,
+      visibility },
+    { source: 'base', sourceLayer: 'roads', minzoom: 3, maxzoom: 17,
+      visibility: 'visible' },
+  );
+  assert.deepEqual(task5JsonAssertions, [true, true, true]);
+  void summaryValue;
+  void summaryObject;
+
+  const background = summarizeLayerForTask5({ id: 'background', type: 'background' });
+  assert.equal(Object.hasOwn(background, 'source'), false);
+  assert.equal(Object.hasOwn(background, 'sourceLayer'), false);
+  assert.equal(Object.hasOwn(background, 'visibility'), false);
 });

@@ -3,12 +3,17 @@ export type {
   JsonObject,
   JsonPrimitive,
   JsonValue,
+  LayerSearchQuery,
+  LayerSearchResult,
+  LayerSummary,
   OperationApplyResult,
   OperationContext,
   SetLayerPropertiesOperation,
   StyleDiffEntry,
   StyleDiffTarget,
   StyleDocument,
+  StyleContext,
+  StyleContextOptions,
   StyleLayer,
   StyleOperation,
   StyleReplacementOptions,
@@ -45,3 +50,5 @@ export {
   styleTransactionSchema,
 } from './schemas.js';
 export { validateStyleDocument } from './validation.js';
+export { buildStyleContext } from './context.js';
+export { searchLayers } from './search.js';

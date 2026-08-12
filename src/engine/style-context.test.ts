@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildStyleContext, searchLayers } from './style-context.js';
-import type { StyleDocument } from '../types.js';
+import type { StyleDocument } from '../core/types.js';
 
 const style: StyleDocument = {
   version: 8,

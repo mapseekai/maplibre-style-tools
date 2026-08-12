@@ -3,10 +3,11 @@ import type { Map as MapLibreMap } from 'maplibre-gl';
 import { z } from 'zod';
 import { buildStyleContext, searchLayers } from '../engine/style-context.js';
 import { applyStyleOperations } from '../engine/style-operations.js';
+import { validateStyleDocument } from '../core/validation.js';
+import type { StyleDocument } from '../core/types.js';
 import type {
   JsonObject,
   LayerSummary,
-  StyleDocument,
   StyleOperation,
 } from '../types.js';
 
@@ -84,11 +85,14 @@ const parseOperations = (
 const getStyleDocument = (
   map: MapLibreMap
 ): { ok: true; style: StyleDocument } | { ok: false; message: string } => {
-  const style = map.getStyle();
-  if (!isRecord(style) || !Array.isArray(style.layers)) {
-    return { ok: false, message: 'Current map style is unavailable.' };
+  const result = validateStyleDocument(map.getStyle());
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: result.errors[0]?.message ?? 'Current map style is unavailable.',
+    };
   }
-  return { ok: true, style: style as unknown as StyleDocument };
+  return { ok: true, style: result.style };
 };
 
 const inspectLayer = (

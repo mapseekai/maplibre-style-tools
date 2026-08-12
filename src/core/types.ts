@@ -28,6 +28,40 @@ export type StyleDocument = JsonKnownObject<
   layers: StyleLayer[];
 };
 
+export type LayerSummary = {
+  id: string;
+  type: string;
+  source?: string;
+  sourceLayer?: string;
+  minzoom?: number;
+  maxzoom?: number;
+  visibility?: JsonValue;
+};
+export type StyleContextOptions = {
+  activeSourceId?: string | null;
+  selectedLayerId?: string | null;
+  layerLimit?: number;
+};
+export type StyleContext = {
+  activeSourceId?: string | null;
+  selectedLayerId?: string | null;
+  layerCount: number;
+  sourceCount: number;
+  layerTypes: Record<string, number>;
+  layers: LayerSummary[];
+};
+export type LayerSearchQuery = {
+  query?: string;
+  type?: string;
+  source?: string;
+  sourceLayer?: string;
+  limit?: number;
+};
+export type LayerSearchResult = {
+  layers: LayerSummary[];
+  total: number;
+};
+
 export type SetLayerPropertiesOperation = {
   op: 'setLayerProperties';
   layerId: string;

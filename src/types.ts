@@ -10,7 +10,7 @@ export interface StyleLayer {
   filter?: unknown;
   minzoom?: number;
   maxzoom?: number;
-  metadata?: JsonObject;
+  metadata?: unknown;
   [key: string]: unknown;
 }
 
@@ -21,43 +21,13 @@ export interface StyleDocument {
   [key: string]: unknown;
 }
 
-export interface LayerSummary {
-  id: string;
-  type: string;
-  source?: string;
-  sourceLayer?: string;
-  minzoom?: number;
-  maxzoom?: number;
-  visibility?: unknown;
-}
-
-export interface StyleContextOptions {
-  activeSourceId?: string | null;
-  selectedLayerId?: string | null;
-  layerLimit?: number;
-}
-
-export interface StyleContext {
-  activeSourceId?: string | null;
-  selectedLayerId?: string | null;
-  layerCount: number;
-  sourceCount: number;
-  layerTypes: Record<string, number>;
-  layers: LayerSummary[];
-}
-
-export interface LayerSearchQuery {
-  query?: string;
-  type?: string;
-  source?: string;
-  sourceLayer?: string;
-  limit?: number;
-}
-
-export interface LayerSearchResult {
-  layers: LayerSummary[];
-  total: number;
-}
+export type {
+  LayerSearchQuery,
+  LayerSearchResult,
+  LayerSummary,
+  StyleContext,
+  StyleContextOptions,
+} from './core/types.js';
 
 export interface StyleOperation {
   layerId: string;
