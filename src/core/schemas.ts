@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  JsonPrimitive, JsonValue, SetGeoJsonSourceFilterOperation,
+  GeoJsonLimits, InlineGeoJson, JsonPrimitive, JsonValue,
+  SetGeoJsonSourceFilterOperation,
   SetLayerFilterOperation, SetLayerPropertiesOperation,
   SetStyleRootPropertiesOperation, StyleOperation, StyleTransaction,
 } from './types.js';
@@ -29,10 +31,14 @@ const INVALID_SNAPSHOT = Symbol('invalidSnapshot');
 const INVALID_JSON_MESSAGE = 'Input must be a strict JSON tree';
 
 type JsonContainer = JsonValue[] | { [key: string]: JsonValue };
-type SnapshotWork = { source: object; target: JsonContainer };
+type SnapshotWork = {
+  source: object;
+  target: JsonContainer;
+  path: (string | number)[];
+};
 type SnapshotResult =
   | { success: true; value: JsonValue }
-  | { success: false };
+  | { success: false; path: (string | number)[] };
 type SanitizedIssue = z.core.$ZodIssue;
 type SanitizedCheck = (value: JsonValue) => SanitizedIssue | undefined;
 type FallbackValidator = (value: JsonValue) => JsonValue | undefined;
@@ -64,6 +70,7 @@ function createSnapshotValue(
   value: unknown,
   seen: WeakSet<object>,
   work: SnapshotWork[],
+  path: (string | number)[],
 ): JsonValue | typeof INVALID_SNAPSHOT {
   if (isJsonPrimitive(value)) return value;
   if (typeof value !== 'object' || value === null || seen.has(value)) {
@@ -71,8 +78,21 @@ function createSnapshotValue(
   }
   const target: JsonContainer = Array.isArray(value) ? [] : {};
   seen.add(value);
-  if (!appendOwn(work, { source: value, target })) return INVALID_SNAPSHOT;
+  if (!appendOwn(work, { source: value, target, path })) return INVALID_SNAPSHOT;
   return target;
+}
+
+function pathWith(
+  path: readonly (string | number)[],
+  token: string | number,
+): (string | number)[] {
+  const result: (string | number)[] = [];
+  for (let index = 0; index < path.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(path, String(index));
+    if (descriptor !== undefined && 'value' in descriptor) appendOwn(result, descriptor.value);
+  }
+  appendOwn(result, token);
+  return result;
 }
 
 function isCanonicalArrayIndex(key: string, length: number): boolean {
@@ -97,26 +117,28 @@ function descriptorsMatchKeys(
 function sanitizeJsonTree(input: unknown): SnapshotResult {
   try {
     if (isJsonPrimitive(input)) return { success: true, value: input };
-    if (typeof input !== 'object' || input === null) return { success: false };
+    if (typeof input !== 'object' || input === null) return { success: false, path: [] };
 
     const seen = new WeakSet<object>();
     const work: SnapshotWork[] = [];
-    const root = createSnapshotValue(input, seen, work);
-    if (root === INVALID_SNAPSHOT) return { success: false };
+    const root = createSnapshotValue(input, seen, work, []);
+    if (root === INVALID_SNAPSHOT) return { success: false, path: [] };
 
     while (work.length > 0) {
       const current = work.pop();
-      if (current === undefined) return { success: false };
+      if (current === undefined) return { success: false, path: [] };
       const sourceIsArray = Array.isArray(current.source);
       const prototype = Object.getPrototypeOf(current.source);
       if (
         (sourceIsArray && prototype !== Array.prototype)
         || (!sourceIsArray && prototype !== Object.prototype)
-      ) return { success: false };
+      ) return { success: false, path: current.path };
 
       const keys = Reflect.ownKeys(current.source);
       const descriptors = Object.getOwnPropertyDescriptors(current.source);
-      if (!descriptorsMatchKeys(keys, descriptors)) return { success: false };
+      if (!descriptorsMatchKeys(keys, descriptors)) {
+        return { success: false, path: current.path };
+      }
 
       let arrayLength = -1;
       if (sourceIsArray) {
@@ -129,35 +151,48 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
           || !Number.isInteger(lengthDescriptor.value)
           || lengthDescriptor.value < 0
           || lengthDescriptor.value > 0xffff_ffff
-        ) return { success: false };
+        ) return { success: false, path: current.path };
         arrayLength = lengthDescriptor.value;
       }
 
       let arrayIndexes = 0;
       for (const key of keys) {
-        if (typeof key !== 'string') return { success: false };
+        if (typeof key !== 'string') return { success: false, path: current.path };
+        const childPath = sourceIsArray && key === 'length'
+          ? current.path
+          : pathWith(current.path, sourceIsArray ? Number(key) : key);
         const descriptor = descriptors[key];
-        if (descriptor === undefined || !('value' in descriptor)) return { success: false };
+        if (descriptor === undefined || !('value' in descriptor)) {
+          return { success: false, path: childPath };
+        }
         if (sourceIsArray && key === 'length') continue;
-        if (!descriptor.enumerable || DANGEROUS_KEYS.has(key)) return { success: false };
+        if (!descriptor.enumerable || DANGEROUS_KEYS.has(key)) {
+          return { success: false, path: childPath };
+        }
         if (sourceIsArray) {
-          if (!isCanonicalArrayIndex(key, arrayLength)) return { success: false };
+          if (!isCanonicalArrayIndex(key, arrayLength)) {
+            return { success: false, path: childPath };
+          }
           arrayIndexes += 1;
         }
-        const snapshotValue = createSnapshotValue(descriptor.value, seen, work);
-        if (snapshotValue === INVALID_SNAPSHOT) return { success: false };
+        const snapshotValue = createSnapshotValue(descriptor.value, seen, work, childPath);
+        if (snapshotValue === INVALID_SNAPSHOT) {
+          return { success: false, path: childPath };
+        }
         if (!Reflect.defineProperty(current.target, sourceIsArray ? Number(key) : key, {
           configurable: true,
           enumerable: true,
           value: snapshotValue,
           writable: true,
-        })) return { success: false };
+        })) return { success: false, path: childPath };
       }
-      if (sourceIsArray && arrayIndexes !== arrayLength) return { success: false };
+      if (sourceIsArray && arrayIndexes !== arrayLength) {
+        return { success: false, path: current.path };
+      }
     }
     return { success: true, value: root };
   } catch {
-    return { success: false };
+    return { success: false, path: [] };
   }
 }
 
@@ -405,7 +440,9 @@ function createSafeBoundary<Schema extends z.ZodType>(
   const originalParseAsync = schema.parseAsync.bind(schema);
   const fallbackSafeParse = (input: unknown): z.ZodSafeParseResult<z.output<Schema>> => {
     const sanitized = sanitizeJsonTree(input);
-    if (!sanitized.success) return safeFailure();
+    if (!sanitized.success) return safeFailure({
+      code: 'custom', message: INVALID_JSON_MESSAGE, path: sanitized.path,
+    });
     const boundaryIssue = check?.(sanitized.value);
     if (boundaryIssue !== undefined) return safeFailure(boundaryIssue);
     const output = fallback(sanitized.value);
@@ -458,7 +495,9 @@ function sanitizeBefore<Schema extends z.ZodType>(
   const schema = z.preprocess((input, context) => {
     const result = sanitizeJsonTree(input);
     if (!result.success) {
-      context.addIssue({ code: 'custom', message: INVALID_JSON_MESSAGE });
+      context.addIssue({
+        code: 'custom', message: INVALID_JSON_MESSAGE, path: result.path,
+      });
       return z.NEVER;
     }
     const issue = check?.(result.value);
@@ -475,6 +514,320 @@ const jsonValueInnerSchema = z.custom<JsonValue>();
 const jsonObjectInnerSchema = z.record(z.string(), jsonValueInnerSchema);
 
 export const jsonValueSchema = sanitizeBefore(jsonValueInnerSchema);
+
+const GEOJSON_TYPES = new Set([
+  'Feature', 'FeatureCollection', 'Point', 'MultiPoint', 'LineString',
+  'MultiLineString', 'Polygon', 'MultiPolygon', 'GeometryCollection',
+]);
+const GEOJSON_GEOMETRY_TYPES = new Set([
+  'Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon',
+  'MultiPolygon', 'GeometryCollection',
+]);
+const GEOJSON_LIMIT_KEYS = new Set([
+  'maxBytes', 'maxFeatures', 'maxCoordinatePositions',
+  'maxGeometryDepth', 'maxPropertyDepth',
+]);
+
+type GeoJsonObjectRole = 'top' | 'feature' | 'geometry';
+type CoordinateRole =
+  | 'position'
+  | 'positions'
+  | 'line'
+  | 'lines'
+  | 'ring'
+  | 'polygon'
+  | 'polygons';
+type GeoJsonStructuralWork =
+  | {
+      kind: 'object';
+      value: JsonValue;
+      path: (string | number)[];
+      role: GeoJsonObjectRole;
+    }
+  | {
+      kind: 'coordinates';
+      value: JsonValue;
+      path: (string | number)[];
+      role: CoordinateRole;
+    }
+  | {
+      kind: 'ringClosure';
+      value: JsonValue[];
+      path: (string | number)[];
+    };
+
+function geoJsonIssue(
+  message: string,
+  path: (string | number)[],
+): SanitizedIssue {
+  return { code: 'custom', message, path };
+}
+
+function validateBbox(
+  value: { [key: string]: JsonValue },
+  path: readonly (string | number)[],
+): SanitizedIssue | undefined {
+  const bbox = ownValue(value, 'bbox');
+  if (bbox === undefined) return undefined;
+  const bboxPath = pathWith(path, 'bbox');
+  if (!Array.isArray(bbox) || (bbox.length !== 4 && bbox.length !== 6)) {
+    return geoJsonIssue('bbox must contain exactly four or six numbers', bboxPath);
+  }
+  for (let index = 0; index < bbox.length; index += 1) {
+    const component = ownValue(bbox, String(index));
+    if (typeof component !== 'number' || !Number.isFinite(component)) {
+      return geoJsonIssue('bbox components must be finite numbers', pathWith(bboxPath, index));
+    }
+  }
+  return undefined;
+}
+
+function pushStructuralObject(
+  work: GeoJsonStructuralWork[],
+  value: JsonValue,
+  path: (string | number)[],
+  role: GeoJsonObjectRole,
+): void {
+  appendOwn(work, { kind: 'object', value, path, role });
+}
+
+function pushCoordinates(
+  work: GeoJsonStructuralWork[],
+  value: JsonValue,
+  path: (string | number)[],
+  role: CoordinateRole,
+): void {
+  appendOwn(work, { kind: 'coordinates', value, path, role });
+}
+
+function pushArrayCoordinateChildren(
+  work: GeoJsonStructuralWork[],
+  values: JsonValue[],
+  path: (string | number)[],
+  role: CoordinateRole,
+): void {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    pushCoordinates(work, ownValue(values, String(index)) as JsonValue, pathWith(path, index), role);
+  }
+}
+
+function checkCoordinateWork(
+  current: Extract<GeoJsonStructuralWork, { kind: 'coordinates' }>,
+  work: GeoJsonStructuralWork[],
+): SanitizedIssue | undefined {
+  if (!Array.isArray(current.value)) {
+    return geoJsonIssue('coordinates have the wrong nesting shape', current.path);
+  }
+  const values = current.value;
+  if (current.role === 'position') {
+    if (values.length < 2) {
+      return geoJsonIssue('a position must contain at least two numbers', current.path);
+    }
+    for (let index = 0; index < values.length; index += 1) {
+      const component = ownValue(values, String(index));
+      if (typeof component !== 'number' || !Number.isFinite(component)) {
+        return geoJsonIssue(
+          'position components must be finite numbers', pathWith(current.path, index),
+        );
+      }
+    }
+    return undefined;
+  }
+  if (current.role === 'line' && values.length < 2) {
+    return geoJsonIssue('a LineString must contain at least two positions', current.path);
+  }
+  if (current.role === 'ring' && values.length < 4) {
+    return geoJsonIssue('a linear ring must contain at least four positions', current.path);
+  }
+  if (current.role === 'ring') {
+    appendOwn(work, { kind: 'ringClosure', value: values, path: current.path });
+    pushArrayCoordinateChildren(work, values, current.path, 'position');
+    return undefined;
+  }
+  const childRole: CoordinateRole = current.role === 'positions'
+    || current.role === 'line'
+    ? 'position'
+    : current.role === 'lines' ? 'line'
+      : current.role === 'polygon' ? 'ring' : 'polygon';
+  pushArrayCoordinateChildren(work, values, current.path, childRole);
+  return undefined;
+}
+
+function checkFeatureObject(
+  value: { [key: string]: JsonValue },
+  path: (string | number)[],
+  work: GeoJsonStructuralWork[],
+): SanitizedIssue | undefined {
+  if (ownValue(value, 'type') !== 'Feature') {
+    return geoJsonIssue("Feature type must be 'Feature'", pathWith(path, 'type'));
+  }
+  const bboxIssue = validateBbox(value, path);
+  if (bboxIssue !== undefined) return bboxIssue;
+  const id = ownValue(value, 'id');
+  if (id !== undefined && !(
+    typeof id === 'string' || (typeof id === 'number' && Number.isFinite(id))
+  )) return geoJsonIssue('Feature id must be a string or finite number', pathWith(path, 'id'));
+  const geometry = ownValue(value, 'geometry');
+  if (geometry === undefined) {
+    return geoJsonIssue('Feature geometry is required', pathWith(path, 'geometry'));
+  }
+  if (geometry !== null) {
+    if (!isJsonObject(geometry)) {
+      return geoJsonIssue('Feature geometry must be a geometry or null', pathWith(path, 'geometry'));
+    }
+    pushStructuralObject(work, geometry, pathWith(path, 'geometry'), 'geometry');
+  }
+  const properties = ownValue(value, 'properties');
+  if (properties !== null && !isJsonObject(properties)) {
+    return geoJsonIssue(
+      'Feature properties must be an object or null', pathWith(path, 'properties'),
+    );
+  }
+  return undefined;
+}
+
+function checkFeatureCollectionObject(
+  value: { [key: string]: JsonValue },
+  path: (string | number)[],
+  work: GeoJsonStructuralWork[],
+): SanitizedIssue | undefined {
+  const bboxIssue = validateBbox(value, path);
+  if (bboxIssue !== undefined) return bboxIssue;
+  const features = ownValue(value, 'features');
+  const featuresPath = pathWith(path, 'features');
+  if (!Array.isArray(features)) {
+    return geoJsonIssue('FeatureCollection features must be an array', featuresPath);
+  }
+  for (let index = features.length - 1; index >= 0; index -= 1) {
+    pushStructuralObject(
+      work,
+      ownValue(features, String(index)) as JsonValue,
+      pathWith(featuresPath, index),
+      'feature',
+    );
+  }
+  return undefined;
+}
+
+function checkGeometryObject(
+  value: { [key: string]: JsonValue },
+  path: (string | number)[],
+  work: GeoJsonStructuralWork[],
+): SanitizedIssue | undefined {
+  const type = ownValue(value, 'type');
+  if (typeof type !== 'string' || !GEOJSON_GEOMETRY_TYPES.has(type)) {
+    return geoJsonIssue('Unknown GeoJSON geometry type', pathWith(path, 'type'));
+  }
+  const bboxIssue = validateBbox(value, path);
+  if (bboxIssue !== undefined) return bboxIssue;
+  if (type === 'GeometryCollection') {
+    const geometries = ownValue(value, 'geometries');
+    const geometriesPath = pathWith(path, 'geometries');
+    if (!Array.isArray(geometries)) {
+      return geoJsonIssue('GeometryCollection geometries must be an array', geometriesPath);
+    }
+    for (let index = geometries.length - 1; index >= 0; index -= 1) {
+      pushStructuralObject(
+        work,
+        ownValue(geometries, String(index)) as JsonValue,
+        pathWith(geometriesPath, index),
+        'geometry',
+      );
+    }
+    return undefined;
+  }
+  const coordinates = ownValue(value, 'coordinates');
+  const coordinatesPath = pathWith(path, 'coordinates');
+  if (coordinates === undefined) {
+    return geoJsonIssue('Geometry coordinates are required', coordinatesPath);
+  }
+  const coordinateRole: CoordinateRole = type === 'Point' ? 'position'
+    : type === 'MultiPoint' ? 'positions'
+      : type === 'LineString' ? 'line'
+        : type === 'MultiLineString' ? 'lines'
+          : type === 'Polygon' ? 'polygon' : 'polygons';
+  pushCoordinates(work, coordinates as JsonValue, coordinatesPath, coordinateRole);
+  return undefined;
+}
+
+function inlineGeoJsonIssue(value: JsonValue): SanitizedIssue | undefined {
+  const work: GeoJsonStructuralWork[] = [];
+  pushStructuralObject(work, value, [], 'top');
+  while (work.length > 0) {
+    const current = work.pop();
+    if (current === undefined) return geoJsonIssue('GeoJSON validation failed', []);
+    if (current.kind === 'ringClosure') {
+      const first = ownValue(current.value, '0') as JsonValue;
+      const last = ownValue(current.value, String(current.value.length - 1)) as JsonValue;
+      if (!jsonValuesEqual(first, last)) {
+        return geoJsonIssue('a linear ring must be closed', current.path);
+      }
+      continue;
+    }
+    if (current.kind === 'coordinates') {
+      const issue = checkCoordinateWork(current, work);
+      if (issue !== undefined) return issue;
+      continue;
+    }
+    if (!isJsonObject(current.value)) {
+      return geoJsonIssue('GeoJSON members must be objects', current.path);
+    }
+    if (current.role === 'feature') {
+      const issue = checkFeatureObject(current.value, current.path, work);
+      if (issue !== undefined) return issue;
+      continue;
+    }
+    if (current.role === 'geometry') {
+      const issue = checkGeometryObject(current.value, current.path, work);
+      if (issue !== undefined) return issue;
+      continue;
+    }
+    const type = ownValue(current.value, 'type');
+    if (typeof type !== 'string' || !GEOJSON_TYPES.has(type)) {
+      return geoJsonIssue('Unknown GeoJSON type', pathWith(current.path, 'type'));
+    }
+    const issue = type === 'Feature'
+      ? checkFeatureObject(current.value, current.path, work)
+      : type === 'FeatureCollection'
+        ? checkFeatureCollectionObject(current.value, current.path, work)
+        : checkGeometryObject(current.value, current.path, work);
+    if (issue !== undefined) return issue;
+  }
+  return undefined;
+}
+
+function fallbackGeoJsonLimits(value: JsonValue): JsonValue | undefined {
+  if (!isJsonObject(value) || !hasOnlyKeys(value, GEOJSON_LIMIT_KEYS)) return undefined;
+  for (const key of GEOJSON_LIMIT_KEYS) {
+    const limit = ownValue(value, key);
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) <= 0)) {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+const positiveSafeIntegerSchema = z.number().refine(
+  (value) => Number.isSafeInteger(value) && value > 0,
+  { message: 'Expected a positive safe integer' },
+);
+const geoJsonLimitsInnerSchema = z.object({
+  maxBytes: positiveSafeIntegerSchema,
+  maxFeatures: positiveSafeIntegerSchema,
+  maxCoordinatePositions: positiveSafeIntegerSchema,
+  maxGeometryDepth: positiveSafeIntegerSchema,
+  maxPropertyDepth: positiveSafeIntegerSchema,
+}).strict().partial() satisfies z.ZodType<Partial<GeoJsonLimits>>;
+
+export const geoJsonLimitsSchema = sanitizeBefore(
+  geoJsonLimitsInnerSchema, undefined, fallbackGeoJsonLimits,
+) as z.ZodType<Partial<GeoJsonLimits>>;
+
+const inlineGeoJsonInnerSchema = z.custom<InlineGeoJson>();
+export const inlineGeoJsonSchema = sanitizeBefore(
+  inlineGeoJsonInnerSchema,
+  inlineGeoJsonIssue,
+) as z.ZodType<InlineGeoJson>;
 
 const styleLayerEnvelopeSchema = z.object({
   id: z.string().min(1),

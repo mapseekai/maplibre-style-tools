@@ -9,6 +9,100 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = { [key: string]: JsonValue };
 
+export type GeoJsonPosition = [number, number, ...number[]];
+export type GeoJsonBbox2D = [number, number, number, number];
+export type GeoJsonBbox3D = [number, number, number, number, number, number];
+export type GeoJsonBbox = GeoJsonBbox2D | GeoJsonBbox3D;
+export type GeoJsonLineCoordinates = [
+  GeoJsonPosition, GeoJsonPosition, ...GeoJsonPosition[],
+];
+export type GeoJsonLinearRing = [
+  GeoJsonPosition,
+  GeoJsonPosition,
+  GeoJsonPosition,
+  GeoJsonPosition,
+  ...GeoJsonPosition[],
+];
+export type GeoJsonPolygonCoordinates = GeoJsonLinearRing[];
+
+export type GeoJsonPoint = JsonObject & {
+  type: 'Point';
+  coordinates: GeoJsonPosition;
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonMultiPoint = JsonObject & {
+  type: 'MultiPoint';
+  coordinates: GeoJsonPosition[];
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonLineString = JsonObject & {
+  type: 'LineString';
+  coordinates: GeoJsonLineCoordinates;
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonMultiLineString = JsonObject & {
+  type: 'MultiLineString';
+  coordinates: GeoJsonLineCoordinates[];
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonPolygon = JsonObject & {
+  type: 'Polygon';
+  coordinates: GeoJsonPolygonCoordinates;
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonMultiPolygon = JsonObject & {
+  type: 'MultiPolygon';
+  coordinates: GeoJsonPolygonCoordinates[];
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonGeometryCollection = JsonObject & {
+  type: 'GeometryCollection';
+  geometries: GeoJsonGeometry[];
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonGeometry =
+  | GeoJsonPoint
+  | GeoJsonMultiPoint
+  | GeoJsonLineString
+  | GeoJsonMultiLineString
+  | GeoJsonPolygon
+  | GeoJsonMultiPolygon
+  | GeoJsonGeometryCollection;
+
+export type GeoJsonFeatureId = string | number;
+export type GeoJsonFeature<
+  G extends GeoJsonGeometry | null = GeoJsonGeometry | null,
+> = JsonObject & {
+  type: 'Feature';
+  id?: GeoJsonFeatureId;
+  geometry: G;
+  properties: JsonObject | null;
+  bbox?: GeoJsonBbox;
+};
+export type GeoJsonFeatureCollection = JsonObject & {
+  type: 'FeatureCollection';
+  features: GeoJsonFeature[];
+  bbox?: GeoJsonBbox;
+};
+
+export interface GeoJsonLimits {
+  maxBytes: number;
+  maxFeatures: number;
+  maxCoordinatePositions: number;
+  maxGeometryDepth: number;
+  maxPropertyDepth: number;
+}
+
+export type InlineGeoJson = GeoJsonFeature | GeoJsonFeatureCollection | GeoJsonGeometry;
+export type InlineGeoJsonValidationResult =
+  | {
+      ok: true;
+      value: InlineGeoJson;
+      featureCount: number;
+      coordinatePositionCount: number;
+    }
+  | { ok: false; error: StyleToolError };
+
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type JsonKnownValue<T> = IsAny<T> extends true ? JsonValue
   : T extends undefined ? never
