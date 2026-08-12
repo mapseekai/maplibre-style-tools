@@ -6,6 +6,11 @@ import type {
 } from './types.js';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const OBJECT_PROTOTYPE_DATA_KEYS = new Set([
+  'constructor', '__defineGetter__', '__defineSetter__', 'hasOwnProperty',
+  '__lookupGetter__', '__lookupSetter__', 'isPrototypeOf',
+  'propertyIsEnumerable', 'toString', 'valueOf', 'toLocaleString',
+]);
 const INVALID_SNAPSHOT = Symbol('invalidSnapshot');
 const INVALID_JSON_MESSAGE = 'Input must be a strict JSON tree';
 
@@ -147,17 +152,44 @@ function sanitizeJsonTree(input: unknown): SnapshotResult {
   }
 }
 
+function isNormalObjectPrototypeDescriptor(
+  key: string | symbol,
+  descriptor: PropertyDescriptor,
+): boolean {
+  if (typeof key !== 'string' || descriptor.enumerable || !descriptor.configurable) {
+    return false;
+  }
+  if (key === '__proto__') {
+    return !('value' in descriptor)
+      && typeof descriptor.get === 'function'
+      && typeof descriptor.set === 'function';
+  }
+  return OBJECT_PROTOTYPE_DATA_KEYS.has(key)
+    && 'value' in descriptor
+    && descriptor.writable === true;
+}
+
 function hasPollutedPrototype(): boolean {
   try {
-    for (const key of Reflect.ownKeys(Array.prototype)) {
-      if (typeof key !== 'string' || !isCanonicalArrayIndex(key, 0xffff_ffff)) continue;
-      const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
-      if (descriptor !== undefined && !('value' in descriptor)) return true;
-    }
-    for (const key of Reflect.ownKeys(Object.prototype)) {
-      if (typeof key === 'string' && DANGEROUS_KEYS.has(key)) continue;
-      const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
-      if (descriptor !== undefined && !('value' in descriptor)) return true;
+    const seen = new Set<object>();
+    let prototype: object | null = Array.prototype;
+    while (prototype !== null) {
+      if (seen.has(prototype)) return true;
+      seen.add(prototype);
+      for (const key of Reflect.ownKeys(prototype)) {
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
+        if (descriptor === undefined) return true;
+        if (
+          typeof key === 'string'
+          && isCanonicalArrayIndex(key, 0xffff_ffff)
+          && (!('value' in descriptor) || descriptor.writable === false)
+        ) return true;
+        if (
+          prototype === Object.prototype
+          && !isNormalObjectPrototypeDescriptor(key, descriptor)
+        ) return true;
+      }
+      prototype = Object.getPrototypeOf(prototype);
     }
     return false;
   } catch {
@@ -290,10 +322,10 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
   return undefined;
 }
 
-function safeFailure(issue: z.core.$ZodIssue = {
+function safeFailure<Output = unknown>(issue: z.core.$ZodIssue = {
   code: 'custom', message: INVALID_JSON_MESSAGE, path: [],
-}) {
-  const error = new z.ZodError(oneItem(issue));
+}): z.ZodSafeParseError<Output> {
+  const error = new z.ZodError(oneItem(issue)) as z.ZodError<Output>;
   return { success: false as const, error };
 }
 
@@ -305,8 +337,9 @@ function createSafeBoundary<Schema extends z.ZodType>(
 ): Schema {
   const originalSafeParse = schema.safeParse.bind(schema);
   const originalParse = schema.parse.bind(schema);
-  const safeParse = (input: unknown) => {
-    if (!hasPollutedPrototype()) return originalSafeParse(input);
+  const originalSafeParseAsync = schema.safeParseAsync.bind(schema);
+  const originalParseAsync = schema.parseAsync.bind(schema);
+  const fallbackSafeParse = (input: unknown): z.ZodSafeParseResult<z.output<Schema>> => {
     const sanitized = sanitizeJsonTree(input);
     if (!sanitized.success) return safeFailure();
     const boundaryIssue = check?.(sanitized.value);
@@ -316,15 +349,38 @@ function createSafeBoundary<Schema extends z.ZodType>(
       ? safeFailure(fallbackIssue?.(sanitized.value))
       : { success: true as const, data: output as z.output<Schema> };
   };
-  const parse = (input: unknown) => {
-    if (!hasPollutedPrototype()) return originalParse(input);
-    const result = safeParse(input);
+  const safeParse = (
+    input: unknown, params?: z.core.ParseContext<z.core.$ZodIssue>,
+  ) => hasPollutedPrototype()
+    ? fallbackSafeParse(input)
+    : originalSafeParse(input, params);
+  const parse = (
+    input: unknown, params?: z.core.ParseContext<z.core.$ZodIssue>,
+  ) => {
+    if (!hasPollutedPrototype()) return originalParse(input, params);
+    const result = fallbackSafeParse(input);
+    if (!result.success) throw result.error;
+    return result.data;
+  };
+  const safeParseAsync = async (
+    input: unknown, params?: z.core.ParseContext<z.core.$ZodIssue>,
+  ) => hasPollutedPrototype()
+    ? fallbackSafeParse(input)
+    : originalSafeParseAsync(input, params);
+  const parseAsync = async (
+    input: unknown, params?: z.core.ParseContext<z.core.$ZodIssue>,
+  ) => {
+    if (!hasPollutedPrototype()) return originalParseAsync(input, params);
+    const result = fallbackSafeParse(input);
     if (!result.success) throw result.error;
     return result.data;
   };
   Object.defineProperties(schema, {
     parse: { configurable: true, value: parse, writable: true },
     safeParse: { configurable: true, value: safeParse, writable: true },
+    parseAsync: { configurable: true, value: parseAsync, writable: true },
+    safeParseAsync: { configurable: true, value: safeParseAsync, writable: true },
+    spa: { configurable: true, value: safeParseAsync, writable: true },
   });
   return schema;
 }

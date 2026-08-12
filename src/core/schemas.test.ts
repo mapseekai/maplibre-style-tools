@@ -59,6 +59,65 @@ function withThrowingArrayZeroSetter<Result>(run: () => Result) {
   return { result, setterCalls, thrown };
 }
 
+type PrototypeDescriptorKind = 'accessor' | 'readonly';
+type PrototypeDescriptorPlacement = 'direct' | 'inherited';
+
+function installArrayPrototypeDescriptor(
+  placement: PrototypeDescriptorPlacement,
+  kind: PrototypeDescriptorKind,
+) {
+  const key = '777';
+  const originalPrototype = Object.getPrototypeOf(Array.prototype);
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  const insertedPrototype = Object.create(originalPrototype) as object;
+  let descriptorCalls = 0;
+  const descriptor: PropertyDescriptor = kind === 'readonly'
+    ? { configurable: true, value: 'blocked', writable: false }
+    : {
+        configurable: true,
+        get() { descriptorCalls += 1; throw new Error('must not run'); },
+        set() { descriptorCalls += 1; throw new Error('must not run'); },
+      };
+  Object.defineProperty(
+    placement === 'direct' ? Array.prototype : insertedPrototype, key, descriptor,
+  );
+  if (placement === 'inherited') {
+    Object.setPrototypeOf(Array.prototype, insertedPrototype);
+  }
+  return {
+    calls: () => descriptorCalls,
+    restore: () => {
+      if (placement === 'inherited') {
+        Object.setPrototypeOf(Array.prototype, originalPrototype);
+      } else if (originalDescriptor === undefined) {
+        Reflect.deleteProperty(Array.prototype, key);
+      } else {
+        Object.defineProperty(Array.prototype, key, originalDescriptor);
+      }
+    },
+  };
+}
+
+async function withArrayPrototypeDescriptor<Result>(
+  placement: PrototypeDescriptorPlacement,
+  kind: PrototypeDescriptorKind,
+  run: () => Result | Promise<Result>,
+) {
+  const pollution = installArrayPrototypeDescriptor(placement, kind);
+  let result: Result | undefined;
+  let thrown: unknown;
+  try {
+    try {
+      result = await run();
+    } catch (error) {
+      thrown = error;
+    }
+  } finally {
+    pollution.restore();
+  }
+  return { descriptorCalls: pollution.calls(), result, thrown };
+}
+
 function assertSafeFailure<Result>(outcome: {
   result: z.ZodSafeParseResult<Result> | undefined;
   setterCalls: number;
@@ -601,6 +660,260 @@ test('polluted prototype preserves the deterministic maxOperations issue', () =>
       reason: 'maxOperations', maxOperations: 1, actualOperations: 2,
     },
   }]);
+});
+
+test('sync parser methods detect numeric descriptors across the Array chain', async () => {
+  const valid = { operations: Array.from({ length: 778 }, (_, index) => operation(index)) };
+  const schema = createStyleTransactionSchema(778);
+  for (const placement of ['direct', 'inherited'] as const) {
+    for (const kind of ['accessor', 'readonly'] as const) {
+      for (const method of ['safeParse', 'parse'] as const) {
+        const outcome = await withArrayPrototypeDescriptor(
+          placement, kind, () => schema[method](valid),
+        );
+        assert.equal(outcome.thrown, undefined, `${placement}/${kind}/${method}`);
+        assert.equal(outcome.descriptorCalls, 0);
+      }
+      const invalid = await withArrayPrototypeDescriptor(
+        placement, kind, () => schema.safeParse({ operations: [] }),
+      );
+      assert.equal(invalid.thrown, undefined);
+      assert.equal(invalid.descriptorCalls, 0);
+      assertSafeFailure({ ...invalid, setterCalls: invalid.descriptorCalls });
+    }
+  }
+});
+
+test('async parser methods detect Array chain descriptors for valid and invalid input', async () => {
+  const valid = { operations: Array.from({ length: 778 }, (_, index) => operation(index)) };
+  const schema = createStyleTransactionSchema(778);
+  assert.strictEqual(schema.spa, schema.safeParseAsync);
+  for (const placement of ['direct', 'inherited'] as const) {
+    for (const kind of ['accessor', 'readonly'] as const) {
+      for (const method of ['safeParseAsync', 'spa'] as const) {
+        const parsed = await withArrayPrototypeDescriptor(
+          placement, kind, () => schema[method](valid),
+        );
+        assert.equal(parsed.thrown, undefined, `${placement}/${kind}/${method}`);
+        assert.equal(parsed.descriptorCalls, 0);
+        assert.equal(parsed.result?.success, true);
+        const invalid = await withArrayPrototypeDescriptor(
+          placement, kind, () => schema[method]({ operations: [] }),
+        );
+        assert.equal(invalid.thrown, undefined);
+        assert.equal(invalid.descriptorCalls, 0);
+        assertSafeFailure({ ...invalid, setterCalls: invalid.descriptorCalls });
+      }
+      const parsed = await withArrayPrototypeDescriptor(
+        placement, kind, () => schema.parseAsync(valid),
+      );
+      assert.equal(parsed.thrown, undefined);
+      assert.equal(parsed.descriptorCalls, 0);
+      assert.equal(parsed.result?.validate, true);
+      const rejected = await withArrayPrototypeDescriptor(
+        placement, kind, () => schema.parseAsync({ operations: [] }),
+      );
+      assert.equal(rejected.descriptorCalls, 0);
+      assert.equal(rejected.thrown instanceof z.ZodError, true);
+    }
+  }
+});
+
+test('ignores inherited schema fields supplied by Object.prototype data properties', () => {
+  const extensionKey = 'schemaPrototypeExtensionProbe';
+  const keys = ['op', 'layerId', 'validate', extensionKey] as const;
+  const originalDescriptors = keys.map((key) => (
+    Object.getOwnPropertyDescriptor(Object.prototype, key)
+  ));
+  try {
+    Object.defineProperties(Object.prototype, {
+      op: { configurable: true, value: 'setLayerProperties', writable: true },
+      layerId: { configurable: true, value: 'inherited', writable: true },
+      validate: { configurable: true, value: false, writable: true },
+      [extensionKey]: { configurable: true, value: 'blocked', writable: false },
+    });
+
+    const operationResult = styleOperationSchema.safeParse({});
+    assert.equal(operationResult.success, false);
+
+    const transactionResult = styleTransactionSchema.safeParse({
+      operations: [operation()],
+    });
+    assert.equal(transactionResult.success, true);
+    if (!transactionResult.success) assert.fail('expected a valid transaction');
+    assert.equal(Object.hasOwn(transactionResult.data, 'validate'), true);
+    assert.equal(transactionResult.data.validate, true);
+
+    const styleResult = styleDocumentSchema.safeParse({
+      version: 8, sources: {}, layers: [], [extensionKey]: { enabled: true },
+    });
+    assert.equal(styleResult.success, true);
+    if (!styleResult.success) assert.fail('expected extension style to parse');
+    assert.deepEqual(styleResult.data[extensionKey], { enabled: true });
+  } finally {
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      const descriptor = originalDescriptors[index];
+      if (descriptor === undefined) {
+        Reflect.deleteProperty(Object.prototype, key);
+      } else {
+        Object.defineProperty(Object.prototype, key, descriptor);
+      }
+    }
+  }
+  for (let index = 0; index < keys.length; index += 1) {
+    assert.deepEqual(
+      Object.getOwnPropertyDescriptor(Object.prototype, keys[index]),
+      originalDescriptors[index],
+    );
+  }
+});
+
+test('Object prototype accessors cannot execute or supply schema fields', () => {
+  const extensionKey = 'schemaPrototypeAccessorProbe';
+  const keys = ['validate', 'op', 'layerId', extensionKey] as const;
+  const originals = keys.map((key) => Object.getOwnPropertyDescriptor(Object.prototype, key));
+  let calls = 0;
+  try {
+    for (const key of keys) {
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        get() { calls += 1; throw new Error('must not run'); },
+        set() { calls += 1; throw new Error('must not run'); },
+      });
+    }
+    assert.equal(styleOperationSchema.safeParse({ layerId: 'roads' }).success, false);
+    assert.equal(setLayerPropertiesOperationSchema.safeParse({
+      op: 'setLayerProperties',
+    }).success, false);
+    const transaction = styleTransactionSchema.safeParse({ operations: [operation()] });
+    assert.equal(transaction.success, true);
+    if (!transaction.success) assert.fail('expected transaction to parse');
+    assert.equal(transaction.data.validate, true);
+    assert.equal(styleDocumentSchema.safeParse({
+      version: 8, sources: {}, layers: [], [extensionKey]: true,
+    }).success, true);
+  } finally {
+    keys.forEach((key, index) => {
+      const descriptor = originals[index];
+      if (descriptor === undefined) Reflect.deleteProperty(Object.prototype, key);
+      else Object.defineProperty(Object.prototype, key, descriptor);
+    });
+  }
+  assert.equal(calls, 0);
+});
+
+test('prototype reflection failures and cycles select the stable fallback', () => {
+  const original = Object.getPrototypeOf(Array.prototype);
+  const parents: object[] = [
+    new Proxy(Object.create(original) as object, {
+      ownKeys() { throw new Error('reflection must not escape'); },
+    }),
+  ];
+  const cycle: object = new Proxy(Object.create(null) as object, {
+    getPrototypeOf() { return cycle; },
+  });
+  parents.push(cycle);
+  for (const parent of parents) {
+    let result: ReturnType<typeof styleDocumentSchema.safeParse> | undefined;
+    let thrown: unknown;
+    try {
+      Object.setPrototypeOf(Array.prototype, parent);
+      try {
+        result = styleDocumentSchema.safeParse(
+          { version: 7, sources: {}, layers: [] },
+          { error: () => 'clean parser unexpectedly ran' },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+    } finally {
+      Object.setPrototypeOf(Array.prototype, original);
+    }
+    assert.equal(thrown, undefined);
+    if (result === undefined || result.success) assert.fail('expected stable failure');
+    assert.equal(result.error instanceof z.ZodError, true);
+    assert.equal(result.error.issues[0]?.message, 'Invalid input: expected 8');
+  }
+});
+
+test('polluted fallback preserves every exported boundary contract', () => {
+  const fixtures: [z.ZodType, unknown, unknown][] = [
+    [jsonValueSchema, { ok: [1] }, undefined],
+    [styleDocumentSchema, { version: 8, sources: {}, layers: [] }, { version: 7 }],
+    [setLayerPropertiesOperationSchema, operation(), { layerId: 'roads' }],
+    [styleOperationSchema, operation(), { layerId: 'roads' }],
+    [styleTransactionSchema, { operations: [operation()] }, { operations: [] }],
+    [createStyleTransactionSchema(1), { operations: [operation()] }, { operations: [] }],
+  ];
+  for (const [schema, valid, invalid] of fixtures) {
+    const outcome = withThrowingArrayZeroSetter(() => ({
+      valid: schema.safeParse(valid), invalid: schema.safeParse(invalid),
+    }));
+    assert.equal(outcome.thrown, undefined);
+    assert.equal(outcome.setterCalls, 0);
+    assert.equal(outcome.result?.valid.success, true);
+    const failure = outcome.result?.invalid;
+    assert.equal(failure?.success, false);
+    if (failure === undefined || failure.success) assert.fail('expected safe failure');
+    assert.equal(failure.error instanceof z.ZodError, true);
+  }
+});
+
+test('clean composition retains native Zod behavior', async () => {
+  const composed = z.object({
+    json: jsonValueSchema,
+    style: styleDocumentSchema,
+    operation: styleOperationSchema,
+    transaction: styleTransactionSchema,
+  });
+  assert.equal((await composed.safeParseAsync({
+    json: { ok: true },
+    style: { version: 8, sources: {}, layers: [] },
+    operation: operation(),
+    transaction: { operations: [operation()] },
+  })).success, true);
+});
+
+test('preserves parse context across every exported instance parser method', async () => {
+  const input = { version: 7, sources: {}, layers: [] };
+  assert.equal(typeof Object.prototype.toString, 'function');
+  let callbackCalls = 0;
+  const params: z.core.ParseContext<z.core.$ZodIssue> = {
+    error: (issue) => {
+      callbackCalls += 1;
+      return `context:${issue.code}`;
+    },
+    jitless: true,
+    reportInput: true,
+  };
+  const assertContextError = (error: z.ZodError) => {
+    assert.equal(error.issues[0]?.message, 'context:invalid_value');
+    assert.equal(Object.getOwnPropertyDescriptor(error.issues[0], 'input')?.value, 7);
+  };
+
+  const safeResult = styleDocumentSchema.safeParse(input, params);
+  if (safeResult.success) assert.fail('expected safeParse to fail');
+  assertContextError(safeResult.error);
+
+  assert.throws(() => styleDocumentSchema.parse(input, params), (error) => {
+    if (!(error instanceof z.ZodError)) return false;
+    assertContextError(error);
+    return true;
+  });
+
+  for (const method of ['safeParseAsync', 'spa'] as const) {
+    const result = await styleDocumentSchema[method](input, params);
+    if (result.success) assert.fail(`expected ${method} to fail`);
+    assertContextError(result.error);
+  }
+
+  await assert.rejects(styleDocumentSchema.parseAsync(input, params), (error) => {
+    if (!(error instanceof z.ZodError)) return false;
+    assertContextError(error);
+    return true;
+  });
+  assert.equal(callbackCalls, 5);
 });
 
 test('preserves the authoritative Zod issue contracts in clean environments', () => {
