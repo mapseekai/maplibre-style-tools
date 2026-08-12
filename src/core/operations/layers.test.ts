@@ -2384,3 +2384,102 @@ test('addGeoJsonLayer fallback preserves complete native pairwise diagnostics', 
   assert.equal(prototypeGetterCalls, 0);
   assert.equal(prototypeSetterCalls, 0);
 });
+
+test('addGeoJsonLayer blank data preserves all later native refinement issues', () => {
+  const base = {
+    op: 'addGeoJsonLayer', sourceId: 'incidents', layerId: 'incidents-circle',
+    type: 'circle',
+  } as const;
+  const dataIssue = {
+    code: 'custom', path: ['data'], message: 'Expected a non-empty string',
+  };
+  const refinementCases = [
+    {
+      name: 'authority type',
+      extra: { sourceOptions: { type: 'geojson' } },
+      issue: {
+        code: 'custom',
+        message: 'sourceOptions cannot include the authority key type',
+        path: ['sourceOptions', 'type'],
+      },
+    },
+    {
+      name: 'authority data',
+      extra: { sourceOptions: { data: 'stolen' } },
+      issue: {
+        code: 'custom',
+        message: 'sourceOptions cannot include the authority key data',
+        path: ['sourceOptions', 'data'],
+      },
+    },
+    {
+      name: 'zoom order',
+      extra: { minzoom: 3, maxzoom: 2 },
+      issue: {
+        code: 'custom',
+        message: 'minzoom must be less than or equal to maxzoom',
+        path: ['maxzoom'],
+      },
+    },
+    {
+      name: 'dual placement',
+      extra: { beforeId: 'a', afterId: 'b' },
+      issue: {
+        code: 'custom',
+        message: 'Placement cannot specify both beforeId and afterId',
+        path: ['afterId'],
+      },
+    },
+  ] as const;
+  const fixtures = ['', ' \t'].flatMap((data) => refinementCases.map((refinement) => ({
+    name: `${JSON.stringify(data)} + ${refinement.name}`,
+    operation: { ...base, ...refinement.extra, data },
+    direct: [dataIssue, refinement.issue],
+    union: [dataIssue],
+    transaction: [dataIssue, refinement.issue].map((issue) => ({
+      ...issue, path: ['operations', 0, ...issue.path],
+    })),
+  })));
+  assert.equal(fixtures.length, 8);
+  const transactionSchema = createStyleTransactionSchema(5);
+  const issues = (result: {
+    success: boolean;
+    error?: { issues: unknown[] };
+  }): unknown[] => {
+    assert.equal(result.success, false);
+    if (result.success || result.error === undefined) assert.fail('expected schema failure');
+    return result.error.issues;
+  };
+  const assertMatrix = (environment: 'clean' | 'polluted'): void => {
+    for (const fixture of fixtures) {
+      assert.deepEqual(
+        issues(addGeoJsonLayerOperationSchema.safeParse(fixture.operation)),
+        fixture.direct,
+        `${environment} direct: ${fixture.name}`,
+      );
+      assert.deepEqual(
+        issues(styleOperationSchema.safeParse(fixture.operation)),
+        fixture.union,
+        `${environment} union: ${fixture.name}`,
+      );
+      assert.deepEqual(
+        issues(transactionSchema.safeParse({ operations: [fixture.operation] })),
+        fixture.transaction,
+        `${environment} transaction: ${fixture.name}`,
+      );
+    }
+  };
+
+  assertMatrix('clean');
+  const pollutionKey = 'addGeoJsonLayerBlankDataFallbackProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true, value: true, writable: true,
+    });
+    assertMatrix('polluted');
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, pollutionKey);
+    else Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+  }
+});

@@ -784,7 +784,7 @@ function fallbackAddGeoJsonLayerIssue(
   );
   if (dataIssue !== undefined) {
     appendOwn(issues, dataIssue);
-    blocking = true;
+    if (dataIssue.code === 'invalid_union') blocking = true;
   }
 
   const sourceOptions = ownValue(value, 'sourceOptions');
