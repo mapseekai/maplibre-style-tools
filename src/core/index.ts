@@ -37,6 +37,7 @@ export type {
   LayerSearchQuery,
   LayerSearchResult,
   LayerSummary,
+  ListSourceLayersOptions,
   OperationApplyResult,
   OperationContext,
   Placement,
@@ -53,6 +54,7 @@ export type {
   StyleOperation,
   StyleReplacementOptions,
   StyleSource,
+  SourceLayerUsage,
   StyleToolError,
   StyleTransaction,
   StyleTransactionOptions,
@@ -83,6 +85,7 @@ export {
   geoJsonLimitsSchema,
   inlineGeoJsonSchema,
   jsonValueSchema,
+  listSourceLayersOptionsSchema,
   setGeoJsonSourceFilterOperationSchema,
   setLayerFilterOperationSchema,
   setLayerPropertiesOperationSchema,
@@ -100,7 +103,7 @@ export {
 } from './geojson.js';
 export { validateStyleDocument } from './validation.js';
 export { buildStyleContext } from './context.js';
-export { searchLayers } from './search.js';
+export { listSourceLayers, searchLayers } from './search.js';
 export { applyRootOperation } from './operations/root.js';
 export {
   applySetGeoJsonSourceFilter,

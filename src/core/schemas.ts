@@ -4,6 +4,7 @@ import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
   InlineGeoJson, JsonPrimitive, JsonValue,
+  ListSourceLayersOptions,
   SetGeoJsonSourceFilterOperation,
   SetLayerFilterOperation, SetLayerPropertiesOperation,
   SetStyleRootPropertiesOperation, StyleOperation, StyleTransaction,
@@ -547,6 +548,7 @@ const GEOJSON_LIMIT_KEYS = new Set([
   'maxGeometryDepth', 'maxPropertyDepth',
 ]);
 const GEOJSON_ANALYSIS_OPTION_KEYS = new Set(['topValueLimit', 'limits']);
+const LIST_SOURCE_LAYERS_OPTION_KEYS = new Set(['sourceId']);
 
 type GeoJsonObjectRole = 'top' | 'feature' | 'geometry';
 type CoordinateRole =
@@ -880,6 +882,16 @@ function fallbackGeoJsonAnalysisInput(value: JsonValue): JsonValue | undefined {
   return inlineGeoJsonIssue(value) === undefined ? value : undefined;
 }
 
+function fallbackListSourceLayersOptions(value: JsonValue): JsonValue | undefined {
+  if (!isJsonObject(value) || !hasOnlyKeys(value, LIST_SOURCE_LAYERS_OPTION_KEYS)) {
+    return undefined;
+  }
+  const sourceId = ownValue(value, 'sourceId');
+  return sourceId === undefined || (typeof sourceId === 'string' && sourceId.length > 0)
+    ? value
+    : undefined;
+}
+
 const topValueLimitSchema = z.number().refine(
   (value) => Number.isSafeInteger(value) && value > 0 && value <= 100,
   { message: 'Expected a positive safe integer no greater than 100' },
@@ -894,6 +906,16 @@ export const geoJsonAnalysisOptionsSchema = sanitizeBefore(
   undefined,
   fallbackGeoJsonAnalysisOptions,
 ) as z.ZodType<GeoJsonAnalysisOptions>;
+
+const listSourceLayersOptionsInnerSchema = z.object({
+  sourceId: z.string().min(1).optional(),
+}).strict() satisfies z.ZodType<ListSourceLayersOptions>;
+
+export const listSourceLayersOptionsSchema = sanitizeBefore(
+  listSourceLayersOptionsInnerSchema,
+  undefined,
+  fallbackListSourceLayersOptions,
+) as z.ZodType<ListSourceLayersOptions>;
 
 const nonEmptyStringSchema = z.string().refine(
   (value) => value.trim().length > 0,

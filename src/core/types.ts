@@ -210,6 +210,12 @@ export type LayerSearchResult = {
   layers: LayerSummary[];
   total: number;
 };
+export type SourceLayerUsage = {
+  sourceId: string;
+  sourceLayer: string;
+  layers: Array<{ id: string; type: string }>;
+};
+export type ListSourceLayersOptions = { sourceId?: string };
 
 export type SetLayerPropertiesOperation = {
   op: 'setLayerProperties';

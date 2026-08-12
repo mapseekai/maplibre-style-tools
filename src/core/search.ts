@@ -3,9 +3,12 @@ import type {
   LayerSearchQuery,
   LayerSearchResult,
   LayerSummary,
+  ListSourceLayersOptions,
+  SourceLayerUsage,
   StyleDocument,
   StyleLayer,
 } from './types.js';
+import { listSourceLayersOptionsSchema } from './schemas.js';
 
 const DEFAULT_LAYER_LIMIT = 120;
 
@@ -61,4 +64,37 @@ export const searchLayers = (
   });
   const limit = query.limit ?? DEFAULT_LAYER_LIMIT;
   return { layers: matches.slice(0, limit), total: matches.length };
+};
+
+const compareCodeUnits = (left: string, right: string): number => (
+  left < right ? -1 : left > right ? 1 : 0
+);
+
+export const listSourceLayers = (
+  style: StyleDocument,
+  options?: ListSourceLayersOptions,
+): SourceLayerUsage[] => {
+  const parsedOptions = listSourceLayersOptionsSchema.parse(options ?? {});
+  const usages = new Map<string, SourceLayerUsage>();
+  for (const layer of style.layers) {
+    const sourceId = layer.source;
+    const sourceLayer = layer['source-layer'];
+    if (
+      typeof sourceId !== 'string'
+      || typeof sourceLayer !== 'string'
+      || sourceLayer.length === 0
+      || (parsedOptions.sourceId !== undefined && sourceId !== parsedOptions.sourceId)
+    ) continue;
+    const key = JSON.stringify([sourceId, sourceLayer]);
+    let usage = usages.get(key);
+    if (usage === undefined) {
+      usage = { sourceId, sourceLayer, layers: [] };
+      usages.set(key, usage);
+    }
+    usage.layers.push({ id: layer.id, type: layer.type });
+  }
+  return [...usages.values()].sort((left, right) => (
+    compareCodeUnits(left.sourceId, right.sourceId)
+    || compareCodeUnits(left.sourceLayer, right.sourceLayer)
+  ));
 };
