@@ -7,10 +7,15 @@ function isJsonObject(value: JsonValue): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+export function cloneStrictJsonValue<Value extends JsonValue>(value: Value): Value {
+  const result = jsonValueSchema.safeParse(value);
+  if (result.success) return result.data as Value;
+  throw new TypeError(INVALID_MERGE_INPUT);
+}
+
 function strictJsonSnapshot(value: unknown): JsonValue {
   try {
-    const result = jsonValueSchema.safeParse(value);
-    if (result.success) return result.data;
+    return cloneStrictJsonValue(value as JsonValue);
   } catch {
     // Normalize every hostile input to the same public helper error.
   }

@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { replayStyleDiff } from './diff.js';
 import { createStyleToolError, isStyleToolError } from './errors.js';
+import { jsonValueSchema } from './schemas.js';
 import { applyStyleTransaction, finalizeStyleReplacement } from './transaction.js';
 import {
   DEFAULT_MAX_DIFF_BYTES, DEFAULT_MAX_OPERATIONS, DEFAULT_MAX_STYLE_BYTES,
 } from './utf8.js';
 import type {
-  StyleDocument, StyleToolError, StyleTransaction, StyleTransactionOptions,
+  JsonObject, JsonValue, StyleDocument, StyleToolError, StyleTransaction,
+  StyleTransactionOptions,
 } from './types.js';
+
+const DEEP_JSON_DEPTH = 20_000;
 
 const makeStyle = (): StyleDocument => ({
   version: 8,
@@ -15,6 +20,35 @@ const makeStyle = (): StyleDocument => ({
   layers: [{ id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads',
     paint: { 'line-color': '#000' } }],
 });
+
+function makeDeepJsonObject(depth: number, leaf: JsonValue): JsonObject {
+  const root: JsonObject = {};
+  let current = root;
+  for (let index = 0; index < depth; index += 1) {
+    const next: JsonObject = {};
+    current.next = next;
+    current = next;
+  }
+  current.value = leaf;
+  return root;
+}
+
+function assertDeepJsonObject(value: JsonValue | undefined, depth: number, leaf: JsonValue): void {
+  let current = value;
+  for (let index = 0; index < depth; index += 1) {
+    assert.equal(typeof current, 'object');
+    assert.notEqual(current, null);
+    assert.equal(Array.isArray(current), false);
+    const object = current as JsonObject;
+    assert.deepEqual(Object.keys(object), ['next']);
+    current = object.next;
+  }
+  assert.equal(typeof current, 'object');
+  assert.notEqual(current, null);
+  assert.equal(Array.isArray(current), false);
+  assert.deepEqual(Object.keys(current as JsonObject), ['value']);
+  assert.equal((current as JsonObject).value, leaf);
+}
 
 function withLayerCloneFailure<Result>(thrown: unknown, run: () => Result): Result {
   const descriptor = Object.getOwnPropertyDescriptor(JSON, 'stringify');
@@ -35,6 +69,21 @@ function withLayerCloneFailure<Result>(thrown: unknown, run: () => Result): Resu
   } finally {
     if (descriptor === undefined) Reflect.deleteProperty(JSON, 'stringify');
     else Object.defineProperty(JSON, 'stringify', descriptor);
+  }
+}
+
+function withStrictCloneFailure<Result>(thrown: unknown, run: () => Result): Result {
+  const descriptor = Object.getOwnPropertyDescriptor(jsonValueSchema, 'safeParse');
+  Object.defineProperty(jsonValueSchema, 'safeParse', {
+    configurable: true,
+    value: () => { throw thrown; },
+    writable: true,
+  });
+  try {
+    return run();
+  } finally {
+    if (descriptor === undefined) Reflect.deleteProperty(jsonValueSchema, 'safeParse');
+    else Object.defineProperty(jsonValueSchema, 'safeParse', descriptor);
   }
 }
 
@@ -85,6 +134,44 @@ test('applyStyleTransaction emits parent-container diffs that replay exactly', (
   assert.equal(removed.diff[0]?.op, 'remove');
 });
 
+test('a second transaction removes a source with a 20k-deep extension without throwing', () => {
+  const style = makeStyle();
+  const sourceId = 'deep-added';
+  const added = applyStyleTransaction(style, {
+    validate: false,
+    operations: [{
+      op: 'addSource',
+      sourceId,
+      source: {
+        type: 'vector',
+        tiles: ['https://example.test/deep/{z}/{x}/{y}.pbf'],
+        extension: makeDeepJsonObject(DEEP_JSON_DEPTH, 'added'),
+      },
+    }],
+  });
+  assert.equal(added.ok, true);
+  if (!added.ok) assert.fail('expected setup transaction success');
+
+  const removed = applyStyleTransaction(added.style, {
+    validate: false,
+    operations: [{ op: 'removeSource', sourceId }],
+  });
+  assert.equal(removed.ok, true);
+  if (!removed.ok) assert.fail('expected deep source removal success');
+  assert.deepEqual(removed.style, style);
+  assert.deepEqual(removed.changedLayers, []);
+  assert.deepEqual(removed.changedSources, [sourceId]);
+  assert.deepEqual(removed.diff.map(({ op, path, target }) => ({ op, path, target })), [{
+    op: 'remove', path: '/sources/deep-added', target: { kind: 'source', id: sourceId },
+  }]);
+  assertDeepJsonObject(
+    (removed.diff[0]?.before as JsonObject | undefined)?.extension,
+    DEEP_JSON_DEPTH,
+    'added',
+  );
+  assert.deepEqual(replayStyleDiff(added.style, removed.diff), removed.style);
+});
+
 test('applyStyleTransaction rolls back after a later operation fails', () => {
   const style = makeStyle();
   const result = applyStyleTransaction(style, { operations: [
@@ -131,6 +218,37 @@ test('applyStyleTransaction normalizes unexpected handler throws and preserves r
   assert.deepEqual(preserved.changedSources, []);
   assert.deepEqual(preserved.diff, []);
   if (preserved.ok) assert.fail('expected preserved registered failure');
+  assert.strictEqual(preserved.error, registered);
+});
+
+test('working-style clone failures are atomic and preserve registered error provenance', () => {
+  const style = makeStyle();
+  const transaction: StyleTransaction = { operations: [{
+    op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#000' },
+  }] };
+
+  const unexpected = withStrictCloneFailure(new Error('clone exploded'), () => (
+    applyStyleTransaction(style, transaction)
+  ));
+  assert.equal(unexpected.ok, false);
+  assert.strictEqual(unexpected.style, style);
+  assert.deepEqual(unexpected.changedLayers, []);
+  assert.deepEqual(unexpected.changedSources, []);
+  assert.deepEqual(unexpected.diff, []);
+  if (unexpected.ok) assert.fail('expected normalized clone failure');
+  assert.equal(unexpected.error.code, 'INTERNAL');
+  assert.equal(isStyleToolError(unexpected.error), true);
+
+  const registered = createStyleToolError('IO_ERROR', 'registered clone sentinel', '/clone');
+  const preserved = withStrictCloneFailure(registered, () => (
+    applyStyleTransaction(style, transaction)
+  ));
+  assert.equal(preserved.ok, false);
+  assert.strictEqual(preserved.style, style);
+  assert.deepEqual(preserved.changedLayers, []);
+  assert.deepEqual(preserved.changedSources, []);
+  assert.deepEqual(preserved.diff, []);
+  if (preserved.ok) assert.fail('expected preserved clone failure');
   assert.strictEqual(preserved.error, registered);
 });
 

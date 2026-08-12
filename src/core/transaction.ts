@@ -7,6 +7,7 @@ import {
 } from './operations/filters.js';
 import { applySetLayerProperties } from './operations/layers.js';
 import { applyRootOperation } from './operations/root.js';
+import { cloneStrictJsonValue } from './operations/shared.js';
 import { applySourceOperation } from './operations/sources.js';
 import { createStyleTransactionSchema } from './schemas.js';
 import type {
@@ -39,14 +40,6 @@ type LimitResolution =
 type CandidateValidation =
   | { ok: true; style: StyleDocument; warnings: StyleWarning[] }
   | { ok: false; error: StyleToolError; warnings: StyleWarning[] };
-
-function cloneJsonValue<Value extends JsonValue>(value: Value): Value {
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) {
-    throw new Error('JSON serialization returned undefined for a JSON value');
-  }
-  return JSON.parse(serialized) as Value;
-}
 
 function failureResult(
   style: StyleDocument,
@@ -412,7 +405,18 @@ export function applyStyleTransaction(
   }
 
   const original = originalValidation.style;
-  const working = cloneJsonValue(original);
+  let working: StyleDocument;
+  try {
+    working = cloneStrictJsonValue(original);
+  } catch (error) {
+    return failureResult(
+      style,
+      isStyleToolError(error)
+        ? error
+        : createStyleToolError('INTERNAL', 'Validated style could not be cloned.'),
+      originalValidation.warnings,
+    );
+  }
   const context: OperationContext = {
     limits: resolved.limits,
     changedLayerIds: new Set(),
