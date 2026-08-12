@@ -103,6 +103,59 @@ export type InlineGeoJsonValidationResult =
     }
   | { ok: false; error: StyleToolError };
 
+export type GeoJsonGeometryType =
+  | 'Point'
+  | 'MultiPoint'
+  | 'LineString'
+  | 'MultiLineString'
+  | 'Polygon'
+  | 'MultiPolygon'
+  | 'GeometryCollection';
+export type GeoJsonPropertyType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'null'
+  | 'array'
+  | 'object';
+export type GeoJsonGeometryCounts = Partial<Record<GeoJsonGeometryType, number>>;
+
+export interface GeoJsonPropertyAnalysis {
+  name: string;
+  types: GeoJsonPropertyType[];
+  numericRange?: { min: number; max: number };
+  topValues?: Array<{
+    value: string | number | boolean | null;
+    count: number;
+  }>;
+}
+
+export interface GeoJsonAnalysisOptions {
+  topValueLimit?: number;
+  limits?: Partial<GeoJsonLimits>;
+}
+
+export type GeoJsonAnalysisInput = InlineGeoJson | string;
+export type GeoJsonAnalysisUnavailable = {
+  available: false;
+  reason: 'remote-url';
+  warnings: StyleWarning[];
+};
+export type GeoJsonAnalysisAvailable = {
+  available: true;
+  featureCount: number;
+  geometryTypes: GeoJsonGeometryCounts;
+  bbox?: [number, number, number, number];
+  properties: GeoJsonPropertyAnalysis[];
+  warnings: StyleWarning[];
+};
+export type GeoJsonAnalysis =
+  | GeoJsonAnalysisUnavailable
+  | GeoJsonAnalysisAvailable;
+export type GeoJsonAnalysisResult =
+  | { ok: true; analysis: GeoJsonAnalysis }
+  | { ok: false; error: StyleToolError };
+
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type JsonKnownValue<T> = IsAny<T> extends true ? JsonValue
   : T extends undefined ? never

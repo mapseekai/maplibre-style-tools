@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  GeoJsonLimits, InlineGeoJson, JsonPrimitive, JsonValue,
+  GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
+  InlineGeoJson, JsonPrimitive, JsonValue,
   SetGeoJsonSourceFilterOperation,
   SetLayerFilterOperation, SetLayerPropertiesOperation,
   SetStyleRootPropertiesOperation, StyleOperation, StyleTransaction,
@@ -545,6 +546,7 @@ const GEOJSON_LIMIT_KEYS = new Set([
   'maxBytes', 'maxFeatures', 'maxCoordinatePositions',
   'maxGeometryDepth', 'maxPropertyDepth',
 ]);
+const GEOJSON_ANALYSIS_OPTION_KEYS = new Set(['topValueLimit', 'limits']);
 
 type GeoJsonObjectRole = 'top' | 'feature' | 'geometry';
 type CoordinateRole =
@@ -846,6 +848,67 @@ export const inlineGeoJsonSchema = sanitizeBefore(
   inlineGeoJsonInnerSchema,
   inlineGeoJsonIssue,
 ) as z.ZodType<InlineGeoJson>;
+
+function fallbackGeoJsonAnalysisOptions(value: JsonValue): JsonValue | undefined {
+  if (!isJsonObject(value) || !hasOnlyKeys(value, GEOJSON_ANALYSIS_OPTION_KEYS)) {
+    return undefined;
+  }
+  const topValueLimit = ownValue(value, 'topValueLimit');
+  if (
+    topValueLimit !== undefined
+    && (typeof topValueLimit !== 'number'
+      || !Number.isSafeInteger(topValueLimit)
+      || topValueLimit <= 0
+      || topValueLimit > 100)
+  ) return undefined;
+  const limits = ownValue(value, 'limits');
+  if (
+    limits !== undefined
+    && (!isJsonObject(limits) || fallbackGeoJsonLimits(limits) === undefined)
+  ) {
+    return undefined;
+  }
+  const result: { [key: string]: JsonValue } = {
+    topValueLimit: typeof topValueLimit === 'number' ? topValueLimit : 10,
+  };
+  if (isJsonObject(limits)) result.limits = limits;
+  return result;
+}
+
+function fallbackGeoJsonAnalysisInput(value: JsonValue): JsonValue | undefined {
+  if (typeof value === 'string') return value.trim().length > 0 ? value : undefined;
+  return inlineGeoJsonIssue(value) === undefined ? value : undefined;
+}
+
+const topValueLimitSchema = z.number().refine(
+  (value) => Number.isSafeInteger(value) && value > 0 && value <= 100,
+  { message: 'Expected a positive safe integer no greater than 100' },
+);
+const geoJsonAnalysisOptionsInnerSchema = z.object({
+  topValueLimit: topValueLimitSchema.default(10),
+  limits: geoJsonLimitsSchema.optional(),
+}).strict() satisfies z.ZodType<GeoJsonAnalysisOptions>;
+
+export const geoJsonAnalysisOptionsSchema = sanitizeBefore(
+  geoJsonAnalysisOptionsInnerSchema,
+  undefined,
+  fallbackGeoJsonAnalysisOptions,
+) as z.ZodType<GeoJsonAnalysisOptions>;
+
+const nonEmptyStringSchema = z.string().refine(
+  (value) => value.trim().length > 0,
+  { message: 'Expected a non-empty string' },
+);
+const geoJsonAnalysisInputInnerSchema = z.union([
+  nonEmptyStringSchema,
+  inlineGeoJsonSchema,
+]) satisfies z.ZodType<GeoJsonAnalysisInput>;
+
+export const geoJsonAnalysisInputSchema = sanitizeBefore(
+  geoJsonAnalysisInputInnerSchema,
+  undefined,
+  fallbackGeoJsonAnalysisInput,
+) as z.ZodType<GeoJsonAnalysisInput>;
 
 const styleLayerEnvelopeSchema = z.object({
   id: z.string().min(1),

@@ -6,6 +6,14 @@ export type {
   GeoJsonFeature,
   GeoJsonFeatureCollection,
   GeoJsonFeatureId,
+  GeoJsonAnalysis,
+  GeoJsonAnalysisAvailable,
+  GeoJsonAnalysisInput,
+  GeoJsonAnalysisOptions,
+  GeoJsonAnalysisResult,
+  GeoJsonAnalysisUnavailable,
+  GeoJsonGeometryCounts,
+  GeoJsonGeometryType,
   GeoJsonGeometry,
   GeoJsonGeometryCollection,
   GeoJsonLimits,
@@ -19,6 +27,8 @@ export type {
   GeoJsonPolygon,
   GeoJsonPolygonCoordinates,
   GeoJsonPosition,
+  GeoJsonPropertyAnalysis,
+  GeoJsonPropertyType,
   InlineGeoJson,
   InlineGeoJsonValidationResult,
   JsonObject,
@@ -68,6 +78,8 @@ export {
 } from './utf8.js';
 export {
   createStyleTransactionSchema,
+  geoJsonAnalysisInputSchema,
+  geoJsonAnalysisOptionsSchema,
   geoJsonLimitsSchema,
   inlineGeoJsonSchema,
   jsonValueSchema,
@@ -79,6 +91,9 @@ export {
   styleOperationSchema,
   styleTransactionSchema,
 } from './schemas.js';
+export {
+  analyzeGeoJson,
+} from './geojson-analysis.js';
 export {
   DEFAULT_GEOJSON_LIMITS,
   validateInlineGeoJson,
