@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -31,6 +32,7 @@ const command = (program, args, cwd = root) => {
 
 const assertion = (condition, message) => assert.ok(condition, message);
 const source = (file) => readFileSync(file, 'utf8');
+const packageJson = JSON.parse(source(join(root, 'package.json')));
 
 const declarationSpecifier = (node) => {
   if ((typescript.isImportDeclaration(node) || typescript.isExportDeclaration(node))
@@ -138,6 +140,14 @@ const packedModules = [
   'ai-sdk/result',
   'ai-sdk/schemas',
   'ai-sdk/tool-contracts',
+  'cli/args',
+  'cli/file-output',
+  'cli/input',
+  'cli/inspect',
+  'cli/main',
+  'cli/output',
+  'cli/run',
+  'cli/types',
   'core/canonical-json',
   'core/context',
   'core/diff',
@@ -666,12 +676,20 @@ try {
   assertion(typeof ai.createMapLibreStyleTools === 'function', 'AI full factory is missing');
   assertion(typeof ai.createCompactMapLibreStyleTools === 'function', 'AI compact factory is missing');
 
-  const packed = JSON.parse(command('npm', [
-    'pack', '--json', '--ignore-scripts', '--pack-destination', temporary,
-  ]));
-  assertion(Array.isArray(packed) && packed.length === 1 && Array.isArray(packed[0].files),
+  const packOutput = command('npm', [
+    'pack', '--json', '--pack-destination', temporary,
+  ]);
+  const packJsonStart = packOutput.lastIndexOf('\n[');
+  const packed = JSON.parse(packOutput.slice(packJsonStart < 0 ? 0 : packJsonStart + 1));
+  assertion(Array.isArray(packed) && packed.length === 1,
+    'npm pack must return exactly one result');
+  const [packedResult] = packed;
+  assertion(Array.isArray(packedResult.files),
     'npm pack did not return a usable JSON file list');
-  const packedFiles = packed[0].files.map((file) => file.path).sort();
+  const tarballPath = join(temporary, packedResult.filename);
+  assertion(existsSync(tarballPath), 'npm pack did not create its reported tarball');
+  assert.equal(packageJson.bin?.['maplibre-style'], './dist/cli/main.js');
+  const packedFiles = packedResult.files.map((file) => file.path).sort();
   for (const required of [
     'dist/index.js',
     'dist/index.d.ts',
@@ -685,9 +703,16 @@ try {
     'dist/adapters/maplibre/geojson-diff.d.ts',
     'dist/ai-sdk/index.js',
     'dist/ai-sdk/index.d.ts',
+    'dist/cli/main.js',
+    'dist/cli/main.d.ts',
   ]) assertion(packedFiles.includes(required), `packed tarball is missing ${required}`);
   for (const file of packedFiles) {
-    assertion(!file.startsWith('src/') && !file.startsWith('.tmp/') && !file.startsWith('examples/'),
+    assertion(
+      !file.startsWith('src/')
+        && !file.startsWith('.tmp/')
+        && !file.startsWith('examples/')
+        && !file.startsWith('test-results/')
+        && !file.startsWith('playwright-report/'),
       `packed tarball contains source artifact ${file}`);
     assertion(
       !file.includes('.test.')
@@ -702,11 +727,11 @@ try {
   assert.deepEqual(packedFiles, exactPackedFiles, 'npm pack file list changed');
   assert.deepEqual(
     readdirSync(temporary).filter((file) => file.endsWith('.tgz')),
-    [packed[0].filename],
+    [packedResult.filename],
     'package check must create exactly one real tarball',
   );
   const unpacked = join(temporary, 'unpacked');
-  command('tar', ['-xzf', join(temporary, packed[0].filename), '-C', temporary]);
+  command('tar', ['-xzf', tarballPath, '-C', temporary]);
   command('mv', [join(temporary, 'package'), unpacked]);
   const rootDeclaration = source(join(unpacked, 'dist/index.d.ts'));
   assertion(rootDeclaration.startsWith('/// <reference types="node" preserve="true" />\n/// <reference types="geojson" preserve="true" />'),
@@ -734,7 +759,7 @@ try {
   writeFileSync(join(consumer, 'package.json'), '{\n  "private": true,\n  "type": "module"\n}\n');
   command('npm', [
     'install', '--no-save', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund',
-    join(temporary, packed[0].filename),
+    tarballPath,
   ], consumer);
   writeFileSync(join(consumer, 'core-consumer.ts'), coreConsumer);
   writeFileSync(join(consumer, 'maplibre-consumer.ts'), maplibreConsumer);
@@ -778,6 +803,30 @@ try {
     private: true,
     type: 'module',
   });
+  const installedBinary = join(consumer, 'node_modules/.bin/maplibre-style');
+  const runInstalledBinary = (arguments_) => {
+    const result = spawnSync(installedBinary, arguments_, {
+      cwd: consumer,
+      encoding: 'utf8',
+    });
+    if (result.error || result.status !== 0 || result.stderr !== '') {
+      throw new Error([
+        `Installed CLI failed: ${arguments_.join(' ')}`,
+        result.error?.message,
+        result.stdout,
+        result.stderr,
+      ].filter(Boolean).join('\n'));
+    }
+    return result.stdout;
+  };
+  const help = JSON.parse(runInstalledBinary(['--help']));
+  assert.equal(help.ok, true);
+  assertion(help.usage.includes('maplibre-style validate STYLE'),
+    'installed CLI help is missing validate usage');
+  const fixture = join(consumer, 'style.json');
+  writeFileSync(fixture, '{"version":8,"sources":{},"layers":[]}');
+  const validation = JSON.parse(runInstalledBinary(['validate', 'style.json']));
+  assert.equal(validation.ok, true);
   const parsedCoreConfig = JSON.parse(coreConfig);
   const parsedMapLibreConfig = JSON.parse(maplibreConfig);
   const parsedRootConfig = JSON.parse(rootConfig);

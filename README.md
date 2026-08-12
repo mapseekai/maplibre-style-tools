@@ -188,6 +188,76 @@ The six document source routes remain exact and non-overlapping:
 
 String-encoded JSON fields such as `operationsJson`, `filterJson`, and `sourceJson` remain supported for compatibility but are deprecated. Prefer the structured transaction and structured tool inputs: they preserve types, avoid double encoding, and fail unknown keys at the outer schema before a handler or Map is invoked.
 
+## Command-line interface
+
+The installed package provides the `maplibre-style` binary. It validates and
+inspects styles without network access and applies the same strict core
+transactions used by the library:
+
+```bash
+maplibre-style --help
+maplibre-style validate style.json
+maplibre-style inspect style.json --query road
+maplibre-style inspect style.json --type line --source basemap --source-layer transportation
+maplibre-style inspect style.json --layer road-primary
+maplibre-style inspect style.json --source-id basemap
+maplibre-style inspect style.json --source-layers
+maplibre-style inspect style.json --analyze-geojson points
+maplibre-style apply style.json --operations operations.json --dry-run
+maplibre-style apply style.json --operations operations.json --output next-style.json
+maplibre-style apply style.json --operations operations.json --in-place --backup
+```
+
+Use `-` in place of either the Style path or the operations path to read that
+input from stdin. A single invocation cannot read both inputs from stdin.
+Stdout contains exactly one JSON value while the stream remains writable,
+including the `--help` envelope; diagnostics go to stderr. Exit codes are `0`
+for success, `1` for a valid request rejected by Style or transaction
+semantics, `2` for arguments/input/JSON errors, and `3` for output or internal
+failures.
+
+Apply does not mutate the input unless `--in-place` is explicit. `--dry-run`
+only reports the candidate, and `--output` creates a new file exclusively—it
+will not overwrite an existing path. In-place writes use an exclusive
+same-directory temporary file, sync it, rename it over the input, then sync the
+directory. `--backup` creates non-overwriting `<STYLE>.bak`; a pre-existing
+backup is never replaced or removed.
+
+Both `--output` and the installed in-place candidate are compact
+`JSON.stringify(style)` bytes with no trailing newline. Consequently, a Style
+accepted by core at the exact 5 MiB boundary remains readable by the CLI. A
+backup preserves the exact original bounded input bytes from the descriptor
+that supplied the parsed Style; it is neither reserialized nor reread through
+a pathname that might have raced.
+
+In-place identity checks compare that original descriptor with the path before
+replacement. They are best-effort across the final `lstat`-to-`rename`
+interval. An invocation-created backup is removed after a pre-commit failure so
+a retry is not blocked, while a backup that existed before the invocation is
+never removed.
+
+| State | File bytes | Stdout | Stderr | Exit |
+| --- | --- | --- | --- | ---: |
+| Pre-commit filesystem failure | Original/no new output | Untouched | Ordinary output error; no `File committed` | 3 |
+| Post-rename directory durability failure | New | Committed-state JSON if writable; otherwise untrusted | Durability diagnostic, with explicit committed fallback if stdout failed | 3 |
+| Fully committed file, then stdout result failure | New | Untrusted; never retried | `File committed` diagnostic | 3 |
+
+A committed-state JSON result containing
+`{"committed":true,"durable":false,...}` means the new Style is installed but
+directory sync failed. If that acknowledgement cannot be written and stderr is
+writable, stderr explicitly reports the committed, durability-uncertain state.
+Likewise, if either `--output` or `--in-place` commits and only the later result
+write fails, the file remains changed and stderr reports that it was committed.
+In either committed branch, exit `3` is not proof that no file was written;
+callers must inspect the destination and must not blindly retry.
+
+A stdout transport failure may leave stdout empty or partially written and
+therefore unparseable; stderr is the only possible reporting channel in that
+branch. Each write owns a temporary Writable `error` listener. EPIPE and
+already-closed streams select exit `3`, and stderr reporting is best-effort: if
+stderr is closed too, the CLI preserves the selected exit code without an
+uncaught error.
+
 ## Development
 
 ```bash

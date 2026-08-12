@@ -29,6 +29,9 @@
       "default": "./dist/ai-sdk/index.js"
     }
   },
+  "bin": {
+    "maplibre-style": "./dist/cli/main.js"
+  },
   "files": [
     "dist"
   ],
