@@ -73,7 +73,17 @@ export type SetLayerPropertiesOperation = {
   minzoom?: number | null;
   maxzoom?: number | null;
 };
-export type StyleOperation = SetLayerPropertiesOperation;
+export type Placement = {
+  beforeId?: string;
+  afterId?: string;
+};
+export type SetStyleRootPropertiesOperation = {
+  op: 'setStyleRootProperties';
+  properties: JsonObject;
+};
+export type StyleOperation =
+  | SetLayerPropertiesOperation
+  | SetStyleRootPropertiesOperation;
 export type StyleTransaction = {
   operations: StyleOperation[];
   validate?: boolean;

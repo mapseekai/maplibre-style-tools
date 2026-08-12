@@ -2,6 +2,7 @@ import { diffStyleDocuments } from './diff.js';
 import { createStyleToolError } from './errors.js';
 import { toJsonPointer } from './json-pointer.js';
 import { applySetLayerProperties } from './operations/layers.js';
+import { applyRootOperation } from './operations/root.js';
 import { createStyleTransactionSchema } from './schemas.js';
 import type {
   CoreExecutionLimits,
@@ -317,7 +318,7 @@ function assertNever(value: never): never {
 }
 
 type HandledStyleOperation = Extract<
-  StyleOperation, { op: 'setLayerProperties' }
+  StyleOperation, { op: 'setLayerProperties' | 'setStyleRootProperties' }
 >;
 type UnhandledStyleOperation = Exclude<StyleOperation, HandledStyleOperation>;
 
@@ -329,6 +330,8 @@ function applyOperation(
   switch (operation.op) {
     case 'setLayerProperties':
       return applySetLayerProperties(style, operation, context);
+    case 'setStyleRootProperties':
+      return applyRootOperation(style, operation, context);
     default:
       return assertNever(operation as UnhandledStyleOperation);
   }

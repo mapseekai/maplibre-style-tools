@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  JsonPrimitive, JsonValue, SetLayerPropertiesOperation, StyleOperation,
-  StyleTransaction,
+  JsonPrimitive, JsonValue, SetLayerPropertiesOperation,
+  SetStyleRootPropertiesOperation, StyleOperation, StyleTransaction,
 } from './types.js';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -32,12 +32,7 @@ type SnapshotWork = { source: object; target: JsonContainer };
 type SnapshotResult =
   | { success: true; value: JsonValue }
   | { success: false };
-type SanitizedIssue = {
-  code: 'custom';
-  message: string;
-  path: (string | number)[];
-  params: { [key: string]: JsonValue };
-};
+type SanitizedIssue = z.core.$ZodIssue;
 type SanitizedCheck = (value: JsonValue) => SanitizedIssue | undefined;
 type FallbackValidator = (value: JsonValue) => JsonValue | undefined;
 type FallbackIssue = (value: JsonValue) => z.core.$ZodIssue | undefined;
@@ -262,8 +257,10 @@ function fallbackStyleDocumentIssue(value: JsonValue): z.core.$ZodIssue | undefi
 const OPERATION_KEYS = new Set([
   'op', 'layerId', 'paint', 'layout', 'metadata', 'minzoom', 'maxzoom',
 ]);
+const ROOT_OPERATION_KEYS = new Set(['op', 'properties']);
+const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
 
-function fallbackOperation(value: JsonValue): JsonValue | undefined {
+function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
   if (!isJsonObject(value) || !hasOnlyKeys(value, OPERATION_KEYS)) return undefined;
   if (ownValue(value, 'op') !== 'setLayerProperties') return undefined;
   const layerId = ownValue(value, 'layerId');
@@ -281,7 +278,20 @@ function fallbackOperation(value: JsonValue): JsonValue | undefined {
   return value;
 }
 
-function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
+function fallbackRootOperation(value: JsonValue): JsonValue | undefined {
+  if (!isJsonObject(value) || !hasOnlyKeys(value, ROOT_OPERATION_KEYS)) return undefined;
+  if (ownValue(value, 'op') !== 'setStyleRootProperties') return undefined;
+  const properties = ownValue(value, 'properties');
+  if (!isJsonObject(properties)) return undefined;
+  if (Object.keys(properties).some((key) => PROTECTED_ROOT_KEYS.has(key))) return undefined;
+  return value;
+}
+
+function fallbackOperation(value: JsonValue): JsonValue | undefined {
+  return fallbackSetLayerOperation(value) ?? fallbackRootOperation(value);
+}
+
+function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
   if (isJsonObject(value) && ownValue(value, 'op') !== 'setLayerProperties') {
     const issue: z.core.$ZodIssue = {
       code: 'invalid_union', errors: [], path: ['op'],
@@ -299,6 +309,14 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     return issue;
   }
   return undefined;
+}
+
+function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  return operation === 'setLayerProperties' || operation === 'setStyleRootProperties'
+    ? undefined
+    : fallbackSetLayerOperationIssue(value);
 }
 
 function fallbackTransaction(maxOperations: number): FallbackValidator {
@@ -414,7 +432,7 @@ function sanitizeBefore<Schema extends z.ZodType>(
     }
     const issue = check?.(result.value);
     if (issue !== undefined) {
-      context.addIssue(issue);
+      context.addIssue(issue as Parameters<typeof context.addIssue>[0]);
       return z.NEVER;
     }
     return result.value;
@@ -461,16 +479,43 @@ const setLayerPropertiesOperationInnerSchema = z.object({
 }) satisfies z.ZodType<SetLayerPropertiesOperation>;
 
 export const setLayerPropertiesOperationSchema = sanitizeBefore(
-  setLayerPropertiesOperationInnerSchema, undefined, fallbackOperation, fallbackOperationIssue,
+  setLayerPropertiesOperationInnerSchema,
+  undefined,
+  fallbackSetLayerOperation,
+  fallbackSetLayerOperationIssue,
+);
+
+const setStyleRootPropertiesOperationInnerSchema = z.object({
+  op: z.literal('setStyleRootProperties'),
+  properties: jsonObjectInnerSchema,
+}).strict().refine((operation) => (
+  Object.keys(operation.properties).every((key) => !PROTECTED_ROOT_KEYS.has(key))
+), {
+  message: 'Root style properties cannot include version, sources, or layers',
+  path: ['properties'],
+}) satisfies z.ZodType<SetStyleRootPropertiesOperation>;
+
+export const setStyleRootPropertiesOperationSchema = sanitizeBefore(
+  setStyleRootPropertiesOperationInnerSchema,
+  undefined,
+  fallbackRootOperation,
 );
 
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
+  setStyleRootPropertiesOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
+type StyleOperationSchemaOutput = StyleOperation & Pick<
+  SetLayerPropertiesOperation, 'paint'
+>;
+
 export const styleOperationSchema = sanitizeBefore(
-  styleOperationInnerSchema, undefined, fallbackOperation, fallbackOperationIssue,
-);
+  styleOperationInnerSchema,
+  fallbackOperationIssue,
+  fallbackOperation,
+  fallbackOperationIssue,
+) as z.ZodType<StyleOperationSchemaOutput>;
 
 export function createStyleTransactionSchema(maxOperations = DEFAULT_MAX_OPERATIONS) {
   if (!Number.isSafeInteger(maxOperations) || maxOperations <= 0) {

@@ -8,7 +8,9 @@ export type {
   LayerSummary,
   OperationApplyResult,
   OperationContext,
+  Placement,
   SetLayerPropertiesOperation,
+  SetStyleRootPropertiesOperation,
   StyleDiffEntry,
   StyleDiffTarget,
   StyleDocument,
@@ -45,6 +47,7 @@ export {
   createStyleTransactionSchema,
   jsonValueSchema,
   setLayerPropertiesOperationSchema,
+  setStyleRootPropertiesOperationSchema,
   styleDocumentSchema,
   styleOperationSchema,
   styleTransactionSchema,
@@ -52,6 +55,8 @@ export {
 export { validateStyleDocument } from './validation.js';
 export { buildStyleContext } from './context.js';
 export { searchLayers } from './search.js';
+export { applyRootOperation } from './operations/root.js';
+export { applyMergePatch, resolveInsertionIndex } from './operations/shared.js';
 export {
   applyStyleTransaction,
   finalizeStyleReplacement,
