@@ -1,4 +1,6 @@
 import type {
+  JsonObject,
+  JsonValue,
   StyleDocument,
   StyleReplacementOptions,
   StyleToolError,
@@ -6,6 +8,47 @@ import type {
   StyleTransactionResult,
   StyleWarning,
 } from '../../core/types.js';
+
+export interface FeatureQueryLimits {
+  maxFeatures: number;
+  maxSerializedBytes: number;
+}
+
+export type ScreenPoint = [number, number];
+export type ScreenBounds = [ScreenPoint, ScreenPoint];
+
+export interface FeatureProjectionInput {
+  propertyAllowlist?: string[];
+  limit?: number;
+  maxSerializedBytes?: number;
+}
+
+export interface SourceFeatureQueryInput extends FeatureProjectionInput {
+  sourceId: string;
+  sourceLayer?: string;
+  filter?: JsonValue[];
+}
+
+export type RenderedFeatureQueryGeometry =
+  | { kind: 'viewport' }
+  | { kind: 'point'; point: ScreenPoint }
+  | { kind: 'bounds'; bounds: ScreenBounds };
+
+export type RenderedFeatureQueryInput = FeatureProjectionInput & {
+  geometry?: RenderedFeatureQueryGeometry;
+  layerIds?: string[];
+  filter?: JsonValue[];
+};
+
+export interface BoundedFeatureQueryResult {
+  ok: boolean;
+  features: JsonObject[];
+  returned: number;
+  truncated: boolean;
+  serializedBytes: number;
+  warnings: StyleWarning[];
+  error?: StyleToolError;
+}
 
 export interface MapOperationDeadline {
   expiresAt: number;
