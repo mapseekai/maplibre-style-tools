@@ -1,4 +1,5 @@
 export type {
+  AddLayerFromSourceOperation,
   AddSourceOperation,
   CoreExecutionLimits,
   DuplicateLayerOperation,
@@ -91,6 +92,7 @@ export {
   utf8ByteLength,
 } from './utf8.js';
 export {
+  addLayerFromSourceOperationSchema,
   addSourceOperationSchema,
   duplicateLayerOperationSchema,
   createStyleTransactionSchema,

@@ -248,11 +248,25 @@ export type RemoveLayerOperation = {
   op: 'removeLayer';
   layerId: string;
 };
+export type AddLayerFromSourceOperation = Placement & {
+  op: 'addLayerFromSource';
+  layerId: string;
+  sourceId: string;
+  sourceLayer?: string;
+  type: string;
+  paint?: JsonObject;
+  layout?: JsonObject;
+  filter?: JsonValue[];
+  minzoom?: number;
+  maxzoom?: number;
+  metadata?: JsonObject;
+};
 export type LayerLifecycleOperation =
   | DuplicateLayerOperation
   | MoveLayerOperation
   | ReorderLayersOperation
-  | RemoveLayerOperation;
+  | RemoveLayerOperation
+  | AddLayerFromSourceOperation;
 export type SetStyleRootPropertiesOperation = {
   op: 'setStyleRootProperties';
   properties: JsonObject;

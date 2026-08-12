@@ -24,6 +24,15 @@ const duplicateLayerJsonContract = {
   beforeId: 'labels',
 } satisfies StyleOperation;
 
+const addLayerFromSourceJsonContract = {
+  op: 'addLayerFromSource',
+  layerId: 'roads',
+  sourceId: 'basemap',
+  sourceLayer: 'transportation',
+  type: 'line',
+  beforeId: 'labels',
+} satisfies StyleOperation;
+
 type AssertTrue<T extends true> = T;
 type StyleOperationIsJsonObject = AssertTrue<
   StyleOperation extends JsonObject ? true : false
@@ -35,4 +44,5 @@ it('keeps every StyleOperation variant JSON-backed', () => {
   assert.equal(setLayerFilterJsonContract.op, 'setLayerFilter');
   assert.equal(addSourceJsonContract.op, 'addSource');
   assert.equal(duplicateLayerJsonContract.op, 'duplicateLayer');
+  assert.equal(addLayerFromSourceJsonContract.op, 'addLayerFromSource');
 });

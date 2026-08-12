@@ -271,6 +271,92 @@ function removeLayer(
   return { ok: true, changed: true };
 }
 
+const SOURCE_LAYER_FORBIDDEN_TYPES = new Set([
+  'geojson', 'raster', 'raster-dem', 'image', 'video',
+]);
+
+function addLayerFromSource(
+  style: StyleDocument,
+  operation: Extract<LayerLifecycleOperation, { op: 'addLayerFromSource' }>,
+  context: OperationContext,
+): OperationApplyResult {
+  if (style.layers.some((layer) => layer.id === operation.layerId)) {
+    return {
+      ok: false,
+      error: createStyleToolError(
+        'CONFLICT',
+        `Layer "${operation.layerId}" already exists.`,
+        '/layerId',
+        { layerId: operation.layerId },
+      ),
+    };
+  }
+  if (!Object.hasOwn(style.sources, operation.sourceId)) {
+    return {
+      ok: false,
+      error: createStyleToolError(
+        'NOT_FOUND',
+        `Source "${operation.sourceId}" was not found.`,
+        '/sourceId',
+        { sourceId: operation.sourceId },
+      ),
+    };
+  }
+  const placementFailure = placementError(operation);
+  if (placementFailure !== undefined) return placementFailure;
+
+  const source = style.sources[operation.sourceId]!;
+  const sourceType = typeof source.type === 'string' ? source.type : 'unknown';
+  if (sourceType === 'vector'
+    && (operation.sourceLayer === undefined || operation.sourceLayer.trim().length === 0)) {
+    return invalidInput(
+      `Vector source "${operation.sourceId}" requires a non-empty sourceLayer.`,
+      '/sourceLayer',
+      { sourceId: operation.sourceId, sourceType },
+    );
+  }
+  if (SOURCE_LAYER_FORBIDDEN_TYPES.has(sourceType)
+    && operation.sourceLayer !== undefined) {
+    return invalidInput(
+      `Source type "${sourceType}" does not support sourceLayer.`,
+      '/sourceLayer',
+      { sourceId: operation.sourceId, sourceType },
+    );
+  }
+
+  const insertion = resolveLayerInsertionIndex(
+    style.layers,
+    operation,
+    style.layers.length,
+  );
+  if (typeof insertion !== 'number') return insertion;
+
+  const layer = {
+    id: operation.layerId,
+    source: operation.sourceId,
+    type: operation.type,
+  } as StyleLayer;
+  if (sourceType === 'vector') layer['source-layer'] = operation.sourceLayer!;
+  for (const field of [
+    'paint', 'layout', 'filter', 'minzoom', 'maxzoom', 'metadata',
+  ] as const) {
+    if (!Object.hasOwn(operation, field)) continue;
+    const value = operation[field];
+    if (value !== undefined) {
+      Reflect.defineProperty(layer, field, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+      });
+    }
+  }
+
+  style.layers.splice(insertion, 0, layer);
+  context.changedLayerIds.add(operation.layerId);
+  return { ok: true, changed: true };
+}
+
 function assertNever(value: never): never {
   throw new Error(`Unhandled layer lifecycle operation: ${JSON.stringify(value)}`);
 }
@@ -289,6 +375,8 @@ export function applyLayerOperation(
       return reorderLayers(style, operation, context);
     case 'removeLayer':
       return removeLayer(style, operation, context);
+    case 'addLayerFromSource':
+      return addLayerFromSource(style, operation, context);
     default:
       return assertNever(operation);
   }

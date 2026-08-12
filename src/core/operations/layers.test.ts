@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { replayStyleDiff } from '../diff.js';
 import {
+  addLayerFromSourceOperationSchema,
   duplicateLayerOperationSchema,
   moveLayerOperationSchema,
   removeLayerOperationSchema,
@@ -13,6 +14,7 @@ import {
   DEFAULT_MAX_DIFF_BYTES, DEFAULT_MAX_OPERATIONS, DEFAULT_MAX_STYLE_BYTES,
 } from '../utf8.js';
 import type {
+  AddLayerFromSourceOperation,
   CoreExecutionLimits,
   JsonObject,
   JsonValue,
@@ -51,6 +53,44 @@ function makeStyle(ids: readonly string[] = ['a', 'b', 'c', 'd', 'e']): StyleDoc
     version: 8,
     sources: {},
     layers: ids.map((id) => ({ id, type: 'background' })),
+  };
+}
+
+function makeSourceStyle(): StyleDocument {
+  const coordinates: [number, number][] = [[0, 1], [1, 1], [1, 0], [0, 0]];
+  return {
+    version: 8,
+    sources: {
+      vector: {
+        type: 'vector',
+        tiles: ['https://example.test/vector/{z}/{x}/{y}.pbf'],
+      },
+      geo: {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      },
+      raster: {
+        type: 'raster',
+        tiles: ['https://example.test/raster/{z}/{x}/{y}.png'],
+        tileSize: 256,
+      },
+      dem: {
+        type: 'raster-dem',
+        tiles: ['https://example.test/dem/{z}/{x}/{y}.png'],
+        encoding: 'terrarium',
+      },
+      image: {
+        type: 'image',
+        url: 'https://example.test/image.png',
+        coordinates,
+      },
+      video: {
+        type: 'video',
+        urls: ['https://example.test/video.mp4'],
+        coordinates: structuredClone(coordinates),
+      },
+    },
+    layers: [{ id: 'background', type: 'background' }],
   };
 }
 
@@ -775,4 +815,389 @@ test('removeLayer returns NOT_FOUND before mutation', () => {
     op: 'removeLayer', layerId: 'missing',
   }, 'NOT_FOUND');
   if (!result.ok) assert.equal(result.error.path, '/layerId');
+});
+
+test('addLayerFromSource parses and creates a vector layer with an exact replayable diff', () => {
+  const style = makeSourceStyle();
+  const operation = {
+    op: 'addLayerFromSource',
+    layerId: 'roads/main~casing',
+    sourceId: 'vector',
+    sourceLayer: 'transportation',
+    type: 'line',
+  };
+
+  assert.equal(styleOperationSchema.safeParse(operation).success, true);
+  const result = applyStyleTransaction(style, { operations: [operation] });
+  assert.equal(result.ok, true);
+  const expected = {
+    id: 'roads/main~casing',
+    source: 'vector',
+    'source-layer': 'transportation',
+    type: 'line',
+  };
+  assert.deepEqual(result.style.layers, [
+    { id: 'background', type: 'background' },
+    expected,
+  ]);
+  assert.deepEqual(result.changedLayers, ['roads/main~casing']);
+  assert.deepEqual(result.changedSources, []);
+  assert.deepEqual(result.diff, [{
+    op: 'add', path: '/layers/1', after: expected,
+    target: { kind: 'layer', id: 'roads/main~casing' },
+  }]);
+  assertReplay(style, result);
+});
+
+test('addLayerFromSource accepts canonical vector, GeoJSON, raster, and DEM combinations', () => {
+  const fixtures = [
+    {
+      operation: {
+        op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+        sourceLayer: 'transportation', type: 'line',
+      },
+      expected: {
+        id: 'roads', source: 'vector', 'source-layer': 'transportation', type: 'line',
+      },
+    },
+    {
+      operation: {
+        op: 'addLayerFromSource', layerId: 'points', sourceId: 'geo', type: 'circle',
+      },
+      expected: { id: 'points', source: 'geo', type: 'circle' },
+    },
+    {
+      operation: {
+        op: 'addLayerFromSource', layerId: 'imagery', sourceId: 'raster', type: 'raster',
+      },
+      expected: { id: 'imagery', source: 'raster', type: 'raster' },
+    },
+    {
+      operation: {
+        op: 'addLayerFromSource', layerId: 'terrain', sourceId: 'dem', type: 'hillshade',
+      },
+      expected: { id: 'terrain', source: 'dem', type: 'hillshade' },
+    },
+  ] as const;
+
+  for (const { operation, expected } of fixtures) {
+    const style = makeSourceStyle();
+    const result = applyStyleTransaction(style, { operations: [operation] });
+    assert.equal(result.ok, true, operation.layerId);
+    assert.deepEqual(result.style.layers.at(-1), expected);
+    assert.deepEqual(result.changedLayers, [operation.layerId]);
+    assert.deepEqual(result.changedSources, []);
+    assertReplay(style, result);
+  }
+});
+
+test('addLayerFromSource enforces actionable source-layer preconditions', () => {
+  for (const sourceLayer of [undefined, '', ' \t'] as const) {
+    const style = makeSourceStyle();
+    const operation = {
+      op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+      type: 'line', ...(sourceLayer === undefined ? {} : { sourceLayer }),
+    };
+    const result = assertAtomicFailure(style, operation, 'INVALID_INPUT');
+    if (!result.ok) {
+      assert.match(result.error.path ?? '', /sourceLayer$/);
+    }
+  }
+
+  for (const sourceId of ['geo', 'raster', 'dem', 'image', 'video'] as const) {
+    const style = makeSourceStyle();
+    const result = assertAtomicFailure(style, {
+      op: 'addLayerFromSource', layerId: `${sourceId}-layer`, sourceId,
+      sourceLayer: 'forbidden', type: sourceId === 'dem' ? 'hillshade' : 'raster',
+    }, 'INVALID_INPUT');
+    if (!result.ok) {
+      assert.equal(result.error.path, '/sourceLayer');
+      assert.deepEqual(result.error.details, {
+        sourceId,
+        sourceType: sourceId === 'geo' ? 'geojson'
+          : sourceId === 'dem' ? 'raster-dem'
+            : sourceId,
+      });
+    }
+  }
+});
+
+test('addLayerFromSource rejects missing sources and layer ID collisions before mutation', () => {
+  const missingStyle = makeSourceStyle();
+  const missing = assertAtomicFailure(missingStyle, {
+    op: 'addLayerFromSource', layerId: 'new', sourceId: 'missing', type: 'line',
+  }, 'NOT_FOUND');
+  if (!missing.ok) {
+    assert.equal(missing.error.path, '/sourceId');
+    assert.deepEqual(missing.error.details, { sourceId: 'missing' });
+  }
+
+  const collisionStyle = makeSourceStyle();
+  const collision = assertAtomicFailure(collisionStyle, {
+    op: 'addLayerFromSource', layerId: 'background', sourceId: 'geo', type: 'circle',
+  }, 'CONFLICT');
+  if (!collision.ok) {
+    assert.equal(collision.error.path, '/layerId');
+    assert.deepEqual(collision.error.details, { layerId: 'background' });
+  }
+});
+
+test('addLayerFromSource preserves exact sanitized field snapshots and default placement', () => {
+  const style = makeSourceStyle();
+  const paint: JsonObject = { 'line-color': '#123456', 'line-width': 3 };
+  const layout: JsonObject = { 'line-cap': 'round', visibility: 'none' };
+  const filter: JsonValue[] = ['==', 'class', 'primary'];
+  const metadata: JsonObject = { owner: 'maps', nested: { reviewed: true } };
+  const result = applyStyleTransaction(style, { operations: [{
+    op: 'addLayerFromSource',
+    layerId: 'primary-roads',
+    sourceId: 'vector',
+    sourceLayer: 'transportation',
+    type: 'line',
+    paint,
+    layout,
+    filter,
+    minzoom: 3,
+    maxzoom: 17,
+    metadata,
+  }] });
+  const expected = {
+    id: 'primary-roads',
+    source: 'vector',
+    'source-layer': 'transportation',
+    type: 'line',
+    paint,
+    layout,
+    filter,
+    minzoom: 3,
+    maxzoom: 17,
+    metadata,
+  };
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.style.layers.at(-1), expected);
+  assert.notStrictEqual(result.style.layers.at(-1)?.paint, paint);
+  assert.notStrictEqual(result.style.layers.at(-1)?.layout, layout);
+  assert.notStrictEqual(result.style.layers.at(-1)?.filter, filter);
+  assert.notStrictEqual(result.style.layers.at(-1)?.metadata, metadata);
+  assert.deepEqual(result.diff, [{
+    op: 'add', path: '/layers/1', after: expected,
+    target: { kind: 'layer', id: 'primary-roads' },
+  }]);
+  paint['line-color'] = '#ffffff';
+  layout.visibility = 'visible';
+  filter[1] = 'mutated';
+  metadata.owner = 'mutated';
+  assert.equal(result.style.layers.at(-1)?.paint?.['line-color'], '#123456');
+  assert.equal(result.style.layers.at(-1)?.layout?.visibility, 'none');
+  assert.equal((result.style.layers.at(-1)?.filter as JsonValue[] | undefined)?.[1], 'class');
+  assert.equal((result.style.layers.at(-1)?.metadata as JsonObject | undefined)?.owner, 'maps');
+  assertReplay(style, result);
+});
+
+test('addLayerFromSource supports before and after placement and rejects invalid placement', () => {
+  const beforeStyle = makeSourceStyle();
+  beforeStyle.layers.push({ id: 'labels', type: 'background' });
+  const before = applyStyleTransaction(beforeStyle, { operations: [{
+    op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+    sourceLayer: 'transportation', type: 'line', beforeId: 'labels',
+  }] });
+  assert.equal(before.ok, true);
+  assert.deepEqual(before.style.layers.map(({ id }) => id), ['background', 'roads', 'labels']);
+  assert.equal(before.diff[0]?.path, '/layers/1');
+  assertReplay(beforeStyle, before);
+
+  const afterStyle = makeSourceStyle();
+  const after = applyStyleTransaction(afterStyle, { operations: [{
+    op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+    sourceLayer: 'transportation', type: 'line', afterId: 'background',
+  }] });
+  assert.equal(after.ok, true);
+  assert.deepEqual(after.style.layers.map(({ id }) => id), ['background', 'roads']);
+  assertReplay(afterStyle, after);
+
+  for (const [operation, expectedPath] of [
+    [{
+      op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+      sourceLayer: 'transportation', type: 'line', beforeId: 'missing',
+    }, '/beforeId'],
+    [{
+      op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+      sourceLayer: 'transportation', type: 'line',
+      beforeId: 'background', afterId: 'background',
+    }, '/operations/0/afterId'],
+  ] as const) {
+    const style = makeSourceStyle();
+    const result = assertAtomicFailure(style, operation, expectedPath.includes('operations')
+      ? 'INVALID_INPUT'
+      : 'NOT_FOUND');
+    if (!result.ok) assert.equal(result.error.path, expectedPath);
+  }
+});
+
+test('addLayerFromSource defers full source and paint compatibility to canonical validation', () => {
+  for (const operation of [
+    {
+      op: 'addLayerFromSource', layerId: 'wrong-source', sourceId: 'raster', type: 'line',
+    },
+    {
+      op: 'addLayerFromSource', layerId: 'wrong-paint', sourceId: 'vector',
+      sourceLayer: 'transportation', type: 'line', paint: { 'fill-color': '#fff' },
+    },
+  ]) {
+    const style = makeSourceStyle();
+    const result = assertAtomicFailure(style, operation, 'STYLE_INVALID');
+    assert.strictEqual(result.style, style);
+  }
+});
+
+test('addLayerFromSource schema is strict, descriptor-safe, and authority-key closed', () => {
+  const valid: AddLayerFromSourceOperation = {
+    op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+    sourceLayer: 'transportation', type: 'line', beforeId: 'labels',
+  };
+  assert.equal(addLayerFromSourceOperationSchema.safeParse(valid).success, true);
+  assert.equal(styleOperationSchema.safeParse(valid).success, true);
+  for (const extra of [
+    { unknown: true },
+    { id: 'stolen' },
+    { source: 'stolen' },
+    { extension: { id: 'stolen', source: 'stolen' } },
+  ]) {
+    const operation = { ...valid, ...extra };
+    assert.equal(addLayerFromSourceOperationSchema.safeParse(operation).success, false);
+    assert.equal(styleOperationSchema.safeParse(operation).success, false);
+    assertAtomicFailure(makeSourceStyle(), operation, 'INVALID_INPUT');
+  }
+
+  const cyclic: Record<string, unknown> = { ...valid, paint: {} };
+  (cyclic.paint as Record<string, unknown>).self = cyclic.paint;
+  const dangerous = {
+    ...valid,
+    paint: JSON.parse('{"__proto__":{"polluted":true}}') as JsonObject,
+  };
+  class Exotic { readonly value = true; }
+  let getterCalls = 0;
+  const accessor: Record<string, unknown> = { ...valid };
+  Object.defineProperty(accessor, 'paint', {
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('must not run'); },
+  });
+  for (const operation of [cyclic, dangerous, { ...valid, paint: new Exotic() }, accessor]) {
+    assert.equal(addLayerFromSourceOperationSchema.safeParse(operation).success, false);
+    assert.equal(styleOperationSchema.safeParse(operation).success, false);
+    assertAtomicFailure(makeSourceStyle(), operation, 'INVALID_INPUT');
+  }
+  assert.equal(getterCalls, 0);
+  assert.equal(Object.hasOwn(Object.prototype, 'polluted'), false);
+});
+
+test('addLayerFromSource polluted fallback matches clean nonblank lifecycle contracts', () => {
+  const fixtures = [
+    { field: 'layerId', value: ' \t' },
+    { field: 'sourceId', value: '\n' },
+    { field: 'sourceLayer', value: ' ' },
+    { field: 'type', value: '\t' },
+    { field: 'beforeId', value: '\n' },
+    { field: 'afterId', value: ' ' },
+  ] as const;
+  const base = {
+    op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector',
+    sourceLayer: 'transportation', type: 'line',
+  } as const;
+  const cleanIssues = fixtures.map(({ field, value }) => {
+    const result = addLayerFromSourceOperationSchema.safeParse({ ...base, [field]: value });
+    assert.equal(result.success, false);
+    if (result.success) assert.fail('expected clean whitespace rejection');
+    assert.deepEqual(result.error.issues, [{
+      code: 'custom', path: [field], message: 'Expected a non-empty string',
+    }]);
+    return result.error.issues;
+  });
+
+  const key = 'addLayerFromSourceFallbackProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  try {
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true, value: true, writable: true,
+    });
+    assert.equal(addLayerFromSourceOperationSchema.safeParse(base).success, true);
+    assert.equal(styleOperationSchema.safeParse(base).success, true);
+    for (let index = 0; index < fixtures.length; index += 1) {
+      const { field, value } = fixtures[index]!;
+      const operation = { ...base, [field]: value };
+      const direct = addLayerFromSourceOperationSchema.safeParse(operation);
+      const union = styleOperationSchema.safeParse(operation);
+      assert.equal(direct.success, false);
+      assert.equal(union.success, false);
+      if (direct.success || union.success) assert.fail('expected polluted whitespace rejection');
+      assert.deepEqual(direct.error.issues, cleanIssues[index]);
+      assert.deepEqual(union.error.issues, cleanIssues[index]);
+      const transaction = assertAtomicFailure(makeSourceStyle(), operation, 'INVALID_INPUT');
+      if (!transaction.ok) {
+        assert.equal(transaction.error.path, `/operations/0/${field}`);
+      }
+    }
+  } finally {
+    if (originalDescriptor === undefined) Reflect.deleteProperty(Object.prototype, key);
+    else Object.defineProperty(Object.prototype, key, originalDescriptor);
+  }
+});
+
+test('addLayerFromSource handles 20k-deep JSON fields without stack overflow', () => {
+  const style = makeSourceStyle();
+  const deep = makeDeepJsonObject(DEEP_JSON_DEPTH, 'leaf');
+  const result = applyStyleTransaction(style, {
+    validate: false,
+    operations: [{
+      op: 'addLayerFromSource', layerId: 'deep', sourceId: 'vector',
+      sourceLayer: 'transportation', type: 'line', paint: { extension: deep },
+    }],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail('expected deep layer creation success');
+  assertDeepJsonObject(result.style.layers.at(-1)?.paint?.extension, DEEP_JSON_DEPTH, 'leaf');
+  assertDeepJsonObject(
+    ((result.diff[0]?.after as JsonObject | undefined)?.paint as JsonObject | undefined)?.extension,
+    DEEP_JSON_DEPTH,
+    'leaf',
+  );
+  const replayed = replayStyleDiff(style, result.diff);
+  assert.deepEqual(replayed.layers.map(({ id }) => id), ['background', 'deep']);
+  assertDeepJsonObject(replayed.layers.at(-1)?.paint?.extension, DEEP_JSON_DEPTH, 'leaf');
+});
+
+test('addLayerFromSource reads no source metadata beyond the source object type', () => {
+  let metadataReads = 0;
+  const source = new Proxy({ type: 'vector' }, {
+    get(target, property, receiver) {
+      if (property !== 'type') {
+        metadataReads += 1;
+        throw new Error(`unexpected source metadata read: ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const style = {
+    version: 8,
+    sources: { vector: source },
+    layers: [],
+  } as unknown as StyleDocument;
+  const context = makeContext();
+  const operation = {
+    op: 'addLayerFromSource', layerId: 'authoritative', sourceId: 'vector',
+    sourceLayer: 'transportation', type: 'line',
+    id: 'stolen', source: 'stolen', extension: { id: 'also-stolen' },
+  } as unknown as AddLayerFromSourceOperation;
+  const result = applyLayerOperation(style, operation, context);
+
+  assert.deepEqual(result, { ok: true, changed: true });
+  assert.equal(metadataReads, 0);
+  assert.deepEqual(style.layers, [{
+    id: 'authoritative', source: 'vector',
+    'source-layer': 'transportation', type: 'line',
+  }]);
+  assert.deepEqual([...context.changedLayerIds], ['authoritative']);
+  assert.deepEqual([...context.changedSourceIds], []);
 });

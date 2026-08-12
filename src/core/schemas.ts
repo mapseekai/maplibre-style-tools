@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
-  AddSourceOperation, DuplicateLayerOperation, DuplicateSourceOperation,
+  AddLayerFromSourceOperation, AddSourceOperation,
+  DuplicateLayerOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
   InlineGeoJson, JsonPrimitive, JsonValue,
   LayerLifecycleOperation, ListSourceLayersOptions,
@@ -336,6 +337,11 @@ const REORDER_LAYERS_OPERATION_KEYS = new Set([
   'op', 'layerIds', 'beforeId', 'afterId',
 ]);
 const REMOVE_LAYER_OPERATION_KEYS = new Set(['op', 'layerId']);
+const ADD_LAYER_FROM_SOURCE_OPERATION_KEYS = new Set([
+  'op', 'layerId', 'sourceId', 'sourceLayer', 'type',
+  'paint', 'layout', 'filter', 'minzoom', 'maxzoom', 'metadata',
+  'beforeId', 'afterId',
+]);
 const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
 
 function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
@@ -494,6 +500,31 @@ function fallbackLayerLifecycleOperation(
     case 'removeLayer':
       return hasOnlyKeys(value, REMOVE_LAYER_OPERATION_KEYS)
         && validLayerLifecycleId(ownValue(value, 'layerId')) ? value : undefined;
+    case 'addLayerFromSource': {
+      if (!hasOnlyKeys(value, ADD_LAYER_FROM_SOURCE_OPERATION_KEYS)
+        || !validLayerLifecycleId(ownValue(value, 'layerId'))
+        || !validLayerLifecycleId(ownValue(value, 'sourceId'))
+        || !validLayerLifecycleId(ownValue(value, 'type'))) return undefined;
+      const sourceLayer = ownValue(value, 'sourceLayer');
+      if (sourceLayer !== undefined && !validLayerLifecycleId(sourceLayer)) return undefined;
+      for (const field of ['paint', 'layout', 'metadata'] as const) {
+        const fieldValue = ownValue(value, field);
+        if (fieldValue !== undefined && !isJsonObject(fieldValue)) return undefined;
+      }
+      const filter = ownValue(value, 'filter');
+      if (filter !== undefined && !Array.isArray(filter)) return undefined;
+      const minzoom = ownValue(value, 'minzoom');
+      const maxzoom = ownValue(value, 'maxzoom');
+      if ((minzoom !== undefined && !(
+        typeof minzoom === 'number' && Number.isFinite(minzoom)
+        && minzoom >= 0 && minzoom <= 24
+      )) || (maxzoom !== undefined && !(
+        typeof maxzoom === 'number' && Number.isFinite(maxzoom)
+        && maxzoom >= 0 && maxzoom <= 24
+      ))) return undefined;
+      return typeof minzoom === 'number' && typeof maxzoom === 'number'
+        && minzoom > maxzoom ? undefined : value;
+    }
     default:
       return undefined;
   }
@@ -511,7 +542,9 @@ function fallbackLayerLifecycleOperationIssue(
   const operation = ownValue(value, 'op');
   if (expectedOperation !== undefined && operation !== expectedOperation) return undefined;
 
-  const fieldIssue = (field: 'layerId' | 'newLayerId' | 'beforeId' | 'afterId') => {
+  const fieldIssue = (field:
+    | 'layerId' | 'newLayerId' | 'sourceId' | 'sourceLayer' | 'type'
+    | 'beforeId' | 'afterId') => {
     const fieldValue = ownValue(value, field);
     return typeof fieldValue === 'string' && !validLayerLifecycleId(fieldValue)
       ? nonEmptyStringIssue([field])
@@ -539,6 +572,13 @@ function fallbackLayerLifecycleOperationIssue(
     }
     case 'removeLayer':
       return fieldIssue('layerId');
+    case 'addLayerFromSource':
+      return fieldIssue('layerId')
+        ?? fieldIssue('sourceId')
+        ?? fieldIssue('sourceLayer')
+        ?? fieldIssue('type')
+        ?? fieldIssue('beforeId')
+        ?? fieldIssue('afterId');
     default:
       return undefined;
   }
@@ -592,6 +632,7 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     || operation === 'moveLayer'
     || operation === 'reorderLayers'
     || operation === 'removeLayer'
+    || operation === 'addLayerFromSource'
     ? undefined
     : fallbackSetLayerOperationIssue(value);
 }
@@ -1422,6 +1463,43 @@ export const removeLayerOperationSchema = sanitizeBefore(
   (value) => fallbackLayerLifecycleOperationIssue(value, 'removeLayer'),
 );
 
+const addLayerFromSourceOperationInnerSchema = z.object({
+  op: z.literal('addLayerFromSource'),
+  layerId: nonEmptyStringSchema,
+  sourceId: nonEmptyStringSchema,
+  sourceLayer: nonEmptyStringSchema.optional(),
+  type: nonEmptyStringSchema,
+  paint: jsonObjectInnerSchema.optional(),
+  layout: jsonObjectInnerSchema.optional(),
+  filter: filterArrayInnerSchema.optional(),
+  minzoom: z.number().finite().min(0).max(24).optional(),
+  maxzoom: z.number().finite().min(0).max(24).optional(),
+  metadata: jsonObjectInnerSchema.optional(),
+  beforeId: nonEmptyStringSchema.optional(),
+  afterId: nonEmptyStringSchema.optional(),
+}).strict().superRefine((operation, context) => {
+  if (operation.beforeId !== undefined && operation.afterId !== undefined) {
+    context.addIssue({
+      code: 'custom', message: 'Placement cannot specify both beforeId and afterId',
+      path: ['afterId'],
+    });
+  }
+  if (operation.minzoom !== undefined && operation.maxzoom !== undefined
+    && operation.minzoom > operation.maxzoom) {
+    context.addIssue({
+      code: 'custom', message: 'minzoom must be less than or equal to maxzoom',
+      path: ['maxzoom'],
+    });
+  }
+}) satisfies z.ZodType<AddLayerFromSourceOperation>;
+
+export const addLayerFromSourceOperationSchema = sanitizeBefore(
+  addLayerFromSourceOperationInnerSchema,
+  undefined,
+  (value) => fallbackLayerLifecycleOperation(value, 'addLayerFromSource'),
+  (value) => fallbackLayerLifecycleOperationIssue(value, 'addLayerFromSource'),
+);
+
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
   setStyleRootPropertiesOperationInnerSchema,
@@ -1437,6 +1515,7 @@ const styleOperationInnerSchema = z.discriminatedUnion('op', [
   moveLayerOperationInnerSchema,
   reorderLayersOperationInnerSchema,
   removeLayerOperationInnerSchema,
+  addLayerFromSourceOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
 type StyleOperationSchemaOutput = StyleOperation & Pick<
