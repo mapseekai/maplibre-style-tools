@@ -110,6 +110,70 @@ test('ordinary delegated tools preserve the exact missing-layer result', async (
   assert.equal(setStyleCalls, 0);
 });
 
+test('smart delegated tools preserve the exact missing-layer result', async () => {
+  let setStyleCalls = 0;
+  const map = {
+    getStyle: () => structuredClone(style),
+    getLayer: () => undefined,
+    setStyle: () => { setStyleCalls += 1; },
+  } as unknown as Map;
+  const full = createMapLibreStyleTools({ getMap: () => map });
+  const cases = [
+    ['setLayerPaintPropertySmart', {
+      layerId: 'missing', property: 'line-color', valueJson: '"#fff"',
+    }],
+    ['setLayerLayoutPropertySmart', {
+      layerId: 'missing', property: 'line-cap', valueJson: '"round"',
+    }],
+    ['batchSetLayerPaintPropertiesSmart', {
+      layerId: 'missing', propertiesJson: '{"line-color":"#fff"}',
+    }],
+    ['batchSetLayerLayoutPropertiesSmart', {
+      layerId: 'missing', propertiesJson: '{"line-cap":"round"}',
+    }],
+  ] as const;
+
+  for (const [name, input] of cases) {
+    const result = await executeTool(full[name], input);
+    assert.equal(result.success, false, name);
+    assert.equal(
+      result.message,
+      'Layer "missing" not found in current style.',
+      name
+    );
+  }
+  assert.equal(setStyleCalls, 0);
+});
+
+test('smart batch tools check a missing layer before propertiesJson', async () => {
+  let setStyleCalls = 0;
+  const map = {
+    getStyle: () => structuredClone(style),
+    getLayer: () => undefined,
+    setStyle: () => { setStyleCalls += 1; },
+  } as unknown as Map;
+  const full = createMapLibreStyleTools({ getMap: () => map });
+
+  for (const name of [
+    'batchSetLayerPaintPropertiesSmart',
+    'batchSetLayerLayoutPropertiesSmart',
+  ] as const) {
+    for (const propertiesJson of ['{', '{}']) {
+      const result = await executeTool(full[name], {
+        layerId: 'missing',
+        propertiesJson,
+      });
+      assert.equal(result.success, false, `${name}:${propertiesJson}`);
+      assert.equal(
+        result.message,
+        'Layer "missing" not found in current style.',
+        `${name}:${propertiesJson}`
+      );
+    }
+  }
+  assert.equal(setStyleCalls, 0);
+});
+
 test('full filter tool skips setStyle for equal and absent-clear no-ops', async () => {
   let setStyleCalls = 0;
   let currentStyle = structuredClone(style);
