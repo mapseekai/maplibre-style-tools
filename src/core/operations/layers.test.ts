@@ -105,6 +105,35 @@ function assertReplay(
   assert.deepEqual(replayStyleDiff(before, result.diff), result.style);
 }
 
+function orderedNonEmptySelections(values: readonly string[]): string[][] {
+  const selections: string[][] = [];
+  const visit = (remaining: readonly string[], selected: readonly string[]): void => {
+    if (selected.length > 0) selections.push([...selected]);
+    for (let index = 0; index < remaining.length; index += 1) {
+      visit(
+        [...remaining.slice(0, index), ...remaining.slice(index + 1)],
+        [...selected, remaining[index]!],
+      );
+    }
+  };
+  visit(values, []);
+  return selections;
+}
+
+function assertStableSubsequence(
+  actual: readonly string[],
+  expectedOrder: readonly string[],
+): void {
+  let expectedIndex = 0;
+  for (const actualId of actual) {
+    while (expectedOrder[expectedIndex] !== actualId
+      && expectedIndex < expectedOrder.length) expectedIndex += 1;
+    assert.equal(expectedOrder[expectedIndex], actualId);
+    expectedIndex += 1;
+  }
+  assert.equal(new Set(actual).size, actual.length);
+}
+
 test('setLayerProperties replaces and adds properties with RFC 6901 paths', () => {
   const working = structuredClone(original);
   const context = makeContext();
@@ -211,6 +240,148 @@ test('layer lifecycle schemas remain deterministic with a polluted Object protot
       Object.defineProperty(Object.prototype, key, originalDescriptor);
     }
   }
+});
+
+test('polluted lifecycle fallbacks preserve clean nonblank ID and issue contracts', () => {
+  const fixtures = [
+    {
+      schema: duplicateLayerOperationSchema,
+      operation: { op: 'duplicateLayer', layerId: ' \t', newLayerId: 'copy' },
+      issuePath: ['layerId'],
+    },
+    {
+      schema: duplicateLayerOperationSchema,
+      operation: { op: 'duplicateLayer', layerId: 'a', newLayerId: '\n' },
+      issuePath: ['newLayerId'],
+    },
+    {
+      schema: duplicateLayerOperationSchema,
+      operation: {
+        op: 'duplicateLayer', layerId: 'a', newLayerId: 'copy', beforeId: ' ',
+      },
+      issuePath: ['beforeId'],
+    },
+    {
+      schema: duplicateLayerOperationSchema,
+      operation: {
+        op: 'duplicateLayer', layerId: 'a', newLayerId: 'copy', afterId: '\t',
+      },
+      issuePath: ['afterId'],
+    },
+    {
+      schema: moveLayerOperationSchema,
+      operation: { op: 'moveLayer', layerId: '\n' },
+      issuePath: ['layerId'],
+    },
+    {
+      schema: moveLayerOperationSchema,
+      operation: { op: 'moveLayer', layerId: 'a', beforeId: ' \n' },
+      issuePath: ['beforeId'],
+    },
+    {
+      schema: moveLayerOperationSchema,
+      operation: { op: 'moveLayer', layerId: 'a', afterId: '\t' },
+      issuePath: ['afterId'],
+    },
+    {
+      schema: reorderLayersOperationSchema,
+      operation: { op: 'reorderLayers', layerIds: ['a', ' \t'] },
+      issuePath: ['layerIds', 1],
+    },
+    {
+      schema: reorderLayersOperationSchema,
+      operation: { op: 'reorderLayers', layerIds: ['b'], beforeId: '\n' },
+      issuePath: ['beforeId'],
+    },
+    {
+      schema: reorderLayersOperationSchema,
+      operation: { op: 'reorderLayers', layerIds: ['b'], afterId: ' ' },
+      issuePath: ['afterId'],
+    },
+    {
+      schema: removeLayerOperationSchema,
+      operation: { op: 'removeLayer', layerId: '\t\n' },
+      issuePath: ['layerId'],
+    },
+  ] as const;
+
+  const cleanIssues = fixtures.map(({ schema, operation, issuePath }) => {
+    const direct = schema.safeParse(operation);
+    const union = styleOperationSchema.safeParse(operation);
+    const transaction = applyStyleTransaction(makeStyle(), { operations: [operation] });
+    assert.equal(direct.success, false);
+    assert.equal(union.success, false);
+    assert.equal(transaction.ok, false);
+    if (direct.success || union.success || transaction.ok) {
+      assert.fail('expected clean whitespace rejection');
+    }
+    assert.deepEqual(direct.error.issues, [{
+      code: 'custom', path: issuePath, message: 'Expected a non-empty string',
+    }]);
+    assert.deepEqual(union.error.issues, direct.error.issues);
+    assert.equal(transaction.error.code, 'INVALID_INPUT');
+    assert.equal(transaction.error.path, `/operations/0/${issuePath.join('/')}`);
+    return { direct: direct.error.issues, union: union.error.issues };
+  });
+
+  const padded = { op: 'removeLayer', layerId: ' padded ' } as const;
+  const cleanPadded = removeLayerOperationSchema.safeParse(padded);
+  assert.equal(cleanPadded.success, true);
+  if (!cleanPadded.success) assert.fail('expected clean padded ID acceptance');
+  assert.equal(cleanPadded.data.layerId, ' padded ');
+
+  const pollutionKey = 'layerLifecycleWhitespaceFallbackProbe';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey);
+  let getterCalls = 0;
+  try {
+    Object.defineProperty(Object.prototype, pollutionKey, {
+      configurable: true,
+      value: true,
+      writable: true,
+    });
+
+    for (let index = 0; index < fixtures.length; index += 1) {
+      const { schema, operation, issuePath } = fixtures[index]!;
+      const direct = schema.safeParse(operation);
+      const union = styleOperationSchema.safeParse(operation);
+      assert.equal(direct.success, false);
+      assert.equal(union.success, false);
+      if (direct.success || union.success) assert.fail('expected polluted whitespace rejection');
+      assert.deepEqual(direct.error.issues, cleanIssues[index]!.direct);
+      assert.deepEqual(union.error.issues, cleanIssues[index]!.union);
+
+      const style = makeStyle();
+      const result = assertAtomicFailure(style, operation, 'INVALID_INPUT');
+      if (!result.ok) {
+        assert.equal(result.error.path, `/operations/0/${issuePath.join('/')}`);
+      }
+    }
+
+    const pollutedPadded = removeLayerOperationSchema.safeParse(padded);
+    assert.equal(pollutedPadded.success, true);
+    if (!pollutedPadded.success) assert.fail('expected polluted padded ID acceptance');
+    assert.equal(pollutedPadded.data.layerId, ' padded ');
+
+    const accessorOperation: Record<string, unknown> = { op: 'removeLayer' };
+    Object.defineProperty(accessorOperation, 'layerId', {
+      enumerable: true,
+      get() { getterCalls += 1; throw new Error('must not run'); },
+    });
+    assert.equal(removeLayerOperationSchema.safeParse(accessorOperation).success, false);
+    assert.equal(styleOperationSchema.safeParse(accessorOperation).success, false);
+    assertAtomicFailure(makeStyle(), accessorOperation, 'INVALID_INPUT');
+  } finally {
+    if (originalDescriptor === undefined) {
+      Reflect.deleteProperty(Object.prototype, pollutionKey);
+    } else {
+      Object.defineProperty(Object.prototype, pollutionKey, originalDescriptor);
+    }
+  }
+  assert.equal(getterCalls, 0);
+  assert.deepEqual(
+    Object.getOwnPropertyDescriptor(Object.prototype, pollutionKey),
+    originalDescriptor,
+  );
 });
 
 test('duplicateLayer preserves every JSON field, applies Merge Patch, and inserts after source', () => {
@@ -471,6 +642,65 @@ test('reorderLayers preserves request order for non-contiguous layers and stable
     },
   ]);
   assertReplay(style, result);
+});
+
+test('reorderLayers plans replayable move targets in request order', () => {
+  const style = makeStyle(['a', 'b', 'c']);
+  const result = applyStyleTransaction(style, { operations: [{
+    op: 'reorderLayers', layerIds: ['b', 'a'], afterId: 'c',
+  }] });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.style.layers.map(({ id }) => id), ['c', 'b', 'a']);
+  assert.deepEqual(result.changedLayers, ['b', 'a']);
+  assert.deepEqual(result.diff, [
+    {
+      op: 'move', from: '/layers/1', path: '/layers/2',
+      target: { kind: 'layer', id: 'b' },
+    },
+    {
+      op: 'move', from: '/layers/0', path: '/layers/2',
+      target: { kind: 'layer', id: 'a' },
+    },
+  ]);
+  assertReplay(style, result);
+});
+
+test('reorderLayers exhaustive small-array diffs use a stable request-order subsequence', () => {
+  const initialIds = ['a', 'b', 'c'] as const;
+  let checked = 0;
+  for (const layerIds of orderedNonEmptySelections(initialIds)) {
+    const stationaryIds = initialIds.filter((layerId) => !layerIds.includes(layerId));
+    const placements = [
+      {},
+      ...stationaryIds.flatMap((layerId) => [
+        { beforeId: layerId },
+        { afterId: layerId },
+      ]),
+    ];
+    for (const placement of placements) {
+      const style = makeStyle(initialIds);
+      const result = applyStyleTransaction(style, { operations: [{
+        op: 'reorderLayers', layerIds, ...placement,
+      }] });
+      assert.equal(result.ok, true, JSON.stringify({ layerIds, placement }));
+      if (!result.ok) assert.fail('expected exhaustive reorder success');
+      const moveTargets = result.diff.flatMap((entry) => (
+        entry.op === 'move' && entry.target.kind === 'layer'
+          ? [entry.target.id]
+          : []
+      ));
+      assertStableSubsequence(moveTargets, layerIds);
+      assert.deepEqual(result.changedLayers, moveTargets);
+      assertReplay(style, result);
+      if (result.style.layers.every((layer, index) => layer.id === initialIds[index])) {
+        assert.deepEqual(result.diff, []);
+        assert.deepEqual(result.changedLayers, []);
+      }
+      checked += 1;
+    }
+  }
+  assert.equal(checked, 39);
 });
 
 test('reorderLayers no-op marks no candidates', () => {

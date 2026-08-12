@@ -268,29 +268,42 @@ function reconcileLayerOrder(
     throw new Error('Internal invariant: candidate layer order cannot explain non-candidate reordering');
   }
 
-  let moveCount = 0;
-  while (!sameStrings(layerIds(workingLayers), targetExistingIds)) {
-    if (moveCount++ > workingLayers.length * workingLayers.length) {
-      throw new Error('Internal invariant: candidate layer order reconciliation did not converge');
+  const orderedCandidates = [...context.changedLayerIds]
+    .filter((id) => beforeById.has(id) && afterById.has(id));
+  for (let candidateIndex = 0; candidateIndex < orderedCandidates.length; candidateIndex += 1) {
+    const candidateId = orderedCandidates[candidateIndex]!;
+    const futureCandidates = new Set(orderedCandidates.slice(candidateIndex + 1));
+    const currentProjection = layerIds(workingLayers)
+      .filter((id) => !futureCandidates.has(id));
+    const targetProjection = targetExistingIds
+      .filter((id) => !futureCandidates.has(id));
+    if (sameStrings(currentProjection, targetProjection)) continue;
+
+    const desiredIndex = targetProjection.indexOf(candidateId);
+    const fromIndex = workingLayers.findIndex((layer) => layer.id === candidateId);
+    const nextId = targetProjection[desiredIndex + 1];
+    const previousId = targetProjection[desiredIndex - 1];
+    let toIndex: number;
+    if (nextId !== undefined) {
+      const anchorIndex = workingLayers.findIndex((layer) => layer.id === nextId);
+      toIndex = anchorIndex - (fromIndex < anchorIndex ? 1 : 0);
+    } else if (previousId !== undefined) {
+      const anchorIndex = workingLayers.findIndex((layer) => layer.id === previousId);
+      toIndex = anchorIndex - (fromIndex < anchorIndex ? 1 : 0) + 1;
+    } else {
+      throw new Error('Internal invariant: candidate layer projection cannot be reconciled');
     }
-    const currentIds = layerIds(workingLayers);
-    const mismatchIndex = currentIds.findIndex((id, index) => id !== targetExistingIds[index]);
-    const desiredId = targetExistingIds[mismatchIndex]!;
-    const currentId = currentIds[mismatchIndex]!;
-    if (context.changedLayerIds.has(desiredId)) {
-      moveLayer(entries, workingLayers, currentIds.indexOf(desiredId), mismatchIndex, context);
-      continue;
+    if (fromIndex === -1 || desiredIndex === -1 || fromIndex === toIndex) {
+      throw new Error('Internal invariant: candidate layer projection cannot be reconciled');
     }
-    if (context.changedLayerIds.has(currentId)) {
-      moveLayer(
-        entries,
-        workingLayers,
-        mismatchIndex,
-        targetExistingIds.indexOf(currentId),
-        context,
-      );
-      continue;
+    moveLayer(entries, workingLayers, fromIndex, toIndex, context);
+    const updatedProjection = layerIds(workingLayers)
+      .filter((id) => !futureCandidates.has(id));
+    if (!sameStrings(updatedProjection, targetProjection)) {
+      throw new Error('Internal invariant: candidate layer projection cannot be reconciled');
     }
+  }
+  if (!sameStrings(layerIds(workingLayers), targetExistingIds)) {
     throw new Error('Internal invariant: candidate layer order cannot explain layer reordering');
   }
 

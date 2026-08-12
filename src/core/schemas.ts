@@ -39,6 +39,7 @@ const INVALID_JSON_MESSAGE = 'Input must be a strict JSON tree';
 
 type JsonContainer = JsonValue[] | { [key: string]: JsonValue };
 type PathToken = string | number;
+type LayerLifecycleIssue = z.core.$ZodIssue & { path: PathToken[] };
 type PathNode = {
   parent: PathNode | undefined;
   token: PathToken;
@@ -390,6 +391,10 @@ function validSourceId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+function validLayerLifecycleId(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function fallbackSourceOperation(
   value: JsonValue,
   expectedOperation?: SourceOperation['op'],
@@ -440,8 +445,8 @@ function validPlacement(value: JsonValue): boolean {
   if (!isJsonObject(value)) return false;
   const beforeId = ownValue(value, 'beforeId');
   const afterId = ownValue(value, 'afterId');
-  return (beforeId === undefined || validSourceId(beforeId))
-    && (afterId === undefined || validSourceId(afterId))
+  return (beforeId === undefined || validLayerLifecycleId(beforeId))
+    && (afterId === undefined || validLayerLifecycleId(afterId))
     && !(beforeId !== undefined && afterId !== undefined);
 }
 
@@ -456,8 +461,8 @@ function fallbackLayerLifecycleOperation(
   switch (operation) {
     case 'duplicateLayer': {
       if (!hasOnlyKeys(value, DUPLICATE_LAYER_OPERATION_KEYS)
-        || !validSourceId(ownValue(value, 'layerId'))
-        || !validSourceId(ownValue(value, 'newLayerId'))) return undefined;
+        || !validLayerLifecycleId(ownValue(value, 'layerId'))
+        || !validLayerLifecycleId(ownValue(value, 'newLayerId'))) return undefined;
       const overrides = ownValue(value, 'overrides');
       return (overrides === undefined
         || (isJsonObject(overrides) && !Object.hasOwn(overrides, 'id')))
@@ -467,7 +472,7 @@ function fallbackLayerLifecycleOperation(
     case 'moveLayer': {
       if (!hasOnlyKeys(value, MOVE_LAYER_OPERATION_KEYS)) return undefined;
       const layerId = ownValue(value, 'layerId');
-      if (!validSourceId(layerId)) return undefined;
+      if (!validLayerLifecycleId(layerId)) return undefined;
       return ownValue(value, 'beforeId') === layerId
         || ownValue(value, 'afterId') === layerId
         ? undefined
@@ -480,7 +485,7 @@ function fallbackLayerLifecycleOperation(
       const seen = new Set<string>();
       for (let index = 0; index < layerIds.length; index += 1) {
         const layerId = ownValue(layerIds, String(index));
-        if (!validSourceId(layerId) || seen.has(layerId)) return undefined;
+        if (!validLayerLifecycleId(layerId) || seen.has(layerId)) return undefined;
         seen.add(layerId);
       }
       const anchorId = ownValue(value, 'beforeId') ?? ownValue(value, 'afterId');
@@ -488,7 +493,52 @@ function fallbackLayerLifecycleOperation(
     }
     case 'removeLayer':
       return hasOnlyKeys(value, REMOVE_LAYER_OPERATION_KEYS)
-        && validSourceId(ownValue(value, 'layerId')) ? value : undefined;
+        && validLayerLifecycleId(ownValue(value, 'layerId')) ? value : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function nonEmptyStringIssue(path: PathToken[]): LayerLifecycleIssue {
+  return { code: 'custom', path, message: 'Expected a non-empty string' };
+}
+
+function fallbackLayerLifecycleOperationIssue(
+  value: JsonValue,
+  expectedOperation?: LayerLifecycleOperation['op'],
+): LayerLifecycleIssue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  if (expectedOperation !== undefined && operation !== expectedOperation) return undefined;
+
+  const fieldIssue = (field: 'layerId' | 'newLayerId' | 'beforeId' | 'afterId') => {
+    const fieldValue = ownValue(value, field);
+    return typeof fieldValue === 'string' && !validLayerLifecycleId(fieldValue)
+      ? nonEmptyStringIssue([field])
+      : undefined;
+  };
+  switch (operation) {
+    case 'duplicateLayer':
+      return fieldIssue('layerId')
+        ?? fieldIssue('newLayerId')
+        ?? fieldIssue('beforeId')
+        ?? fieldIssue('afterId');
+    case 'moveLayer':
+      return fieldIssue('layerId') ?? fieldIssue('beforeId') ?? fieldIssue('afterId');
+    case 'reorderLayers': {
+      const layerIds = ownValue(value, 'layerIds');
+      if (Array.isArray(layerIds)) {
+        for (let index = 0; index < layerIds.length; index += 1) {
+          const layerId = ownValue(layerIds, String(index));
+          if (typeof layerId === 'string' && !validLayerLifecycleId(layerId)) {
+            return nonEmptyStringIssue(['layerIds', index]);
+          }
+        }
+      }
+      return fieldIssue('beforeId') ?? fieldIssue('afterId');
+    }
+    case 'removeLayer':
+      return fieldIssue('layerId');
     default:
       return undefined;
   }
@@ -526,6 +576,8 @@ function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | un
 function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
   if (!isJsonObject(value)) return undefined;
   const operation = ownValue(value, 'op');
+  const lifecycleIssue = fallbackLayerLifecycleOperationIssue(value);
+  if (lifecycleIssue !== undefined) return lifecycleIssue;
   return operation === 'setLayerProperties'
     || operation === 'setStyleRootProperties'
     || operation === 'setLayerFilter'
@@ -575,6 +627,15 @@ function fallbackTransactionIssue(value: JsonValue): z.core.$ZodIssue | undefine
         origin: 'array', code: 'too_small', minimum: 1, inclusive: true,
         path: ['operations'], message: 'Too small: expected array to have >=1 items',
       };
+    }
+    if (Array.isArray(operations)) {
+      for (let index = 0; index < operations.length; index += 1) {
+        const operation = ownValue(operations, String(index)) as JsonValue;
+        const issue = fallbackLayerLifecycleOperationIssue(operation);
+        if (issue !== undefined) {
+          return nonEmptyStringIssue(['operations', index, ...issue.path]);
+        }
+      }
     }
   }
   return undefined;
@@ -1269,6 +1330,7 @@ export const duplicateLayerOperationSchema = sanitizeBefore(
   duplicateLayerOperationInnerSchema,
   undefined,
   (value) => fallbackLayerLifecycleOperation(value, 'duplicateLayer'),
+  (value) => fallbackLayerLifecycleOperationIssue(value, 'duplicateLayer'),
 );
 
 const moveLayerOperationInnerSchema = z.object({
@@ -1301,6 +1363,7 @@ export const moveLayerOperationSchema = sanitizeBefore(
   moveLayerOperationInnerSchema,
   undefined,
   (value) => fallbackLayerLifecycleOperation(value, 'moveLayer'),
+  (value) => fallbackLayerLifecycleOperationIssue(value, 'moveLayer'),
 );
 
 const reorderLayersOperationInnerSchema = z.object({
@@ -1344,6 +1407,7 @@ export const reorderLayersOperationSchema = sanitizeBefore(
   reorderLayersOperationInnerSchema,
   undefined,
   (value) => fallbackLayerLifecycleOperation(value, 'reorderLayers'),
+  (value) => fallbackLayerLifecycleOperationIssue(value, 'reorderLayers'),
 );
 
 const removeLayerOperationInnerSchema = z.object({
@@ -1355,6 +1419,7 @@ export const removeLayerOperationSchema = sanitizeBefore(
   removeLayerOperationInnerSchema,
   undefined,
   (value) => fallbackLayerLifecycleOperation(value, 'removeLayer'),
+  (value) => fallbackLayerLifecycleOperationIssue(value, 'removeLayer'),
 );
 
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
