@@ -15,6 +15,7 @@ import {
 import { toJsonPointer } from '../../core/json-pointer.js';
 import type {
   JsonObject,
+  JsonValue,
   StyleToolError,
   StyleWarning,
 } from '../../core/types.js';
@@ -90,13 +91,20 @@ function parseRenderedQuery(
     : { ok: false, error: schemaError(parsedInput.error) };
 }
 
-function ownDataValue(value: unknown, key: string): unknown {
-  if (typeof value !== 'object' || value === null) return undefined;
+type OwnDataValue =
+  | { kind: 'absent' }
+  | { kind: 'data'; value: unknown }
+  | { kind: 'failure' };
+
+function ownDataValue(value: unknown, key: string): OwnDataValue {
+  if (typeof value !== 'object' || value === null) return { kind: 'failure' };
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor !== undefined && 'value' in descriptor ? descriptor.value : undefined;
+    if (descriptor === undefined) return { kind: 'absent' };
+    if (!descriptor.enumerable || !('value' in descriptor)) return { kind: 'failure' };
+    return { kind: 'data', value: descriptor.value };
   } catch {
-    return undefined;
+    return { kind: 'failure' };
   }
 }
 
@@ -110,21 +118,31 @@ function defineJsonValue(target: JsonObject, key: string, value: unknown): void 
   });
 }
 
-function projectProperties(value: unknown, allowlist: readonly string[] | undefined): unknown {
-  if (allowlist === undefined) return value;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+function projectProperties(
+  value: unknown,
+  allowlist: readonly string[] | undefined,
+): JsonValue | undefined {
+  const parsed = jsonValueSchema.safeParse(value);
+  if (!parsed.success || Array.isArray(parsed.data) || parsed.data === null
+    || typeof parsed.data !== 'object') return undefined;
+  if (allowlist === undefined) return parsed.data;
   const projected: JsonObject = {};
   for (const key of allowlist) {
-    defineJsonValue(projected, key, ownDataValue(value, key));
+    const property = ownDataValue(parsed.data, key);
+    if (property.kind === 'failure') return undefined;
+    if (property.kind === 'data') defineJsonValue(projected, key, property.value);
   }
   return projected;
 }
 
-function projectLayer(value: unknown): JsonObject | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
+function projectLayer(value: unknown): JsonObject | undefined | false {
+  if (typeof value !== 'object' || value === null) return false;
   const projected: JsonObject = {};
-  defineJsonValue(projected, 'id', ownDataValue(value, 'id'));
-  defineJsonValue(projected, 'type', ownDataValue(value, 'type'));
+  for (const key of ['id', 'type'] as const) {
+    const layerValue = ownDataValue(value, key);
+    if (layerValue.kind === 'failure') return false;
+    if (layerValue.kind === 'data') defineJsonValue(projected, key, layerValue.value);
+  }
   return Object.keys(projected).length === 0 ? undefined : projected;
 }
 
@@ -135,15 +153,24 @@ function projectFeature(
   if (typeof feature !== 'object' || feature === null) return undefined;
   const projected: JsonObject = {};
   for (const key of ['type', 'id', 'geometry', 'source', 'sourceLayer'] as const) {
-    defineJsonValue(projected, key, ownDataValue(feature, key));
+    const featureValue = ownDataValue(feature, key);
+    if (featureValue.kind === 'failure') return undefined;
+    if (featureValue.kind === 'data') defineJsonValue(projected, key, featureValue.value);
   }
-  defineJsonValue(
-    projected,
-    'properties',
-    projectProperties(ownDataValue(feature, 'properties'), propertyAllowlist),
-  );
-  const layer = projectLayer(ownDataValue(feature, 'layer'));
-  if (layer !== undefined) defineJsonValue(projected, 'layer', layer);
+  const properties = ownDataValue(feature, 'properties');
+  if (properties.kind === 'failure') return undefined;
+  if (properties.kind === 'data') {
+    const projectedProperties = projectProperties(properties.value, propertyAllowlist);
+    if (projectedProperties === undefined) return undefined;
+    defineJsonValue(projected, 'properties', projectedProperties);
+  }
+  const rawLayer = ownDataValue(feature, 'layer');
+  if (rawLayer.kind === 'failure') return undefined;
+  if (rawLayer.kind === 'data') {
+    const layer = projectLayer(rawLayer.value);
+    if (layer === false) return undefined;
+    if (layer !== undefined) defineJsonValue(projected, 'layer', layer);
+  }
   const parsed = jsonValueSchema.safeParse(projected);
   return parsed.success && !Array.isArray(parsed.data) && parsed.data !== null
     && typeof parsed.data === 'object'

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import { jsonUtf8ByteLength, jsonValueSchema } from '../../core/index.js';
@@ -186,6 +187,65 @@ test('an unprojectable MapLibre feature produces a structured failure without pa
   assert.equal(result.serializedBytes, 2);
 });
 
+test('reflection failures and unreadable approved fields fail closed without partial results', () => {
+  const rejectedResults = (feature: unknown): void => {
+    const map = new FakeMap();
+    map.sourceFeatures = [rawFeature(0), feature];
+    const result = querySourceFeaturesBounded(map.asMap(), { sourceId: 'roads' });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, 'INTERNAL');
+    assert.deepEqual(result.features, []);
+    assert.equal(result.returned, 0);
+    assert.equal(result.serializedBytes, 2);
+  };
+
+  const revoked = Proxy.revocable(rawFeature(1), {});
+  revoked.revoke();
+  rejectedResults(revoked.proxy);
+
+  rejectedResults(new Proxy(rawFeature(2), {
+    getOwnPropertyDescriptor() { throw new Error('reflection failure'); },
+  }));
+
+  const hiddenType = rawFeature(3);
+  Object.defineProperty(hiddenType, 'type', {
+    configurable: true, enumerable: false, value: 'Feature', writable: true,
+  });
+  rejectedResults(hiddenType);
+
+  const accessorType = rawFeature(4);
+  let getterReads = 0;
+  Object.defineProperty(accessorType, 'type', {
+    configurable: true,
+    enumerable: true,
+    get() { getterReads += 1; return 'Feature'; },
+  });
+  rejectedResults(accessorType);
+  assert.equal(getterReads, 0);
+});
+
+test('properties are descriptor-sanitized before allowlisting and never expose hidden or dangerous keys', () => {
+  const hiddenProperty = rawFeature(1);
+  Object.defineProperty(hiddenProperty.properties as object, 'secret', {
+    configurable: true, enumerable: false, value: 'not public', writable: true,
+  });
+  const dangerousProperty = rawFeature(2);
+  Object.defineProperty(dangerousProperty.properties as object, '__proto__', {
+    configurable: true, enumerable: true, value: 'poison', writable: true,
+  });
+
+  for (const feature of [hiddenProperty, dangerousProperty]) {
+    const map = new FakeMap();
+    map.sourceFeatures = [feature];
+    const result = querySourceFeaturesBounded(map.asMap(), {
+      sourceId: 'roads', propertyAllowlist: ['name', 'secret', '__proto__'],
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, 'INTERNAL');
+    assert.deepEqual(result.features, []);
+  }
+});
+
 test('accounts for empty arrays, feature bytes, and comma bytes at exact boundaries', () => {
   const map = new FakeMap();
   const first = rawFeature(1);
@@ -216,6 +276,60 @@ test('accounts for empty arrays, feature bytes, and comma bytes at exact boundar
   assert.equal(exactBoth.returned, 2);
   assert.equal(noCommaRoom.returned, 1);
   assert.equal(noCommaRoom.truncated, true);
+});
+
+test('uses foundation UTF-8 bytes exactly once per candidate for emoji, lone surrogates, and controls', () => {
+  const map = new FakeMap();
+  const first = rawFeature(1);
+  first.properties = { emoji: '😀', lone: '\ud800', control: '\u0001' };
+  const second = rawFeature(2);
+  second.properties = { emoji: '😀', lone: '\ud800', control: '\u0001' };
+  const expectedFirst = {
+    ...projectedFeature(1),
+    properties: { emoji: '😀', lone: '\ud800', control: '\u0001' },
+  };
+  const expectedSecond = {
+    ...projectedFeature(2),
+    properties: { emoji: '😀', lone: '\ud800', control: '\u0001' },
+  };
+  const firstBytes = jsonUtf8ByteLength(expectedFirst as never);
+  const secondBytes = jsonUtf8ByteLength(expectedSecond as never);
+
+  map.sourceFeatures = [first, second];
+  const exact = querySourceFeaturesBounded(map.asMap(), { sourceId: 'roads' }, {
+    maxFeatures: 2,
+    maxSerializedBytes: 2 + firstBytes + 1 + secondBytes,
+  });
+  const oneByteShort = querySourceFeaturesBounded(map.asMap(), { sourceId: 'roads' }, {
+    maxFeatures: 2,
+    maxSerializedBytes: 2 + firstBytes + secondBytes,
+  });
+
+  assert.equal(exact.returned, 2);
+  assert.equal(exact.serializedBytes, 2 + firstBytes + 1 + secondBytes);
+  assert.equal(oneByteShort.returned, 1);
+  assert.equal(oneByteShort.serializedBytes, 2 + firstBytes);
+  assert.equal(oneByteShort.truncated, true);
+
+  const countBound = querySourceFeaturesBounded(map.asMap(), { sourceId: 'roads' }, {
+    maxFeatures: 1,
+    maxSerializedBytes: 2 + firstBytes,
+  });
+  assert.equal(countBound.returned, 1);
+});
+
+test('has one candidate byte-count callsite and stops before the next count-limited candidate', async () => {
+  const source = await readFile(
+    new URL('../../../../src/adapters/maplibre/feature-query.ts', import.meta.url),
+    'utf8',
+  );
+  assert.equal((source.match(/jsonUtf8ByteLength\(projected\)/g) ?? []).length, 1);
+
+  const map = new FakeMap();
+  map.sourceFeatures = [rawFeature(1), rawFeature(2)];
+  const result = querySourceFeaturesBounded(map.asMap(), { sourceId: 'roads', limit: 1 });
+  assert.equal(result.returned, 1);
+  assert.equal(result.truncated, true);
 });
 
 test('truncates at the 1 MiB default and excludes a first oversized feature', () => {
