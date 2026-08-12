@@ -217,6 +217,21 @@ test('translates synthetic GeoJSON validation paths back to the original diff', 
   }, `/update/0/addOrUpdateProperties/0/value${'/child'.repeat(32)}`, 'maxPropertyDepth');
 });
 
+test('numeric and escaped property keys retain string identity during path translation', () => {
+  for (const [index, key] of ['0', '01', 'a/b~c'].entries()) {
+    assertFailure({
+      update: [{
+        id: 1,
+        addOrUpdateProperties: ['0', '01', 'a/b~c'].map((propertyKey) => ({
+          key: propertyKey,
+          value: propertyKey === key ? nestedObject(33) : null,
+        })),
+      }],
+    }, `/update/0/addOrUpdateProperties/${index}/value${'/child'.repeat(32)}`,
+    'maxPropertyDepth');
+  }
+});
+
 test('the whole descriptor pass rejects hostile graphs without invoking getters or returning partial data', () => {
   let getterCalls = 0;
   const accessor: Record<string, unknown> = { removeAll: true };

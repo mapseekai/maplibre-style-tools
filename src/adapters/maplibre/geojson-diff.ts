@@ -103,10 +103,15 @@ const diffGrammarSchema: z.ZodType<RuntimeGeoJsonSourceDiff> = z.object({
   'A GeoJSON source diff must contain at least one effective action.',
 );
 
-function decodePointer(pointer: string | undefined): Array<string | number> {
+function decodePointerSegments(pointer: string | undefined): string[] {
   if (pointer === undefined || pointer === '') return [];
-  return pointer.slice(1).split('/').map((token) => {
-    const decoded = token.replaceAll('~1', '/').replaceAll('~0', '~');
+  return pointer.slice(1).split('/').map(
+    (token) => token.replaceAll('~1', '/').replaceAll('~0', '~'),
+  );
+}
+
+function decodePointer(pointer: string | undefined): Array<string | number> {
+  return decodePointerSegments(pointer).map((decoded) => {
     const index = Number(decoded);
     return Number.isSafeInteger(index) && index >= 0 && String(index) === decoded
       ? index
@@ -140,8 +145,8 @@ function propertyValidationError(
   updateIndex: number,
   propertyIndexes: ReadonlyMap<string, number>,
 ): StyleToolError {
-  const path = decodePointer(error.path);
-  if (path[0] === 'properties' && typeof path[1] === 'string') {
+  const path = decodePointerSegments(error.path);
+  if (path[0] === 'properties' && path[1] !== undefined) {
     const propertyIndex = propertyIndexes.get(path[1]);
     if (propertyIndex !== undefined) {
       return invalidInput(

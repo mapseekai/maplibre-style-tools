@@ -26,6 +26,7 @@ import {
   sourceTileLodParamsInputSchema,
 } from './schemas.js';
 import type {
+  RuntimeCommandExecution,
   RuntimeCommandResult,
   RuntimeImageLoader,
 } from './types.js';
@@ -50,6 +51,7 @@ type MapCall = { method: string; args: unknown[] };
 class FakeMap {
   readonly calls: MapCall[] = [];
   readonly errors = new globalThis.Map<string, unknown>();
+  readonly spriteAddErrors = new globalThis.Map<string, unknown>();
   readonly images = new Set<string>();
   source: unknown;
   imageListResult: unknown;
@@ -130,6 +132,7 @@ class FakeMap {
 
   addSprite(spriteId: string, url: string): void {
     this.record('addSprite', [spriteId, url]);
+    if (this.spriteAddErrors.has(url)) throw this.spriteAddErrors.get(url);
     if (Array.isArray(this.spriteListResult)) {
       this.spriteListResult.push({ id: spriteId, url });
     }
@@ -366,6 +369,76 @@ test('GeoJSON update reports missing, unsupported, and rejected sources structur
   );
 });
 
+test('GeoJSON source inspection is descriptor-safe and keeps error details JSON-safe', async () => {
+  const map = new FakeMap();
+  const commands = createMapRuntimeCommands(map.asMap());
+
+  map.source = {};
+  const missingType = await commands.updateGeoJsonDataRuntime({
+    sourceId: 'plain', diff: { removeAll: true },
+  });
+  assert.equal(missingType.ok, false);
+  if (!missingType.ok) {
+    assert.equal(missingType.error.code, 'UNSUPPORTED_SOURCE');
+    assert.deepEqual(missingType.error.details, { sourceId: 'plain' });
+    assert.equal(jsonValueSchema.safeParse(missingType.error).success, true);
+  }
+
+  map.source = { type: 5 };
+  const nonStringType = await commands.updateGeoJsonDataRuntime({
+    sourceId: 'numeric', diff: { removeAll: true },
+  });
+  assert.equal(nonStringType.ok, false);
+  if (!nonStringType.ok) {
+    assert.deepEqual(nonStringType.error.details, { sourceId: 'numeric' });
+    assert.equal(jsonValueSchema.safeParse(nonStringType.error).success, true);
+  }
+
+  let accessorCalls = 0;
+  const accessorSource = {};
+  Object.defineProperty(accessorSource, 'type', {
+    enumerable: true,
+    get() { accessorCalls += 1; throw new Error('must not run'); },
+  });
+  map.source = accessorSource;
+  const accessorResult = await commands.updateGeoJsonDataRuntime({
+    sourceId: 'accessor', diff: { removeAll: true },
+  });
+  assertFailureCode(accessorResult, 'INTERNAL');
+  assert.equal(accessorCalls, 0);
+
+  const reflected = Proxy.revocable({}, {
+    get() { accessorCalls += 1; throw new Error('must not run'); },
+    getOwnPropertyDescriptor() { throw new Error('reflection failed'); },
+  });
+  map.source = reflected.proxy;
+  const reflectedResult = await commands.updateGeoJsonDataRuntime({
+    sourceId: 'proxy', diff: { removeAll: true },
+  });
+  reflected.revoke();
+  assertFailureCode(reflectedResult, 'INTERNAL');
+  assert.equal(accessorCalls, 0);
+});
+
+test('a transparent GeoJSON source proxy never invokes get traps', async () => {
+  let getCalls = 0;
+  let received: GeoJSONSourceDiff | undefined;
+  const source = {
+    type: 'geojson' as const,
+    async updateData(diff: GeoJSONSourceDiff) { received = diff; },
+  };
+  const map = new FakeMap();
+  map.source = new Proxy(source, {
+    get() { getCalls += 1; throw new Error('must not run'); },
+  });
+  const result = await createMapRuntimeCommands(map.asMap()).updateGeoJsonDataRuntime({
+    sourceId: 'roads', diff: { remove: [1] },
+  });
+  assertSuccessDataIsJson(result);
+  assert.deepEqual(received, { remove: [1] });
+  assert.equal(getCalls, 0);
+});
+
 test('LOD, feature state, removal, and global state forward exact sanitized arguments', () => {
   const map = new FakeMap();
   map.source = { type: 'vector' };
@@ -538,6 +611,120 @@ test('injected loader aborts and malformed decoded bytes fail before image mutat
   assert.deepEqual(map.calls.map((call) => call.method), ['hasImage']);
 });
 
+test('hostile runtime execution envelopes resolve INVALID_INPUT before Map or loader access', async () => {
+  const map = new FakeMap();
+  let loaderCalls = 0;
+  const imageLoader: RuntimeImageLoader = {
+    async load() {
+      loaderCalls += 1;
+      return { width: 1, height: 1, data: new Uint8Array(4) };
+    },
+  };
+  const commands = createMapRuntimeCommands(map.asMap(), { imageLoader });
+  let getterCalls = 0;
+  const accessorExecution: RuntimeCommandExecution = {};
+  Object.defineProperty(accessorExecution, 'signal', {
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('must not run'); },
+  });
+  const revoked = Proxy.revocable<RuntimeCommandExecution>({}, {});
+  revoked.revoke();
+
+  for (const execution of [accessorExecution, revoked.proxy]) {
+    let result: RuntimeCommandResult | undefined;
+    await assert.doesNotReject(async () => {
+      result = await commands.addImageFromUrl({
+        imageId: 'safe', url: 'custom://safe',
+      }, execution);
+    });
+    assert.equal(result?.ok, false);
+    if (result !== undefined) assertFailureCode(result, 'INVALID_INPUT');
+  }
+  assert.equal(getterCalls, 0);
+  assert.equal(loaderCalls, 0);
+  assert.deepEqual(map.calls, []);
+});
+
+test('hostile AbortSignal proxies resolve INVALID_INPUT without property gets or side effects', async () => {
+  const map = new FakeMap();
+  let loaderCalls = 0;
+  const commands = createMapRuntimeCommands(map.asMap(), {
+    imageLoader: {
+      async load() {
+        loaderCalls += 1;
+        return { width: 1, height: 1, data: new Uint8Array(4) };
+      },
+    },
+  });
+  let getCalls = 0;
+  const signal = new Proxy(new AbortController().signal, {
+    get() { getCalls += 1; throw new Error('must not run'); },
+    getOwnPropertyDescriptor() { throw new Error('reflection failed'); },
+  });
+  let result: RuntimeCommandResult | undefined;
+  await assert.doesNotReject(async () => {
+    result = await commands.addImageFromUrl({
+      imageId: 'safe', url: 'custom://safe',
+    }, { signal });
+  });
+  assert.equal(result?.ok, false);
+  if (result !== undefined) assertFailureCode(result, 'INVALID_INPUT');
+  assert.equal(getCalls, 0);
+  assert.equal(loaderCalls, 0);
+  assert.deepEqual(map.calls, []);
+});
+
+test('real AbortSignals use intrinsic accessors and listeners without invoking hostile shadows', async () => {
+  const map = new FakeMap();
+  const controller = new AbortController();
+  let shadowCalls = 0;
+  for (const key of ['aborted', 'addEventListener', 'removeEventListener'] as const) {
+    Object.defineProperty(controller.signal, key, {
+      configurable: true,
+      get() { shadowCalls += 1; throw new Error('must not run'); },
+    });
+  }
+  let rejectLoading!: (error: unknown) => void;
+  const loaderPromise = new Promise<never>((_resolve, reject) => { rejectLoading = reject; });
+  const commands = createMapRuntimeCommands(map.asMap(), {
+    imageLoader: { load: () => loaderPromise },
+  });
+  const pending = commands.addImageFromUrl({
+    imageId: 'pending', url: 'custom://pending',
+  }, { signal: controller.signal });
+  await Promise.resolve();
+  controller.abort();
+  const result = await pending;
+  assertFailureCode(result, 'TIMEOUT');
+  rejectLoading(new Error('late loader failure'));
+  await new Promise<void>((resolve) => { setImmediate(resolve); });
+  assert.equal(shadowCalls, 0);
+  assert.deepEqual(map.calls.map((call) => call.method), ['hasImage']);
+});
+
+test('a signal that becomes unreadable after loading cannot mutate image state', async () => {
+  const map = new FakeMap();
+  const controller = new AbortController();
+  const revocable = Proxy.revocable(controller.signal, {
+    get(target, key) { return Reflect.get(target, key, target); },
+    set(target, key, value) { return Reflect.set(target, key, value, target); },
+  });
+  const commands = createMapRuntimeCommands(map.asMap(), {
+    imageLoader: {
+      async load() {
+        revocable.revoke();
+        return { width: 1, height: 1, data: new Uint8Array(4) };
+      },
+    },
+  });
+  const result = await commands.addImageFromUrl({
+    imageId: 'revoked', url: 'custom://revoked',
+  }, { signal: revocable.proxy });
+  assertFailureCode(result, 'INVALID_INPUT');
+  assert.deepEqual(map.calls.map((call) => call.method), ['hasImage']);
+  assert.equal(map.images.has('revoked'), false);
+});
+
 test('image lists apply configured limits before reading output and remain JSON-only', () => {
   const map = new FakeMap();
   const capped = new Array<string>(MAX_RUNTIME_LIST_LIMIT + 1);
@@ -601,6 +788,50 @@ test('sprite list/add/overwrite/remove preserve IDs and URLs with bounded JSON o
   assert.deepEqual(map.calls.map((call) => call.method), ['getSprite', 'removeSprite']);
   map.clearCalls();
   assertFailureCode(commands.removeSprite({ spriteId: 'missing' }), 'NOT_FOUND');
+});
+
+test('failed sprite overwrite restores the original sprite and returns the primary failure', () => {
+  const map = new FakeMap();
+  map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+  map.spriteAddErrors.set('sprite://new', new Error('replacement failed'));
+  const result = createMapRuntimeCommands(map.asMap()).addSprite({
+    spriteId: 'base', url: 'sprite://new', overwrite: true,
+  });
+  assertFailureCode(result, 'INTERNAL');
+  assert.deepEqual(map.calls, [
+    { method: 'getSprite', args: [] },
+    { method: 'removeSprite', args: ['base'] },
+    { method: 'addSprite', args: ['base', 'sprite://new'] },
+    { method: 'addSprite', args: ['base', 'sprite://old'] },
+  ]);
+  assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://old' }]);
+});
+
+test('sprite restore failure preserves the primary error and exposes only safe rollback details', () => {
+  const map = new FakeMap();
+  map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+  let thrownGetterCalls = 0;
+  const hostilePrimary = {};
+  Object.defineProperty(hostilePrimary, 'message', {
+    get() { thrownGetterCalls += 1; throw new Error('must not leak'); },
+  });
+  map.spriteAddErrors.set('sprite://new', hostilePrimary);
+  map.spriteAddErrors.set('sprite://old', new Error('restore secret'));
+  const result = createMapRuntimeCommands(map.asMap()).addSprite({
+    spriteId: 'base', url: 'sprite://new', overwrite: true,
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, 'INTERNAL');
+    assert.equal(result.error.message, 'MapLibre sprite update failed.');
+    assert.deepEqual(result.error.details, { rollbackFailed: true });
+    assert.equal(jsonValueSchema.safeParse(result.error).success, true);
+  }
+  assert.equal(thrownGetterCalls, 0);
+  assert.deepEqual(map.calls.map((call) => call.method), [
+    'getSprite', 'removeSprite', 'addSprite', 'addSprite',
+  ]);
+  assert.deepEqual(map.spriteListResult, []);
 });
 
 test('Map exceptions and authentic StyleToolErrors become structured failures', async () => {

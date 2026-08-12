@@ -121,20 +121,91 @@ function conflict(kind: 'Image' | 'Sprite', id: string): StyleToolError {
   );
 }
 
-function unsupportedGeoJsonSource(sourceId: string, source: Source): StyleToolError {
+function unsupportedGeoJsonSource(sourceId: string, sourceType?: string): StyleToolError {
+  const details: JsonObject = sourceType === undefined
+    ? { sourceId }
+    : { sourceId, sourceType };
   return createStyleToolError(
     'UNSUPPORTED_SOURCE',
     `Source "${sourceId}" is not a GeoJSON source.`,
     '/sourceId',
-    { sourceId, sourceType: source.type },
+    details,
   );
 }
 
-function isGeoJsonSource(source: Source | undefined): source is GeoJSONSource {
-  return source !== undefined
-    && source.type === 'geojson'
-    && 'updateData' in source
-    && typeof source.updateData === 'function';
+type DataPropertyInspection =
+  | { kind: 'value'; value: unknown }
+  | { kind: 'missing' }
+  | { kind: 'invalid' };
+
+type GeoJsonSourceInspection =
+  | { kind: 'geojson'; updateData: GeoJSONSource['updateData'] }
+  | { kind: 'unsupported'; sourceType?: string }
+  | { kind: 'invalid' };
+
+function inspectOwnEnumerableData(value: object, key: string): DataPropertyInspection {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined) return { kind: 'missing' };
+    return descriptor.enumerable && 'value' in descriptor
+      ? { kind: 'value', value: descriptor.value }
+      : { kind: 'invalid' };
+  } catch {
+    return { kind: 'invalid' };
+  }
+}
+
+function inspectPrototypeData(value: object, key: string): DataPropertyInspection {
+  try {
+    const seen = new Set<object>();
+    let current: object | null = value;
+    while (current !== null) {
+      if (seen.has(current)) return { kind: 'invalid' };
+      seen.add(current);
+      const descriptor = Object.getOwnPropertyDescriptor(current, key);
+      if (descriptor !== undefined) {
+        return 'value' in descriptor
+          ? { kind: 'value', value: descriptor.value }
+          : { kind: 'invalid' };
+      }
+      current = Object.getPrototypeOf(current);
+    }
+    return { kind: 'missing' };
+  } catch {
+    return { kind: 'invalid' };
+  }
+}
+
+function isGeoJsonUpdateData(value: unknown): value is GeoJSONSource['updateData'] {
+  return typeof value === 'function';
+}
+
+function inspectGeoJsonSource(source: Source): GeoJsonSourceInspection {
+  const type = inspectOwnEnumerableData(source, 'type');
+  if (type.kind === 'invalid') return { kind: 'invalid' };
+  if (type.kind === 'missing') return { kind: 'unsupported' };
+  if (type.value !== 'geojson') return typeof type.value === 'string'
+    ? { kind: 'unsupported', sourceType: type.value }
+    : { kind: 'unsupported' };
+  const updateData = inspectPrototypeData(source, 'updateData');
+  return updateData.kind === 'value' && isGeoJsonUpdateData(updateData.value)
+    ? { kind: 'geojson', updateData: updateData.value }
+    : { kind: 'invalid' };
+}
+
+function isGeoJsonSource(
+  source: Source,
+  inspection: GeoJsonSourceInspection,
+): source is GeoJSONSource {
+  return inspection.kind === 'geojson';
+}
+
+function updateGeoJsonSource(
+  source: GeoJSONSource,
+  updateData: GeoJSONSource['updateData'],
+  diff: GeoJSONSourceDiff,
+): Promise<void> {
+  return Reflect.apply(updateData, source, [diff]);
 }
 
 function appendOwn<Value>(values: Value[], value: Value): void {
@@ -197,7 +268,9 @@ function ownArrayLength(value: unknown): number | undefined {
   }
 }
 
-function projectSprite(value: unknown): JsonObject | undefined {
+type RuntimeSprite = { id: string; url: string };
+
+function projectSprite(value: unknown): RuntimeSprite | undefined {
   const id = ownEnumerableData(value, 'id');
   const url = ownEnumerableData(value, 'url');
   if (typeof id !== 'string' || id.length === 0
@@ -229,7 +302,7 @@ function readSprites(map: Map):
 }
 
 function findSprite(sprites: readonly unknown[], length: number, spriteId: string):
-  | { ok: true; found: boolean }
+  | { ok: true; sprite?: RuntimeSprite }
   | { ok: false; error: StyleToolError } {
   for (let index = 0; index < length; index += 1) {
     const sprite = ownEnumerableData(sprites, String(index));
@@ -246,9 +319,97 @@ function findSprite(sprites: readonly unknown[], length: number, spriteId: strin
         error: createStyleToolError('INTERNAL', 'MapLibre returned an invalid sprite.'),
       };
     }
-    if (projected.id === spriteId) return { ok: true, found: true };
+    if (projected.id === spriteId) return { ok: true, sprite: projected };
   }
-  return { ok: true, found: false };
+  return { ok: true };
+}
+
+const abortSignalAbortedGetter = Object.getOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  'aborted',
+)?.get;
+const intrinsicAddEventListener = EventTarget.prototype.addEventListener;
+const intrinsicRemoveEventListener = EventTarget.prototype.removeEventListener;
+const INVALID_ABORT_STATE = Symbol('invalidAbortState');
+
+function readAbortState(signal: object): boolean | typeof INVALID_ABORT_STATE {
+  if (abortSignalAbortedGetter === undefined) return INVALID_ABORT_STATE;
+  try {
+    const value: unknown = Reflect.apply(abortSignalAbortedGetter, signal, []);
+    return typeof value === 'boolean' ? value : INVALID_ABORT_STATE;
+  } catch {
+    return INVALID_ABORT_STATE;
+  }
+}
+
+function addIntrinsicAbortListener(signal: object, listener: EventListener): boolean {
+  try {
+    Reflect.apply(intrinsicAddEventListener, signal, [
+      'abort', listener, { once: true },
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeIntrinsicAbortListener(signal: object, listener: EventListener): boolean {
+  try {
+    Reflect.apply(intrinsicRemoveEventListener, signal, ['abort', listener]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    const keys = Reflect.ownKeys(value);
+    if (Reflect.ownKeys(Object.getOwnPropertyDescriptors(value)).length !== keys.length) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  if (readAbortState(value) === INVALID_ABORT_STATE) return false;
+  const probe = (): void => undefined;
+  if (!addIntrinsicAbortListener(value, probe)) return false;
+  return removeIntrinsicAbortListener(value, probe);
+}
+
+function invalidRuntimeExecution(): StyleToolError {
+  return createStyleToolError(
+    'INVALID_INPUT',
+    'Runtime command execution options are invalid.',
+    '',
+  );
+}
+
+function parseRuntimeExecution(execution: unknown): ParsedInput<AbortSignal> {
+  try {
+    if (typeof execution !== 'object' || execution === null
+      || Object.getPrototypeOf(execution) !== Object.prototype) {
+      return { ok: false, error: invalidRuntimeExecution() };
+    }
+    const keys = Reflect.ownKeys(execution);
+    const descriptors = Object.getOwnPropertyDescriptors(execution);
+    if (Reflect.ownKeys(descriptors).length !== keys.length
+      || keys.some((key) => key !== 'signal')) {
+      return { ok: false, error: invalidRuntimeExecution() };
+    }
+    const signalDescriptor = descriptors.signal;
+    if (signalDescriptor === undefined) {
+      return { ok: true, value: new AbortController().signal };
+    }
+    if (!signalDescriptor.enumerable || !('value' in signalDescriptor)
+      || !isAbortSignal(signalDescriptor.value)) {
+      return { ok: false, error: invalidRuntimeExecution() };
+    }
+    return { ok: true, value: signalDescriptor.value };
+  } catch {
+    return { ok: false, error: invalidRuntimeExecution() };
+  }
 }
 
 function abortedError(): StyleToolError {
@@ -260,26 +421,47 @@ function abortedError(): StyleToolError {
   );
 }
 
+function currentSignalFailure(signal: object): StyleToolError | undefined {
+  const state = readAbortState(signal);
+  if (state === INVALID_ABORT_STATE) return invalidRuntimeExecution();
+  return state ? abortedError() : undefined;
+}
+
 function raceAbort<Value>(work: Promise<Value>, signal: AbortSignal): Promise<Value> {
-  if (signal.aborted) {
-    void work.then(() => undefined, () => undefined);
-    return Promise.reject(abortedError());
-  }
   return new Promise<Value>((resolve, reject) => {
     let settled = false;
+    let subscribed = false;
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
-      signal.removeEventListener('abort', onAbort);
+      if (subscribed) removeIntrinsicAbortListener(signal, onAbort);
       action();
     };
     const onAbort = (): void => finish(() => reject(abortedError()));
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
-    work.then(
+    void work.then(
       (value) => finish(() => resolve(value)),
       (error: unknown) => finish(() => reject(error)),
     );
+    const before = readAbortState(signal);
+    if (before === INVALID_ABORT_STATE) {
+      finish(() => reject(invalidRuntimeExecution()));
+      return;
+    }
+    if (before) {
+      onAbort();
+      return;
+    }
+    subscribed = addIntrinsicAbortListener(signal, onAbort);
+    if (!subscribed) {
+      finish(() => reject(invalidRuntimeExecution()));
+      return;
+    }
+    const after = readAbortState(signal);
+    if (after === INVALID_ABORT_STATE) {
+      finish(() => reject(invalidRuntimeExecution()));
+    } else if (after) {
+      onAbort();
+    }
   });
 }
 
@@ -331,9 +513,11 @@ function rasterizeLoadedImage(
 function defaultImageLoader(map: Map): RuntimeImageLoader {
   return {
     async load(url, { signal }) {
-      if (signal.aborted) throw abortedError();
+      const before = currentSignalFailure(signal);
+      if (before !== undefined) throw before;
       const response = await raceAbort(map.loadImage(url), signal);
-      if (signal.aborted) throw abortedError();
+      const after = currentSignalFailure(signal);
+      if (after !== undefined) throw after;
       return rasterizeLoadedImage(response.data);
     },
   };
@@ -352,12 +536,32 @@ export function createMapRuntimeCommands(
       try {
         const source = map.getSource(parsed.value.sourceId);
         if (source === undefined) return failure(notFound('Source', parsed.value.sourceId));
-        if (!isGeoJsonSource(source)) {
-          return failure(unsupportedGeoJsonSource(parsed.value.sourceId, source));
+        const inspection = inspectGeoJsonSource(source);
+        if (inspection.kind === 'invalid') {
+          return failure(createStyleToolError(
+            'INTERNAL',
+            'MapLibre returned an unreadable source.',
+            '/sourceId',
+            { sourceId: parsed.value.sourceId },
+          ));
+        }
+        if (inspection.kind === 'unsupported') {
+          return failure(unsupportedGeoJsonSource(
+            parsed.value.sourceId,
+            inspection.sourceType,
+          ));
+        }
+        if (!isGeoJsonSource(source, inspection)) {
+          return failure(createStyleToolError(
+            'INTERNAL',
+            'MapLibre returned an unreadable source.',
+            '/sourceId',
+            { sourceId: parsed.value.sourceId },
+          ));
         }
         const compatibleDiff: GeoJSONSourceDiff = parsed.value.diff;
         void compatibleDiff;
-        await source.updateData(parsed.value.diff);
+        await updateGeoJsonSource(source, inspection.updateData, parsed.value.diff);
         return acknowledgement();
       } catch (error) {
         return failure(normalizeFailure(error, 'MapLibre GeoJSON update failed.'));
@@ -475,19 +679,24 @@ export function createMapRuntimeCommands(
     ) {
       const parsed = parseInput(addImageFromUrlInputSchema, input);
       if (!parsed.ok) return failure(parsed.error);
-      const signal = execution.signal ?? new AbortController().signal;
-      if (signal.aborted) return failure(abortedError());
+      const parsedExecution = parseRuntimeExecution(execution);
+      if (!parsedExecution.ok) return failure(parsedExecution.error);
+      const signal = parsedExecution.value;
       try {
+        const before = currentSignalFailure(signal);
+        if (before !== undefined) return failure(before);
         const existedBeforeLoad = map.hasImage(parsed.value.imageId);
         if (existedBeforeLoad && parsed.value.overwrite !== true) {
           return failure(conflict('Image', parsed.value.imageId));
         }
         const loading = Promise.resolve().then(() => {
-          if (signal.aborted) throw abortedError();
+          const loadingFailure = currentSignalFailure(signal);
+          if (loadingFailure !== undefined) throw loadingFailure;
           return imageLoader.load(parsed.value.url, { signal });
         });
         const image = await raceAbort(loading, signal);
-        if (signal.aborted) return failure(abortedError());
+        const after = currentSignalFailure(signal);
+        if (after !== undefined) return failure(after);
         const imageInput: AddImageDataInput = {
           imageId: parsed.value.imageId,
           image,
@@ -511,7 +720,8 @@ export function createMapRuntimeCommands(
         }
         return acknowledgement();
       } catch (error) {
-        if (signal.aborted) return failure(abortedError());
+        const signalFailure = currentSignalFailure(signal);
+        if (signalFailure !== undefined) return failure(signalFailure);
         return failure(normalizeFailure(error, 'MapLibre image loading failed.'));
       }
     },
@@ -558,15 +768,32 @@ export function createMapRuntimeCommands(
       if (!queried.ok) return failure(queried.error);
       const existing = findSprite(queried.sprites, queried.length, parsed.value.spriteId);
       if (!existing.ok) return failure(existing.error);
-      if (existing.found && parsed.value.overwrite !== true) {
+      if (existing.sprite !== undefined && parsed.value.overwrite !== true) {
         return failure(conflict('Sprite', parsed.value.spriteId));
       }
+      let removedExisting = false;
       try {
-        if (existing.found) map.removeSprite(parsed.value.spriteId);
+        if (existing.sprite !== undefined) {
+          map.removeSprite(parsed.value.spriteId);
+          removedExisting = true;
+        }
         map.addSprite(parsed.value.spriteId, parsed.value.url);
         return acknowledgement();
       } catch (error) {
-        return failure(normalizeFailure(error, 'MapLibre sprite update failed.'));
+        const primary = normalizeFailure(error, 'MapLibre sprite update failed.');
+        if (removedExisting && existing.sprite !== undefined) {
+          try {
+            map.addSprite(existing.sprite.id, existing.sprite.url);
+          } catch {
+            return failure(createStyleToolError(
+              primary.code,
+              primary.message,
+              primary.path,
+              { rollbackFailed: true },
+            ));
+          }
+        }
+        return failure(primary);
       }
     },
 
@@ -577,7 +804,7 @@ export function createMapRuntimeCommands(
       if (!queried.ok) return failure(queried.error);
       const existing = findSprite(queried.sprites, queried.length, parsed.value.spriteId);
       if (!existing.ok) return failure(existing.error);
-      if (!existing.found) return failure(notFound('Sprite', parsed.value.spriteId));
+      if (existing.sprite === undefined) return failure(notFound('Sprite', parsed.value.spriteId));
       try {
         map.removeSprite(parsed.value.spriteId);
         return acknowledgement();
