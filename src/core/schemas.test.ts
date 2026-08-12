@@ -1,0 +1,252 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { z } from 'zod';
+import {
+  createStyleTransactionSchema,
+  jsonValueSchema,
+  setLayerPropertiesOperationSchema,
+  styleDocumentSchema,
+  styleOperationSchema,
+  styleTransactionSchema,
+} from './schemas.js';
+import type {
+  JsonValue, SetLayerPropertiesOperation, StyleOperation, StyleTransaction,
+} from './types.js';
+
+type Extends<Actual, Expected> = [Actual] extends [Expected] ? true : false;
+type Assert<T extends true> = T;
+type _JsonValueOutput = Assert<Extends<z.output<typeof jsonValueSchema>, JsonValue>>;
+type _SetLayerOutput = Assert<Extends<
+  z.output<typeof setLayerPropertiesOperationSchema>, SetLayerPropertiesOperation
+>>;
+type _OperationOutput = Assert<Extends<z.output<typeof styleOperationSchema>, StyleOperation>>;
+type _TransactionOutput = Assert<Extends<
+  z.output<typeof styleTransactionSchema>, StyleTransaction
+>>;
+const compileAssertions: [
+  _JsonValueOutput, _SetLayerOutput, _OperationOutput, _TransactionOutput,
+] = [true, true, true, true];
+
+const operation = (index = 0) => ({
+  op: 'setLayerProperties' as const,
+  layerId: `roads-${index}`,
+  paint: { 'line-width': index },
+});
+
+test('parses a strict transaction and defaults validate to true', () => {
+  const parsed = styleTransactionSchema.parse({ operations: [{
+    op: 'setLayerProperties', layerId: 'roads',
+    paint: { 'line-color': '#fff', 'line-width': null },
+  }] });
+  assert.equal(parsed.validate, true);
+  assert.deepEqual(compileAssertions, [true, true, true, true]);
+});
+
+test('rejects operations that omit the discriminator', () => {
+  assert.equal(styleTransactionSchema.safeParse({
+    operations: [{ layerId: 'roads', paint: {} }],
+  }).success, false);
+});
+
+test('rejects empty transactions, unknown fields, and nested non-JSON values', () => {
+  assert.equal(styleTransactionSchema.safeParse({ operations: [] }).success, false);
+  assert.equal(styleTransactionSchema.safeParse({
+    operations: [{ op: 'setLayerProperties', layerId: 'roads', surprise: true }],
+  }).success, false);
+  assert.equal(styleOperationSchema.safeParse({
+    ...operation(), surprise: true,
+  }).success, false);
+  assert.equal(styleTransactionSchema.safeParse({
+    operations: [operation()], surprise: true,
+  }).success, false);
+  assert.equal(styleTransactionSchema.safeParse({ operations: [{
+    op: 'setLayerProperties', layerId: 'roads', paint: { value: undefined },
+  }] }).success, false);
+});
+
+test('reports one deterministic issue when operations exceed the configured limit', () => {
+  assert.equal(styleTransactionSchema.safeParse({
+    operations: Array.from({ length: 100 }, (_, index) => operation(index)),
+  }).success, true);
+
+  const tooLarge = styleTransactionSchema.safeParse({
+    operations: Array.from({ length: 101 }, (_, index) => operation(index)),
+  });
+  assert.equal(tooLarge.success, false);
+  if (!tooLarge.success) {
+    assert.deepEqual(tooLarge.error.issues, [{
+      code: 'custom',
+      message: 'Too many operations',
+      path: ['operations'],
+      params: {
+        reason: 'maxOperations', maxOperations: 100, actualOperations: 101,
+      },
+    }]);
+  }
+
+  assert.equal(createStyleTransactionSchema(101).safeParse({
+    operations: Array.from({ length: 101 }, (_, index) => operation(index)),
+  }).success, true);
+});
+
+test('rejects invalid configured operation limits synchronously', () => {
+  for (const limit of [0, -1, 1.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => createStyleTransactionSchema(limit));
+  }
+});
+
+test('enforces operation fields, nullable values, zoom range, and zoom ordering', () => {
+  assert.equal(setLayerPropertiesOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', metadata: null,
+    paint: { 'line-color': null }, layout: { visibility: null },
+    minzoom: 0, maxzoom: 24,
+  }).success, true);
+  assert.equal(setLayerPropertiesOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: '',
+  }).success, false);
+  assert.equal(setLayerPropertiesOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', minzoom: -1,
+  }).success, false);
+  assert.equal(setLayerPropertiesOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', maxzoom: 25,
+  }).success, false);
+  assert.equal(setLayerPropertiesOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', minzoom: 12, maxzoom: 8,
+  }).success, false);
+});
+
+test('accepts style extension fields but requires its strict JSON-safe envelope', () => {
+  const parsed = styleDocumentSchema.safeParse({
+    version: 8,
+    sources: { base: { type: 'vector', customSourceExtension: { enabled: true } } },
+    layers: [{
+      id: 'roads', type: 'line', customLayerExtension: ['valid'],
+    }],
+    customStyleExtension: { enabled: true },
+  });
+  assert.equal(parsed.success, true);
+  assert.equal(styleDocumentSchema.safeParse({
+    version: 7, sources: {}, layers: [],
+  }).success, false);
+  assert.equal(styleDocumentSchema.safeParse({
+    version: 8, sources: [], layers: [],
+  }).success, false);
+  assert.equal(styleDocumentSchema.safeParse({
+    version: 8, sources: {}, layers: [{ id: '', type: 'line' }],
+  }).success, false);
+  assert.equal(styleDocumentSchema.safeParse({
+    version: 8, sources: {}, layers: [{ id: 'roads', type: '' }],
+  }).success, false);
+  assert.equal(styleDocumentSchema.safeParse({
+    version: 8, sources: {}, layers: [], metadata: new Date(),
+  }).success, false);
+});
+
+test('rejects every non-JSON primitive and exotic prototype', () => {
+  for (const value of [
+    undefined, () => undefined, Symbol('value'), 1n,
+    Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY,
+    new Date(), new Map(), Object.create(null),
+  ]) {
+    assert.equal(jsonValueSchema.safeParse(value).success, false);
+  }
+  class CustomValue {
+    value = true;
+  }
+  assert.equal(jsonValueSchema.safeParse(new CustomValue()).success, false);
+});
+
+test('rejects cycles, aliases, dangerous keys, and hidden or symbol properties', () => {
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  assert.equal(jsonValueSchema.safeParse(cyclic).success, false);
+
+  const shared = { color: '#000' };
+  assert.equal(jsonValueSchema.safeParse({ first: shared, second: shared }).success, false);
+
+  for (const key of ['__proto__', 'prototype', 'constructor']) {
+    const dangerous = JSON.parse(`{"${key}":true}`) as unknown;
+    assert.equal(jsonValueSchema.safeParse(dangerous).success, false);
+  }
+
+  const hidden = { visible: true };
+  Object.defineProperty(hidden, 'hidden', { value: true, enumerable: false });
+  assert.equal(jsonValueSchema.safeParse(hidden).success, false);
+
+  const symbolKeyed: Record<PropertyKey, unknown> = { visible: true };
+  symbolKeyed[Symbol('hidden')] = true;
+  assert.equal(jsonValueSchema.safeParse(symbolKeyed).success, false);
+});
+
+test('rejects array holes, non-canonical indexes, and extra array keys', () => {
+  const hole = [1, 2, 3];
+  assert.equal(Reflect.deleteProperty(hole, '1'), true);
+  assert.equal(jsonValueSchema.safeParse(hole).success, false);
+
+  const extra = [1, 2];
+  Object.defineProperty(extra, 'extra', { value: true, enumerable: true });
+  assert.equal(jsonValueSchema.safeParse(extra).success, false);
+
+  const hidden = [1, 2];
+  Object.defineProperty(hidden, 'hidden', { value: true, enumerable: false });
+  assert.equal(jsonValueSchema.safeParse(hidden).success, false);
+});
+
+test('rejects accessors without invoking getters at any nesting depth', () => {
+  let getterCalls = 0;
+  const accessor: Record<PropertyKey, unknown> = {};
+  Object.defineProperty(accessor, 'value', {
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('must not run'); },
+  });
+  assert.equal(jsonValueSchema.safeParse(accessor).success, false);
+
+  const nestedPaint: Record<PropertyKey, unknown> = {};
+  Object.defineProperty(nestedPaint, 'line-color', {
+    enumerable: true,
+    get() { getterCalls += 1; throw new Error('must not run'); },
+  });
+  assert.equal(setLayerPropertiesOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', paint: nestedPaint,
+  }).success, false);
+  assert.equal(styleOperationSchema.safeParse({
+    op: 'setLayerProperties', layerId: 'roads', paint: nestedPaint,
+  }).success, false);
+  assert.equal(styleTransactionSchema.safeParse({ operations: [{
+    op: 'setLayerProperties', layerId: 'roads', paint: nestedPaint,
+  }] }).success, false);
+  assert.equal(getterCalls, 0);
+});
+
+test('turns every hostile reflection trap into a safe parse failure', () => {
+  const trapNames = ['getPrototypeOf', 'ownKeys', 'getOwnPropertyDescriptor'] as const;
+  for (const trapName of trapNames) {
+    const target = { version: 8, sources: {}, layers: [] };
+    const hostile = new Proxy(target, {
+      [trapName]() { throw new Error('hostile reflection'); },
+    });
+    assert.doesNotThrow(() => styleDocumentSchema.safeParse(hostile));
+    assert.equal(styleDocumentSchema.safeParse(hostile).success, false);
+  }
+
+  const revoked = Proxy.revocable({ version: 8, sources: {}, layers: [] }, {});
+  revoked.revoke();
+  assert.doesNotThrow(() => styleDocumentSchema.safeParse(revoked.proxy));
+  assert.equal(styleDocumentSchema.safeParse(revoked.proxy).success, false);
+});
+
+test('sanitizes transparent proxies before Zod or cloning can invoke get traps', () => {
+  let getCalls = 0;
+  const original = { version: 8, sources: {}, layers: [] };
+  const proxied = new Proxy(original, {
+    get() { getCalls += 1; throw new Error('must not run'); },
+  });
+  const parsed = styleDocumentSchema.safeParse(proxied);
+  assert.equal(parsed.success, true);
+  assert.equal(getCalls, 0);
+  if (parsed.success) {
+    assert.notStrictEqual(parsed.data, original);
+    assert.doesNotThrow(() => structuredClone(parsed.data));
+    assert.equal(Object.getPrototypeOf(parsed.data), Object.prototype);
+  }
+});

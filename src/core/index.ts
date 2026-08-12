@@ -32,3 +32,11 @@ export {
   jsonUtf8ByteLength,
   utf8ByteLength,
 } from './utf8.js';
+export {
+  createStyleTransactionSchema,
+  jsonValueSchema,
+  setLayerPropertiesOperationSchema,
+  styleDocumentSchema,
+  styleOperationSchema,
+  styleTransactionSchema,
+} from './schemas.js';
