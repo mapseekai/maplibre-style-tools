@@ -2,12 +2,15 @@ import { z } from 'zod';
 import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import type {
+  AddSourceOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
   InlineGeoJson, JsonPrimitive, JsonValue,
   ListSourceLayersOptions,
+  PatchSourceOperation, RemoveSourceOperation, RenameSourceOperation,
   SetGeoJsonSourceFilterOperation,
+  SetGeoJsonDataOperation,
   SetLayerFilterOperation, SetLayerPropertiesOperation,
-  SetStyleRootPropertiesOperation, StyleOperation, StyleTransaction,
+  SetStyleRootPropertiesOperation, SourceOperation, StyleOperation, StyleTransaction,
 } from './types.js';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
@@ -314,6 +317,14 @@ const OPERATION_KEYS = new Set([
 const ROOT_OPERATION_KEYS = new Set(['op', 'properties']);
 const LAYER_FILTER_OPERATION_KEYS = new Set(['op', 'layerId', 'mode', 'filter']);
 const SOURCE_FILTER_OPERATION_KEYS = new Set(['op', 'sourceId', 'mode', 'filter']);
+const ADD_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'source']);
+const DUPLICATE_SOURCE_OPERATION_KEYS = new Set([
+  'op', 'sourceId', 'newSourceId', 'overrides',
+]);
+const RENAME_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'newSourceId']);
+const REMOVE_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'cascadeLayers']);
+const PATCH_SOURCE_OPERATION_KEYS = new Set(['op', 'sourceId', 'patch']);
+const SET_GEOJSON_DATA_OPERATION_KEYS = new Set(['op', 'sourceId', 'data']);
 const PROTECTED_ROOT_KEYS = new Set(['version', 'sources', 'layers']);
 
 function fallbackSetLayerOperation(value: JsonValue): JsonValue | undefined {
@@ -365,11 +376,62 @@ function fallbackFilterOperation(
   return validMode && Array.isArray(ownValue(value, 'filter')) ? value : undefined;
 }
 
+function validSourceId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function fallbackSourceOperation(
+  value: JsonValue,
+  expectedOperation?: SourceOperation['op'],
+): JsonValue | undefined {
+  if (!isJsonObject(value)) return undefined;
+  const operation = ownValue(value, 'op');
+  if (expectedOperation !== undefined && operation !== expectedOperation) return undefined;
+  const sourceId = ownValue(value, 'sourceId');
+  if (!validSourceId(sourceId)) return undefined;
+
+  switch (operation) {
+    case 'addSource':
+      return hasOnlyKeys(value, ADD_SOURCE_OPERATION_KEYS)
+        && isJsonObject(ownValue(value, 'source')) ? value : undefined;
+    case 'duplicateSource': {
+      if (!hasOnlyKeys(value, DUPLICATE_SOURCE_OPERATION_KEYS)
+        || !validSourceId(ownValue(value, 'newSourceId'))) return undefined;
+      const overrides = ownValue(value, 'overrides');
+      return overrides === undefined || isJsonObject(overrides) ? value : undefined;
+    }
+    case 'renameSource':
+      return hasOnlyKeys(value, RENAME_SOURCE_OPERATION_KEYS)
+        && validSourceId(ownValue(value, 'newSourceId')) ? value : undefined;
+    case 'removeSource': {
+      if (!hasOnlyKeys(value, REMOVE_SOURCE_OPERATION_KEYS)) return undefined;
+      const cascadeLayers = ownValue(value, 'cascadeLayers');
+      return cascadeLayers === undefined || typeof cascadeLayers === 'boolean'
+        ? value
+        : undefined;
+    }
+    case 'patchSource':
+      return hasOnlyKeys(value, PATCH_SOURCE_OPERATION_KEYS)
+        && isJsonObject(ownValue(value, 'patch')) ? value : undefined;
+    case 'setGeoJsonData': {
+      if (!hasOnlyKeys(value, SET_GEOJSON_DATA_OPERATION_KEYS)) return undefined;
+      const data = ownValue(value, 'data') as JsonValue | undefined;
+      return (typeof data === 'string' && data.trim().length > 0)
+        || (data !== undefined && inlineGeoJsonIssue(data) === undefined)
+        ? value
+        : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 function fallbackOperation(value: JsonValue): JsonValue | undefined {
   return fallbackSetLayerOperation(value)
     ?? fallbackRootOperation(value)
     ?? fallbackFilterOperation(value, 'setLayerFilter')
-    ?? fallbackFilterOperation(value, 'setGeoJsonSourceFilter');
+    ?? fallbackFilterOperation(value, 'setGeoJsonSourceFilter')
+    ?? fallbackSourceOperation(value);
 }
 
 function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
@@ -399,6 +461,12 @@ function fallbackOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined 
     || operation === 'setStyleRootProperties'
     || operation === 'setLayerFilter'
     || operation === 'setGeoJsonSourceFilter'
+    || operation === 'addSource'
+    || operation === 'duplicateSource'
+    || operation === 'renameSource'
+    || operation === 'removeSource'
+    || operation === 'patchSource'
+    || operation === 'setGeoJsonData'
     ? undefined
     : fallbackSetLayerOperationIssue(value);
 }
@@ -1029,11 +1097,91 @@ export const setGeoJsonSourceFilterOperationSchema = sanitizeBefore(
   (value) => fallbackFilterOperation(value, 'setGeoJsonSourceFilter'),
 );
 
+const sourceIdSchema = z.string().min(1);
+const addSourceOperationInnerSchema = z.object({
+  op: z.literal('addSource'),
+  sourceId: sourceIdSchema,
+  source: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<AddSourceOperation>;
+
+export const addSourceOperationSchema = sanitizeBefore(
+  addSourceOperationInnerSchema,
+  undefined,
+  (value) => fallbackSourceOperation(value, 'addSource'),
+);
+
+const duplicateSourceOperationInnerSchema = z.object({
+  op: z.literal('duplicateSource'),
+  sourceId: sourceIdSchema,
+  newSourceId: sourceIdSchema,
+  overrides: jsonObjectInnerSchema.optional(),
+}).strict() satisfies z.ZodType<DuplicateSourceOperation>;
+
+export const duplicateSourceOperationSchema = sanitizeBefore(
+  duplicateSourceOperationInnerSchema,
+  undefined,
+  (value) => fallbackSourceOperation(value, 'duplicateSource'),
+);
+
+const renameSourceOperationInnerSchema = z.object({
+  op: z.literal('renameSource'),
+  sourceId: sourceIdSchema,
+  newSourceId: sourceIdSchema,
+}).strict() satisfies z.ZodType<RenameSourceOperation>;
+
+export const renameSourceOperationSchema = sanitizeBefore(
+  renameSourceOperationInnerSchema,
+  undefined,
+  (value) => fallbackSourceOperation(value, 'renameSource'),
+);
+
+const removeSourceOperationInnerSchema = z.object({
+  op: z.literal('removeSource'),
+  sourceId: sourceIdSchema,
+  cascadeLayers: z.boolean().optional(),
+}).strict() satisfies z.ZodType<RemoveSourceOperation>;
+
+export const removeSourceOperationSchema = sanitizeBefore(
+  removeSourceOperationInnerSchema,
+  undefined,
+  (value) => fallbackSourceOperation(value, 'removeSource'),
+);
+
+const patchSourceOperationInnerSchema = z.object({
+  op: z.literal('patchSource'),
+  sourceId: sourceIdSchema,
+  patch: jsonObjectInnerSchema,
+}).strict() satisfies z.ZodType<PatchSourceOperation>;
+
+export const patchSourceOperationSchema = sanitizeBefore(
+  patchSourceOperationInnerSchema,
+  undefined,
+  (value) => fallbackSourceOperation(value, 'patchSource'),
+);
+
+const setGeoJsonDataOperationInnerSchema = z.object({
+  op: z.literal('setGeoJsonData'),
+  sourceId: sourceIdSchema,
+  data: z.union([nonEmptyStringSchema, inlineGeoJsonSchema]),
+}).strict() satisfies z.ZodType<SetGeoJsonDataOperation>;
+
+export const setGeoJsonDataOperationSchema = sanitizeBefore(
+  setGeoJsonDataOperationInnerSchema,
+  undefined,
+  (value) => fallbackSourceOperation(value, 'setGeoJsonData'),
+);
+
 const styleOperationInnerSchema = z.discriminatedUnion('op', [
   setLayerPropertiesOperationInnerSchema,
   setStyleRootPropertiesOperationInnerSchema,
   setLayerFilterOperationInnerSchema,
   setGeoJsonSourceFilterOperationInnerSchema,
+  addSourceOperationInnerSchema,
+  duplicateSourceOperationInnerSchema,
+  renameSourceOperationInnerSchema,
+  removeSourceOperationInnerSchema,
+  patchSourceOperationInnerSchema,
+  setGeoJsonDataOperationInnerSchema,
 ]) satisfies z.ZodType<StyleOperation>;
 
 type StyleOperationSchemaOutput = StyleOperation & Pick<

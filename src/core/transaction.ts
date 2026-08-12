@@ -7,6 +7,7 @@ import {
 } from './operations/filters.js';
 import { applySetLayerProperties } from './operations/layers.js';
 import { applyRootOperation } from './operations/root.js';
+import { applySourceOperation } from './operations/sources.js';
 import { createStyleTransactionSchema } from './schemas.js';
 import type {
   CoreExecutionLimits,
@@ -327,7 +328,13 @@ type HandledStyleOperation = Extract<
       | 'setLayerProperties'
       | 'setStyleRootProperties'
       | 'setLayerFilter'
-      | 'setGeoJsonSourceFilter';
+      | 'setGeoJsonSourceFilter'
+      | 'addSource'
+      | 'duplicateSource'
+      | 'renameSource'
+      | 'removeSource'
+      | 'patchSource'
+      | 'setGeoJsonData';
   }
 >;
 type UnhandledStyleOperation = Exclude<StyleOperation, HandledStyleOperation>;
@@ -346,6 +353,13 @@ function applyOperation(
       return applySetLayerFilter(style, operation, context);
     case 'setGeoJsonSourceFilter':
       return applySetGeoJsonSourceFilter(style, operation, context);
+    case 'addSource':
+    case 'duplicateSource':
+    case 'renameSource':
+    case 'removeSource':
+    case 'patchSource':
+    case 'setGeoJsonData':
+      return applySourceOperation(style, operation, context);
     default:
       return assertNever(operation as UnhandledStyleOperation);
   }

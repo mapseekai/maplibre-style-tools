@@ -250,11 +250,50 @@ export type SetGeoJsonSourceFilterOperation =
       filter: JsonValue[];
     }
   | { op: 'setGeoJsonSourceFilter'; sourceId: string; mode: 'clear' };
+export type AddSourceOperation = {
+  op: 'addSource';
+  sourceId: string;
+  source: JsonObject;
+};
+export type DuplicateSourceOperation = {
+  op: 'duplicateSource';
+  sourceId: string;
+  newSourceId: string;
+  overrides?: JsonObject;
+};
+export type RenameSourceOperation = {
+  op: 'renameSource';
+  sourceId: string;
+  newSourceId: string;
+};
+export type RemoveSourceOperation = {
+  op: 'removeSource';
+  sourceId: string;
+  cascadeLayers?: boolean;
+};
+export type PatchSourceOperation = {
+  op: 'patchSource';
+  sourceId: string;
+  patch: JsonObject;
+};
+export type SetGeoJsonDataOperation = {
+  op: 'setGeoJsonData';
+  sourceId: string;
+  data: InlineGeoJson | string;
+};
+export type SourceOperation =
+  | AddSourceOperation
+  | DuplicateSourceOperation
+  | RenameSourceOperation
+  | RemoveSourceOperation
+  | PatchSourceOperation
+  | SetGeoJsonDataOperation;
 export type StyleOperation =
   | SetLayerPropertiesOperation
   | SetStyleRootPropertiesOperation
   | SetLayerFilterOperation
-  | SetGeoJsonSourceFilterOperation;
+  | SetGeoJsonSourceFilterOperation
+  | SourceOperation;
 export type StyleTransaction = {
   operations: StyleOperation[];
   validate?: boolean;
