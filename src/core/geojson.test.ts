@@ -348,6 +348,30 @@ test('rejects a 4000-level geometry at the configured depth with the exact bound
   }
 });
 
+test('reports the first root GeometryCollection child when sibling depths exceed the limit', () => {
+  const point = () => ({ type: 'Point' as const, coordinates: [0, 0] });
+  assertFailure(
+    validateInlineGeoJson({
+      type: 'GeometryCollection', geometries: [point(), point(), point()],
+    }, { maxGeometryDepth: 1 }),
+    '/geometries/0',
+    'maxGeometryDepth',
+  );
+});
+
+test('reports the first Feature geometry child when sibling depths exceed the limit', () => {
+  const point = () => ({ type: 'Point' as const, coordinates: [0, 0] });
+  assertFailure(
+    validateInlineGeoJson({
+      type: 'Feature',
+      geometry: { type: 'GeometryCollection', geometries: [point(), point()] },
+      properties: null,
+    }, { maxGeometryDepth: 1 }),
+    '/geometry/geometries/0',
+    'maxGeometryDepth',
+  );
+});
+
 test('structural schema remains independent from the default aggregate feature budget', () => {
   const features = Array.from(
     { length: DEFAULT_GEOJSON_LIMITS.maxFeatures + 1 },

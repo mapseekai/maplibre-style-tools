@@ -298,17 +298,17 @@ function walkGeometry(
   }
   const geometries = ownValue(current.value, 'geometries') as GeoJsonGeometry[];
   const geometriesPath = childPath(current.path, 'geometries');
+  const childGeometryDepth = current.geometryDepth + 1;
+  if (geometries.length > 0 && childGeometryDepth > limits.maxGeometryDepth) {
+    return limitFailure(
+      'maxGeometryDepth',
+      limits.maxGeometryDepth,
+      childGeometryDepth,
+      childPath(geometriesPath, 0),
+    );
+  }
   for (let index = geometries.length - 1; index >= 0; index -= 1) {
     const childGeometryPath = childPath(geometriesPath, index);
-    const childGeometryDepth = current.geometryDepth + 1;
-    if (childGeometryDepth > limits.maxGeometryDepth) {
-      return limitFailure(
-        'maxGeometryDepth',
-        limits.maxGeometryDepth,
-        childGeometryDepth,
-        childGeometryPath,
-      );
-    }
     appendOwn(stack, {
       kind: 'geometry',
       value: ownValue(geometries, String(index)) as GeoJsonGeometry,
