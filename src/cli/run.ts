@@ -1,6 +1,7 @@
 import { validateStyleDocument } from '../core/index.js';
 import { parseCliArgs } from './args.js';
 import { CliInputError, readJsonInput } from './input.js';
+import { inspectStyle } from './inspect.js';
 import { writeDiagnostic, writeJson } from './output.js';
 import { CliArgumentError } from './types.js';
 import type { CliExitCode, CliIo } from './types.js';
@@ -70,6 +71,42 @@ export async function runCli(
         errors: result.errors,
         warnings: result.warnings,
       }, result.ok ? 0 : 1);
+    } catch (error) {
+      if (error instanceof CliInputError) {
+        await writeDiagnosticBestEffort(io, error.message);
+        return 2;
+      }
+      await writeDiagnosticBestEffort(io, `Internal error: ${messageOf(error)}`);
+      return 3;
+    }
+  }
+
+  if (command.kind === 'inspect') {
+    try {
+      const input = await readJsonInput(command.styleInput, io);
+      const validated = validateStyleDocument(input.value);
+      if (!validated.ok) {
+        return writeResult(io, {
+          ok: false,
+          errors: validated.errors,
+          warnings: validated.warnings,
+        }, 1);
+      }
+      const result = inspectStyle(validated.style, {
+        ...(command.query === undefined ? {} : { query: command.query }),
+        ...(command.type === undefined ? {} : { type: command.type }),
+        ...(command.source === undefined ? {} : { source: command.source }),
+        ...(command.sourceLayer === undefined ? {} : { sourceLayer: command.sourceLayer }),
+        ...(command.layerId === undefined ? {} : { layerId: command.layerId }),
+        ...(command.sourceId === undefined ? {} : { sourceId: command.sourceId }),
+        ...(command.sourceLayers === undefined ? {} : { sourceLayers: command.sourceLayers }),
+        ...(command.analyzeGeoJsonSourceId === undefined ? {} : {
+          analyzeGeoJsonSourceId: command.analyzeGeoJsonSourceId,
+        }),
+      });
+      return result.ok
+        ? writeResult(io, result.value, 0)
+        : writeResult(io, { ok: false, error: result.error }, 1);
     } catch (error) {
       if (error instanceof CliInputError) {
         await writeDiagnosticBestEffort(io, error.message);

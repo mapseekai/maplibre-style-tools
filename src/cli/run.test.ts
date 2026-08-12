@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rename, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdtemp, readFile, readdir, rename, stat, writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { after, describe, it } from 'node:test';
-import { DEFAULT_MAX_STYLE_BYTES } from '../core/index.js';
+import {
+  analyzeGeoJson, DEFAULT_MAX_STYLE_BYTES,
+} from '../core/index.js';
+import type { JsonValue } from '../core/index.js';
 import { readJsonInput } from './input.js';
 import { runCli } from './run.js';
 
@@ -50,6 +55,10 @@ const makeIo = (
 ) => ({
   stdin: Readable.from([stdinText]), stdout, stderr, cwd,
 });
+
+const acceptsJsonValue = (value: JsonValue): void => {
+  void value;
+};
 
 const closeWriter = async (): Promise<Writable> => {
   const stream = new BufferWriter();
@@ -215,5 +224,158 @@ describe('runCli validate', () => {
     const bothClosedIo = makeIo(cwd, '', await closeWriter(), await closeWriter());
     assert.equal(await runCli(['validate', 'valid.json'], bothClosedIo), 3);
     await immediate();
+  });
+});
+
+describe('runCli inspect', () => {
+  const inspectStyleFixture = {
+    version: 8,
+    sources: {
+      basemap: { type: 'vector', url: 'maplibre://basemap' },
+      points: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: { category: 'park' },
+            geometry: { type: 'Point', coordinates: [1, 2] },
+          }],
+        },
+      },
+      remote: { type: 'geojson', data: 'https://example.invalid/points.geojson' },
+    },
+    layers: [
+      {
+        id: 'road-primary', type: 'line', source: 'basemap',
+        'source-layer': 'transportation',
+        paint: { 'line-color': '#000000' },
+      },
+      { id: 'point-layer', type: 'circle', source: 'points' },
+    ],
+  };
+
+  const writeFixture = async (): Promise<{ cwd: string; stylePath: string }> => {
+    const cwd = await makeDirectory();
+    const stylePath = join(cwd, 'style.json');
+    await writeFile(stylePath, JSON.stringify(inspectStyleFixture));
+    return { cwd, stylePath };
+  };
+
+  const invoke = async (
+    cwd: string,
+    argv: readonly string[],
+  ): Promise<{
+    code: number;
+    json?: JsonValue;
+    stdout: string;
+    stderr: string;
+  }> => {
+    const io = makeIo(cwd);
+    const code = await runCli(argv, io);
+    const stdout = (io.stdout as BufferWriter).text;
+    const json = stdout.length === 0 ? undefined : JSON.parse(stdout) as JsonValue;
+    if (json !== undefined) acceptsJsonValue(json);
+    return { code, json, stdout, stderr: (io.stderr as BufferWriter).text };
+  };
+
+  it('returns default, exact, search, source-layer, and inline GeoJSON DTOs', async () => {
+    const { cwd, stylePath } = await writeFixture();
+    const summary = await invoke(cwd, ['inspect', stylePath]);
+    assert.equal(summary.code, 0);
+    assert.deepEqual(Object.keys(summary.json as object), [
+      'layerCount', 'sourceCount', 'layerTypes', 'layers',
+    ]);
+    assert.equal((summary.json as { layerCount: number }).layerCount, 2);
+
+    const layer = await invoke(cwd, ['inspect', stylePath, '--layer', 'road-primary']);
+    assert.equal((layer.json as { id: string }).id, 'road-primary');
+    const source = await invoke(cwd, ['inspect', stylePath, '--source-id', 'basemap']);
+    assert.equal((source.json as { type: string }).type, 'vector');
+
+    const query = await invoke(cwd, ['inspect', stylePath, '--query', 'road']);
+    assert.deepEqual(
+      (query.json as { layers: Array<{ id: string }> }).layers.map(({ id }) => id),
+      ['road-primary'],
+    );
+    const filtered = await invoke(cwd, [
+      'inspect', stylePath, '--type', 'line', '--source', 'basemap',
+      '--source-layer', 'transportation',
+    ]);
+    assert.deepEqual(
+      (filtered.json as { layers: Array<{ id: string }> }).layers.map(({ id }) => id),
+      ['road-primary'],
+    );
+
+    const usages = await invoke(cwd, ['inspect', stylePath, '--source-layers']);
+    assert.equal(
+      (usages.json as { sources: Array<{ sourceId: string }> }).sources[0]?.sourceId,
+      'basemap',
+    );
+    const scopedUsages = await invoke(cwd, [
+      'inspect', stylePath, '--source-layers', '--source', 'basemap',
+    ]);
+    assert.equal(
+      (scopedUsages.json as { sources: JsonValue[] }).sources.length,
+      1,
+    );
+
+    const analysis = await invoke(cwd, [
+      'inspect', stylePath, '--analyze-geojson', 'points',
+    ]);
+    assert.equal((analysis.json as { featureCount: number }).featureCount, 1);
+    assert.equal(analysis.stderr, '');
+  });
+
+  it('reports remote GeoJSON analysis without fetching or changing the directory', async () => {
+    const { cwd, stylePath } = await writeFixture();
+    const beforeBytes = await readFile(stylePath);
+    const beforeEntries = await readdir(cwd);
+    const expected = analyzeGeoJson('https://example.invalid/points.geojson');
+    assert.equal(expected.ok, true);
+    if (!expected.ok) assert.fail('expected remote analysis success');
+
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls += 1;
+      throw new Error('fetch must not run');
+    }) as typeof fetch;
+    try {
+      const result = await invoke(cwd, [
+        'inspect', stylePath, '--analyze-geojson', 'remote',
+      ]);
+      assert.equal(result.code, 0);
+      assert.deepEqual(result.json, expected.analysis);
+      assert.equal((result.json as { available: boolean }).available, false);
+      assert.equal((result.json as { reason: string }).reason, 'remote-url');
+      assert.equal(Array.isArray((result.json as { warnings: JsonValue[] }).warnings), true);
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.deepEqual(await readFile(stylePath), beforeBytes);
+    assert.deepEqual(await readdir(cwd), beforeEntries);
+  });
+
+  it('returns semantic error envelopes for absent and unsupported exact lookups', async () => {
+    const { cwd, stylePath } = await writeFixture();
+    for (const argv of [
+      ['inspect', stylePath, '--layer', 'missing'],
+      ['inspect', stylePath, '--source-id', 'missing'],
+      ['inspect', stylePath, '--analyze-geojson', 'basemap'],
+      ['inspect', stylePath, '--source-id', 'toString'],
+      ['inspect', stylePath, '--source-id', 'constructor'],
+      ['inspect', stylePath, '--source-id', '__proto__'],
+      ['inspect', stylePath, '--source-id', 'valueOf'],
+      ['inspect', stylePath, '--source-id', '__defineGetter__'],
+    ]) {
+      const result = await invoke(cwd, argv);
+      assert.equal(result.code, 1);
+      assert.equal((result.json as { ok: boolean }).ok, false);
+      assert.equal(typeof (result.json as { error: { code: string } }).error.code, 'string');
+      assert.equal(result.stderr, '');
+    }
+
   });
 });
