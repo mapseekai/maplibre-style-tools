@@ -1,3 +1,5 @@
+/// <reference types="geojson" preserve="true" />
+
 import type {
   LayerSpecification, SourceSpecification, StyleSpecification,
 } from '@maplibre/maplibre-gl-style-spec';

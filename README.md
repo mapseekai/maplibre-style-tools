@@ -7,7 +7,7 @@ The package exposes a compact tool set for token-efficient workflows and a full 
 ## Requirements
 
 - Node.js 22.13 or newer
-- `maplibre-gl` 5.21 or a compatible release
+- `maplibre-gl` 6.3 or a compatible release
 - An AI SDK 6 tool consumer
 
 ## Local installation
@@ -50,6 +50,37 @@ const tools = createMapLibreStyleTools({
 ```
 
 The full factory exposes detailed tools for layers, sources, paint and layout properties, filters, zoom ranges, metadata, camera, terrain, sprites, glyphs, images, and other MapLibre style features.
+
+## Pure core
+
+Use the strict, transport-neutral core boundary when an adapter needs to validate
+and apply a style transaction without loading the browser or AI facade:
+
+```ts
+import { applyStyleTransaction } from 'maplibre-style-tools/core';
+
+const result = applyStyleTransaction(
+  { version: 8, sources: {}, layers: [] },
+  {
+    operations: [{
+      op: 'setLayerProperties',
+      layerId: 'roads',
+      paint: { 'line-color': '#ffffff' },
+    }],
+  },
+);
+```
+
+The root `StyleOperation` API and compact `operationsJson` input remain
+legacy-compatible. The `/core` API requires an operation discriminator and
+returns RFC 6901 diffs. Its defaults are a 5 MiB Style, 1 MiB diff, and 100
+operations; `StyleTransactionOptions` can override those limits explicitly.
+Adapters should pass unknown transactions to this boundary rather than
+pre-parsing them.
+
+The root facade owns the Node and GeoJSON declaration dependencies required by
+its browser/AI API. `/core` remains usable with no DOM or Node ambient types
+under strict NodeNext type checking.
 
 ## Development
 

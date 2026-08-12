@@ -1,3 +1,6 @@
+/// <reference types="node" preserve="true" />
+/// <reference types="geojson" preserve="true" />
+
 import { tool } from 'ai';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import { z } from 'zod';
