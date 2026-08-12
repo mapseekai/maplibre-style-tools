@@ -1,10 +1,19 @@
 import { applyStyleTransaction } from '../core/transaction.js';
+import { diffStyleDocuments } from '../core/diff.js';
+import { applySetLayerProperties } from '../core/operations/layers.js';
 import type {
+  CoreExecutionLimits,
   JsonObject as CoreJsonObject,
+  OperationContext,
   SetLayerPropertiesOperation,
   StyleDiffEntry as CoreStyleDiffEntry,
   StyleDocument as CoreStyleDocument,
 } from '../core/types.js';
+import {
+  DEFAULT_MAX_DIFF_BYTES,
+  DEFAULT_MAX_OPERATIONS,
+  DEFAULT_MAX_STYLE_BYTES,
+} from '../core/utf8.js';
 import { validateStyleDocument } from '../core/validation.js';
 import type {
   StyleDiffEntry,
@@ -14,25 +23,6 @@ import type {
   StyleOperationResult,
 } from '../types.js';
 
-const layerTypePropertyPrefixes: Record<
-  string,
-  { paint: string[]; layout: string[] }
-> = {
-  background: { paint: ['background-'], layout: ['visibility'] },
-  fill: { paint: ['fill-'], layout: ['visibility'] },
-  line: { paint: ['line-'], layout: ['visibility', 'line-'] },
-  symbol: {
-    paint: ['icon-', 'text-'],
-    layout: ['visibility', 'icon-', 'text-', 'symbol-'],
-  },
-  circle: { paint: ['circle-'], layout: ['visibility'] },
-  heatmap: { paint: ['heatmap-'], layout: ['visibility'] },
-  'fill-extrusion': { paint: ['fill-extrusion-'], layout: ['visibility'] },
-  raster: { paint: ['raster-'], layout: ['visibility'] },
-  hillshade: { paint: ['hillshade-'], layout: ['visibility'] },
-  'color-relief': { paint: ['color-relief-'], layout: ['visibility'] },
-};
-
 const findLayer = (
   style: StyleDocument | CoreStyleDocument,
   layerId: string
@@ -40,44 +30,24 @@ const findLayer = (
   (layer) => layer.id === layerId
 ) as StyleLayer | undefined;
 
-const isPropertyAllowed = (
-  layerType: string,
-  property: string,
-  mode: 'paint' | 'layout'
-): boolean => {
-  const prefixes = layerTypePropertyPrefixes[layerType]?.[mode];
-  if (!prefixes) {
-    return true;
-  }
-  return prefixes.some((prefix) =>
-    prefix.endsWith('-') ? property.startsWith(prefix) : property === prefix
-  );
-};
-
 const legacyPropertyValidationMessage = (
   style: StyleDocument,
-  operations: StyleOperation[]
+  normalizedMessage: string
 ): string | undefined => {
-  for (const operation of operations) {
-    const layer = findLayer(style, operation.layerId);
-    if (!layer) {
-      continue;
-    }
-
-    for (const mode of ['paint', 'layout'] as const) {
-      const properties = operation[mode];
-      if (!properties) {
-        continue;
-      }
-      const invalid = Object.keys(properties).filter(
-        (property) => !isPropertyAllowed(layer.type, property, mode)
-      );
-      if (invalid.length > 0) {
-        return `Invalid ${mode} properties for ${layer.type} layer "${operation.layerId}": ${invalid.join(', ')}`;
-      }
-    }
+  const match = /^layers\[(\d+)\]\.(paint|layout)\.([^:]+):/.exec(
+    normalizedMessage
+  );
+  if (!match) {
+    return undefined;
   }
-  return undefined;
+  const layerIndex = Number(match[1]);
+  const mode = match[2];
+  const property = match[3];
+  const layer = style.layers[layerIndex];
+  if (!layer || (mode !== 'paint' && mode !== 'layout') || !property) {
+    return undefined;
+  }
+  return `Invalid ${mode} properties for ${layer.type} layer "${layer.id}": ${property}`;
 };
 
 const toCoreOperation = (
@@ -204,42 +174,100 @@ const failure = (style: StyleDocument, message: string): StyleOperationResult =>
 });
 
 type LegacyFilterCompatibilityResult = {
-  diffByOperation: Map<number, StyleDiffEntry>;
-  changedLayers: Set<string>;
+  diff?: StyleDiffEntry;
 };
 
 // Temporary legacy exception: Layer/Data Task 3 replaces this with setLayerFilter.
 const applyLegacyFilterCompatibility = (
   workingStyle: CoreStyleDocument,
-  operations: StyleOperation[]
+  operation: StyleOperation
 ): LegacyFilterCompatibilityResult => {
-  const diffByOperation = new Map<number, StyleDiffEntry>();
-  const changedLayers = new Set<string>();
+  if (!Object.hasOwn(operation, 'filter')) {
+    return {};
+  }
+  const layer = findLayer(workingStyle, operation.layerId);
+  if (!layer || Object.is(layer.filter, operation.filter)) {
+    return {};
+  }
 
-  operations.forEach((operation, index) => {
-    if (!Object.hasOwn(operation, 'filter')) {
-      return;
-    }
-    const layer = findLayer(workingStyle, operation.layerId);
-    if (!layer || Object.is(layer.filter, operation.filter)) {
-      return;
-    }
-
-    const before = layer.filter;
-    if (operation.filter === null) {
-      delete layer.filter;
-    } else {
-      layer.filter = operation.filter;
-    }
-    diffByOperation.set(index, {
+  const before = layer.filter;
+  if (operation.filter === null) {
+    delete layer.filter;
+  } else {
+    layer.filter = operation.filter;
+  }
+  return {
+    diff: {
       path: `layers.${operation.layerId}.filter`,
       before,
       after: operation.filter === null ? undefined : operation.filter,
-    });
-    changedLayers.add(operation.layerId);
-  });
+    },
+  };
+};
 
-  return { diffByOperation, changedLayers };
+const executionLimits: Readonly<CoreExecutionLimits> = Object.freeze({
+  maxStyleBytes: DEFAULT_MAX_STYLE_BYTES,
+  maxDiffBytes: DEFAULT_MAX_DIFF_BYTES,
+  maxOperations: DEFAULT_MAX_OPERATIONS,
+});
+
+const operationContext = (): OperationContext => ({
+  limits: executionLimits,
+  changedLayerIds: new Set<string>(),
+  changedSourceIds: new Set<string>(),
+  warnings: [],
+});
+
+type LegacyOperationHistory = {
+  changedLayers: string[];
+  diffSummary: StyleDiffEntry[];
+};
+
+const reconstructLegacyOperationHistory = (
+  original: CoreStyleDocument,
+  operations: StyleOperation[]
+): LegacyOperationHistory => {
+  const workingStyle = structuredClone(original);
+  const changedLayers: string[] = [];
+  const changedLayerSet = new Set<string>();
+  const diffSummary: StyleDiffEntry[] = [];
+
+  for (const operation of operations) {
+    const before = structuredClone(workingStyle);
+    const context = operationContext();
+    const result = applySetLayerProperties(
+      workingStyle,
+      toCoreOperation(operation),
+      context
+    );
+    if (!result.ok) {
+      continue;
+    }
+
+    const coreDiff = toLegacyCoreDiff(
+      diffStyleDocuments(before, workingStyle, context)
+    );
+    const filterCompatibility = applyLegacyFilterCompatibility(
+      workingStyle,
+      operation
+    );
+    const filterDiff = new Map<number, StyleDiffEntry>();
+    if (filterCompatibility.diff) {
+      filterDiff.set(0, filterCompatibility.diff);
+    }
+    const operationDiff = orderDiffSummary(
+      [operation],
+      coreDiff,
+      filterDiff
+    );
+    if (operationDiff.length > 0 && !changedLayerSet.has(operation.layerId)) {
+      changedLayerSet.add(operation.layerId);
+      changedLayers.push(operation.layerId);
+    }
+    diffSummary.push(...operationDiff);
+  }
+
+  return { changedLayers, diffSummary };
 };
 
 export const applyStyleOperations = (
@@ -275,7 +303,10 @@ export const applyStyleOperations = (
       }
     }
     if (coreResult.error.code === 'STYLE_INVALID') {
-      const legacyMessage = legacyPropertyValidationMessage(style, operations);
+      const legacyMessage = legacyPropertyValidationMessage(
+        style,
+        coreResult.error.message
+      );
       if (legacyMessage) {
         return failure(style, legacyMessage);
       }
@@ -284,10 +315,9 @@ export const applyStyleOperations = (
   }
 
   const workingStyle = coreResult.style;
-  const filterCompatibility = applyLegacyFilterCompatibility(
-    workingStyle,
-    operations
-  );
+  for (const operation of operations) {
+    applyLegacyFilterCompatibility(workingStyle, operation);
+  }
 
   const finalValidation = validateStyleDocument(workingStyle);
   if (!finalValidation.ok) {
@@ -297,26 +327,23 @@ export const applyStyleOperations = (
     );
   }
 
-  const changedLayerSet = new Set([
-    ...coreResult.changedLayers,
-    ...filterCompatibility.changedLayers,
-  ]);
-  const changedLayers = operations
-    .map((operation) => operation.layerId)
-    .filter((layerId, index, layerIds) =>
-      changedLayerSet.has(layerId) && layerIds.indexOf(layerId) === index
+  const originalValidation = validateStyleDocument(style);
+  if (!originalValidation.ok) {
+    return failure(
+      style,
+      originalValidation.errors[0]?.message ?? 'MapLibre style validation failed.'
     );
-  const diffSummary = orderDiffSummary(
-    operations,
-    toLegacyCoreDiff(coreResult.diff),
-    filterCompatibility.diffByOperation
+  }
+  const legacyHistory = reconstructLegacyOperationHistory(
+    originalValidation.style,
+    operations
   );
 
   return {
     success: true,
     message: `Applied ${operations.length} style operation${operations.length === 1 ? '' : 's'}.`,
     style: finalValidation.style as unknown as StyleDocument,
-    changedLayers,
-    diffSummary,
+    changedLayers: legacyHistory.changedLayers,
+    diffSummary: legacyHistory.diffSummary,
   };
 };

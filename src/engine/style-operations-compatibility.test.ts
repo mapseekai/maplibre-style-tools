@@ -63,3 +63,61 @@ test('legacy empty operation batches retain their successful envelope', () => {
   assert.deepEqual(result.changedLayers, []);
   assert.deepEqual(result.diffSummary, []);
 });
+
+test('legacy repeated writes preserve every sequential diff transition', () => {
+  const result = applyStyleOperations(makeStyle(), [
+    { layerId: 'roads', paint: { 'line-color': '#fff' } },
+    { layerId: 'roads', paint: { 'line-color': '#00f' } },
+  ]);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.changedLayers, ['roads']);
+  assert.deepEqual(result.diffSummary, [
+    {
+      path: 'layers.roads.paint.line-color',
+      before: '#000',
+      after: '#fff',
+    },
+    {
+      path: 'layers.roads.paint.line-color',
+      before: '#fff',
+      after: '#00f',
+    },
+  ]);
+});
+
+test('legacy repeated writes remain changed when the final value reverts', () => {
+  const result = applyStyleOperations(makeStyle(), [
+    { layerId: 'roads', paint: { 'line-color': '#fff' } },
+    { layerId: 'roads', paint: { 'line-color': '#000' } },
+  ]);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.changedLayers, ['roads']);
+  assert.deepEqual(result.diffSummary, [
+    {
+      path: 'layers.roads.paint.line-color',
+      before: '#000',
+      after: '#fff',
+    },
+    {
+      path: 'layers.roads.paint.line-color',
+      before: '#fff',
+      after: '#000',
+    },
+  ]);
+});
+
+test('legacy validation message identifies the first normalized failing property', () => {
+  const style = makeStyle();
+  const result = applyStyleOperations(style, [
+    { layerId: 'roads', paint: { 'line-color': 42 } },
+    { layerId: 'roads', paint: { 'fill-color': '#fff' } },
+  ]);
+  assert.equal(result.success, false);
+  assert.equal(
+    result.message,
+    'Invalid paint properties for line layer "roads": line-color'
+  );
+  assert.equal(result.style, style);
+  assert.deepEqual(result.changedLayers, []);
+  assert.deepEqual(result.diffSummary, []);
+});
