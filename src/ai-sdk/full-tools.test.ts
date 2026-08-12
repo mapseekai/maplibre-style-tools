@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
 import { z } from 'zod';
-import { isStyleToolError, validateStyleDocument } from '../core/index.js';
+import {
+  createStyleToolError,
+  isStyleToolError,
+  validateStyleDocument,
+} from '../core/index.js';
 import type { RuntimeImageLoader } from '../adapters/maplibre/index.js';
 import { createMapLibreStyleTools } from './full-tools.js';
 import * as namedSchemas from './schemas.js';
@@ -822,6 +826,47 @@ test('preserves exact source root and full-style apply exception wrappers', asyn
     assert.equal(isStyleToolError(result.error), true, row.name);
     assert.equal(fake.setStyleCalls.length, 2, row.name);
   }
+});
+
+test('preserves the exact legacy list-sprites exception message', async () => {
+  const fake = new FakeMap();
+  fake.getSprite = () => { throw new Error('boom'); };
+  const tools = createMapLibreStyleTools({ getMap: () => fake.asMap(), imageLoader });
+
+  const result = await executeTool(tools.listSprites, {});
+
+  assert.equal(result.success, false);
+  assert.equal(result.message, 'Failed to list sprites: boom');
+  assert.deepEqual(result.error, {
+    code: 'INTERNAL',
+    message: 'Failed to list sprites: boom',
+  });
+  assert.equal(isStyleToolError(result.error), true);
+});
+
+test('preserves the exact structured list-images exception contract', async () => {
+  const fake = new FakeMap();
+  const cause = createStyleToolError(
+    'IO_ERROR',
+    'boom',
+    '/images',
+    { source: 'map' },
+  );
+  fake.listImages = () => { throw cause; };
+  const tools = createMapLibreStyleTools({ getMap: () => fake.asMap(), imageLoader });
+
+  const result = await executeTool(tools.listImages, {});
+
+  assert.equal(result.success, false);
+  assert.equal(result.message, 'Failed to list images: boom');
+  assert.deepEqual(result.error, {
+    code: 'IO_ERROR',
+    message: 'Failed to list images: boom',
+    path: '/images',
+    details: { source: 'map' },
+  });
+  assert.notStrictEqual(result.error, cause);
+  assert.equal(isStyleToolError(result.error), true);
 });
 
 const diffCases = [

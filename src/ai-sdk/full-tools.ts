@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
   buildStyleContext,
   createStyleToolError,
+  isStyleToolError,
   validateStyleDocument,
 } from '../core/index.js';
 import type {
@@ -256,6 +257,53 @@ type LegacyApplyOptions = {
   failurePrefix: string;
   validationStyle?: StyleDocument;
 };
+
+type LegacyRuntimeDiscoveryMethod = 'getSprite' | 'listImages';
+
+function legacyThrownMessage(error: unknown): string {
+  if (!(error instanceof Error)) return 'Unknown error';
+  try {
+    let current: object | null = error;
+    while (current !== null) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, 'message');
+      if (descriptor !== undefined) {
+        return 'value' in descriptor && typeof descriptor.value === 'string'
+          ? descriptor.value
+          : 'Unknown error';
+      }
+      current = Object.getPrototypeOf(current);
+    }
+  } catch {
+    return 'Unknown error';
+  }
+  return 'Unknown error';
+}
+
+function legacyRuntimeDiscoveryMap(
+  map: MapLibreMap,
+  method: LegacyRuntimeDiscoveryMethod,
+): MapLibreMap {
+  return new Proxy(map, {
+    get(target, property) {
+      if (property === method) {
+        return (...args: unknown[]) => {
+          try {
+            const operation: unknown = Reflect.get(target, property, target);
+            if (typeof operation !== 'function') {
+              throw new TypeError(String(property) + ' is not a function');
+            }
+            return Reflect.apply(operation, target, args);
+          } catch (error) {
+            if (isStyleToolError(error)) throw error;
+            throw createStyleToolError('INTERNAL', legacyThrownMessage(error));
+          }
+        };
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
 
 export const createMapLibreStyleTools = <TStyle = unknown>({
   getMap,
@@ -1309,10 +1357,18 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const context = runtimeReady();
         if (!context.ok) return context.result;
         const result = createMapRuntimeCommands(
-          context.map,
+          legacyRuntimeDiscoveryMap(context.map, 'getSprite'),
           { imageLoader },
         ).listSprites({});
-        if (!result.ok) return failure(result.error, context.outer);
+        if (!result.ok) {
+          return failure(
+            recreateStyleToolError(
+              result.error,
+              'Failed to list sprites: ' + result.error.message,
+            ),
+            context.outer,
+          );
+        }
         const items = result.data.items;
         if (items.length === 0) {
           return legacyFailure(
@@ -1433,10 +1489,18 @@ export const createMapLibreStyleTools = <TStyle = unknown>({
         const context = runtimeReady();
         if (!context.ok) return context.result;
         const result = createMapRuntimeCommands(
-          context.map,
+          legacyRuntimeDiscoveryMap(context.map, 'listImages'),
           { imageLoader },
         ).listImages({ limit });
-        if (!result.ok) return failure(result.error, context.outer);
+        if (!result.ok) {
+          return failure(
+            recreateStyleToolError(
+              result.error,
+              'Failed to list images: ' + result.error.message,
+            ),
+            context.outer,
+          );
+        }
         if (result.data.items.length === 0) {
           return legacyFailure('No style images found.', context.outer, 'NOT_FOUND');
         }
