@@ -1,25 +1,25 @@
-export type JsonObject = Record<string, unknown>;
+import type {
+  StyleDocument as CoreStyleDocument,
+  StyleLayer as CoreStyleLayer,
+  JsonObject,
+} from './core/types.js';
 
-export interface StyleLayer {
-  id: string;
-  type: string;
-  source?: string;
-  'source-layer'?: string;
+export type { JsonObject } from './core/types.js';
+
+export type StyleLayer = Omit<
+  CoreStyleLayer,
+  'paint' | 'layout' | 'filter' | 'metadata'
+> & {
   paint?: JsonObject;
   layout?: JsonObject;
   filter?: unknown;
-  minzoom?: number;
-  maxzoom?: number;
   metadata?: JsonObject;
-  [key: string]: unknown;
-}
+};
 
-export interface StyleDocument {
-  version: number;
-  sources?: Record<string, unknown>;
+export type StyleDocument = Omit<CoreStyleDocument, 'sources' | 'layers'> & {
+  sources?: CoreStyleDocument['sources'];
   layers: StyleLayer[];
-  [key: string]: unknown;
-}
+};
 
 export type {
   LayerSearchQuery,

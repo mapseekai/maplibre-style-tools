@@ -1,3 +1,5 @@
+/// <reference types="node" preserve="true" />
+
 export {
   MAX_AI_TEXT_BYTES,
   normalizeLegacyOperations,

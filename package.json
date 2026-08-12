@@ -17,6 +17,16 @@
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",
       "default": "./dist/core/index.js"
+    },
+    "./maplibre": {
+      "types": "./dist/adapters/maplibre/index.d.ts",
+      "import": "./dist/adapters/maplibre/index.js",
+      "default": "./dist/adapters/maplibre/index.js"
+    },
+    "./ai": {
+      "types": "./dist/ai-sdk/index.d.ts",
+      "import": "./dist/ai-sdk/index.js",
+      "default": "./dist/ai-sdk/index.js"
     }
   },
   "files": [
