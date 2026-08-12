@@ -127,6 +127,7 @@ const toCoreOperations = (
   }
   const filter = toCoreFilterOperation(operation);
   if (filter !== undefined) normalized.push(filter);
+  if (normalized.length === 0) normalized.push(toCoreOperation(operation));
   return normalized;
 };
 
@@ -278,7 +279,8 @@ const reconstructLegacyOperationHistory = (
     replayOperations.push(...normalized);
     const result = applyStyleTransaction(
       original,
-      { operations: replayOperations, validate: false }
+      { operations: replayOperations, validate: false },
+      { maxOperations: replayOperations.length }
     );
     if (!result.ok) {
       continue;
@@ -325,9 +327,16 @@ export const applyStyleOperations = (
     };
   }
 
+  if (operations.length > DEFAULT_MAX_OPERATIONS) {
+    return failure(style, 'Too many operations');
+  }
+
+  const normalizedOperations = operations.flatMap(toCoreOperations);
+
   const coreResult = applyStyleTransaction(
     style as unknown as CoreStyleDocument,
-    { operations: operations.flatMap(toCoreOperations) }
+    { operations: normalizedOperations },
+    { maxOperations: normalizedOperations.length }
   );
   if (!coreResult.ok) {
     if (coreResult.error.code === 'NOT_FOUND') {

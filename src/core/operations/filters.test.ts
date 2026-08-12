@@ -342,3 +342,122 @@ test('legacy batches allow 51 pure filter operations within the core operation l
   );
   assert.doesNotMatch(result.message, /too many operations/i);
 });
+
+test('legacy batches count 51 combined paint and filter updates as public operations', async () => {
+  const style = makeStyle() as unknown as LegacyStyleDocument;
+  style.layers[0]!.paint!['line-width'] = 0;
+  const operations: LegacyStyleOperation[] = Array.from(
+    { length: 51 },
+    (_, rank) => ({
+      layerId: 'roads',
+      paint: { 'line-width': rank + 1 },
+      filter: ['==', ['get', 'rank'], rank],
+    }),
+  );
+
+  const result = applyStyleOperations(style, operations);
+  assert.equal(result.success, true);
+  assert.equal(result.message, 'Applied 51 style operations.');
+  assert.equal(result.style.layers[0]?.paint?.['line-width'], 51);
+  assert.deepEqual(result.style.layers[0]?.filter, ['==', ['get', 'rank'], 50]);
+  assert.deepEqual(result.changedLayers, ['roads']);
+  assert.equal(result.diffSummary.length, 102);
+  assert.deepEqual(result.diffSummary.slice(0, 2), [
+    {
+      path: 'layers.roads.paint.line-width',
+      before: 0,
+      after: 1,
+    },
+    {
+      path: 'layers.roads.filter',
+      before: classFilter,
+      after: ['==', ['get', 'rank'], 0],
+    },
+  ]);
+  assert.deepEqual(result.diffSummary.slice(-2), [
+    {
+      path: 'layers.roads.paint.line-width',
+      before: 50,
+      after: 51,
+    },
+    {
+      path: 'layers.roads.filter',
+      before: ['==', ['get', 'rank'], 49],
+      after: ['==', ['get', 'rank'], 50],
+    },
+  ]);
+
+  let setStyleCalls = 0;
+  let appliedStyle: LegacyStyleDocument | undefined;
+  const map = {
+    getStyle: () => structuredClone(style),
+    setStyle: (nextStyle: LegacyStyleDocument) => {
+      setStyleCalls += 1;
+      appliedStyle = nextStyle;
+    },
+  } as unknown as Map;
+  const compact = createCompactMapLibreStyleTools({ getMap: () => map });
+  const execute = (compact.applyStyleOperations as {
+    execute?: (input: Record<string, unknown>) => unknown;
+  }).execute;
+  assert.ok(execute);
+  const compactResult = await execute({
+    operationsJson: JSON.stringify(operations),
+    dryRun: false,
+    diff: true,
+  }) as { success: boolean };
+  assert.equal(compactResult.success, true);
+  assert.equal(setStyleCalls, 1);
+  assert.equal(appliedStyle?.layers[0]?.paint?.['line-width'], 51);
+  assert.deepEqual(appliedStyle?.layers[0]?.filter, ['==', ['get', 'rank'], 50]);
+});
+
+test('legacy operation limit accepts 100 public operations and rejects the 101st', () => {
+  const operations: LegacyStyleOperation[] = Array.from(
+    { length: 101 },
+    (_, rank) => ({
+      layerId: 'roads',
+      paint: { 'line-width': rank + 1 },
+      filter: ['==', ['get', 'rank'], rank],
+    }),
+  );
+
+  const accepted = applyStyleOperations(
+    makeStyle() as unknown as LegacyStyleDocument,
+    operations.slice(0, 100),
+  );
+  assert.equal(accepted.success, true);
+  assert.equal(accepted.message, 'Applied 100 style operations.');
+  assert.equal(accepted.style.layers[0]?.paint?.['line-width'], 100);
+  assert.deepEqual(accepted.style.layers[0]?.filter, ['==', ['get', 'rank'], 99]);
+
+  const rejectedStyle = makeStyle() as unknown as LegacyStyleDocument;
+  const rejected = applyStyleOperations(rejectedStyle, operations);
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.message, 'Too many operations');
+  assert.strictEqual(rejected.style, rejectedStyle);
+  assert.deepEqual(rejected.changedLayers, []);
+  assert.deepEqual(rejected.diffSummary, []);
+});
+
+test('legacy fieldless operations perform lookup no-ops and missing lookups roll back', () => {
+  const existingStyle = makeStyle() as unknown as LegacyStyleDocument;
+  const existing = applyStyleOperations(existingStyle, [{ layerId: 'roads' }]);
+  assert.equal(existing.success, true);
+  assert.equal(existing.message, 'Applied 1 style operation.');
+  assert.deepEqual(existing.style, existingStyle);
+  assert.deepEqual(existing.changedLayers, []);
+  assert.deepEqual(existing.diffSummary, []);
+
+  const missingStyle = makeStyle() as unknown as LegacyStyleDocument;
+  const missing = applyStyleOperations(missingStyle, [
+    { layerId: 'missing' },
+    { layerId: 'roads', filter: rankFilter },
+  ]);
+  assert.equal(missing.success, false);
+  assert.equal(missing.message, 'Layer "missing" not found.');
+  assert.strictEqual(missing.style, missingStyle);
+  assert.deepEqual(missing.changedLayers, []);
+  assert.deepEqual(missing.diffSummary, []);
+  assert.deepEqual(missingStyle.layers[0]?.filter, classFilter);
+});
