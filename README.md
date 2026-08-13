@@ -53,15 +53,16 @@ The full factory exposes detailed tools for layers, sources, paint and layout pr
 
 ## Entry points
 
-The package has five supported entry points:
+The package has six supported entry points:
 
 - `maplibre-style-tools` is the compatibility facade and exports both factories plus the legacy root types.
 - `maplibre-style-tools/core` is the transport-neutral transaction, validation, GeoJSON, analysis, and discovery API. It requires neither DOM nor Node ambient types.
 - `maplibre-style-tools/maplibre` applies prepared transactions to MapLibre maps and exposes bounded live-map commands. It may use DOM types but does not load Node ambient types.
 - `maplibre-style-tools/ai` exports both AI SDK factories, their strict input schemas, compatibility parsers, and the common result envelope.
 - `maplibre-style-tools/mcp` exports the bounded, in-memory MCP server factory, transport runners, schemas, URI helpers, and session types.
+- `maplibre-style-tools/bridge` is the browser-safe live MapLibre client, protocol, capability, hashing, and resource-policy API. It exports no Node WebSocket server state.
 
-The root, `/ai`, and `/mcp` declaration graphs intentionally load their required Node types. Import `/core` or `/maplibre` directly when that ambient dependency is undesirable.
+The root, `/ai`, and `/mcp` declaration graphs intentionally load their required Node types. Import `/core`, `/maplibre`, or `/bridge` directly when that ambient dependency is undesirable.
 
 ## Pure core
 
@@ -293,6 +294,153 @@ from SDK transport-session IDs.
 
 Neither transport accepts a path or URL as Style input, and neither performs a
 network fetch. The package-derived server version is generated at build time.
+
+## Live MapLibre browser bridge
+
+The browser bridge connects an existing MapLibre map to the live-map extension
+hosted by `maplibre-style-mcp`:
+
+```ts
+import { connectMapLibreBridge } from 'maplibre-style-tools/bridge';
+
+const connection = connectMapLibreBridge(map, {
+  mapId: 'demo-map',
+  url: 'ws://127.0.0.1:7788',
+  token: processSuppliedToken,
+  capabilities: ['style.read', 'style.write', 'features.query', 'runtime.state'],
+  allowedResourceOrigins: [],
+});
+
+await connection.whenReady();
+```
+
+The token is sent in the first WebSocket frame, never in the URL. The standalone
+example asks for it in an explicit password input and keeps it only for that
+ephemeral connection; it is not placed in page URLs, storage, status text, logs,
+or errors. The `/bridge` entry (`src/bridge/index.ts` in this repository) is
+browser-only. It does not export `createBridgeServer` or `LiveMapRegistry`; the
+Node WebSocket bridge is owned by the MCP binary.
+
+Start a stdio MCP server and its loopback WebSocket bridge together:
+
+```bash
+maplibre-style-mcp --stdio \
+  --bridge-host 127.0.0.1 \
+  --bridge-port 7788 \
+  --bridge-origin http://127.0.0.1:5173
+```
+
+After both components are ready, stderr contains exactly one strict handoff
+record. A generated-token stdio record looks like this; stdout remains reserved
+for MCP framing:
+
+```json
+{"event":"bridge_listening","mcpTransport":"stdio","wsUrl":"ws://127.0.0.1:7788","allowedOrigins":["http://127.0.0.1:5173"],"token":"GENERATED_SECRET"}
+```
+
+Every handoff has `event: "bridge_listening"`, `mcpTransport`, and the actual
+bound `wsUrl`. A stdio record must not contain `mcpUrl`. An HTTP record contains
+the actual bound `mcpUrl`, which clients must use for endpoint discovery. A
+caller-supplied bridge token is intentionally omitted from stderr; a generated
+token is reported once so the browser can connect.
+
+Live mutations use both pieces of current optimistic-concurrency authority:
+
+```json
+{"name":"map_apply_transaction","arguments":{"mapId":"demo-map","expectedRevision":4,"expectedStyleHash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","transaction":{"operations":[{"op":"setLayerProperties","layerId":"roads","paint":{"line-color":"#4c78a8"}}]}}}
+```
+
+A caller receiving `REVISION_CONFLICT` must read the current map state, resync
+its intent, and deliberately submit a new request; neither MCP nor the browser
+client retries mutations. Other stable live errors include
+`BRIDGE_DISCONNECTED`, `CAPABILITY_DENIED`, `MAP_NOT_READY`, and `TIMEOUT`.
+
+### Live resources and canonical map IDs
+
+The fixed map collection is `maplibre-style://maps`. Its two advertised
+templates are exactly:
+
+- `maplibre-style://maps/~{mapId}`
+- `maplibre-style://maps/~{mapId}/style`
+
+Use the public builders with a semantic ID, not a pre-encoded value:
+
+```ts
+import {
+  buildLiveMapMetadataUri,
+  buildLiveMapStyleUri,
+} from 'maplibre-style-tools/mcp';
+
+await client.readResource({ uri: buildLiveMapMetadataUri('a.b') });
+await client.readResource({ uri: buildLiveMapStyleUri('a.b') });
+```
+
+The builder adds the same-segment `~` marker and encodes the ID exactly once.
+The transport validates the original raw `resources/read` URI before the SDK
+constructs a `URL`. Normalization-changing dot prefixes, literal or encoded dot
+segments, encoded-unreserved aliases, double encoding, and legacy unmarked map
+routes are rejected with zero resolver work. Only a canonical raw URI reaches
+the resource callback, where the semantic ID is decoded once.
+
+### Resource authorization
+
+Style resource inspection covers root `glyphs`, `sprite`, and import URLs;
+source `url`, `tiles`, and `urls`; string GeoJSON `data`; image/video source
+URLs; runtime image URLs; `data:` URLs; and custom protocols. An unchanged
+baseline path-plus-value pair may remain in a candidate. Every newly introduced
+or changed relative Style URL is rejected before `Map#setStyle`, regardless of
+`resourceBaseUrl`, the current `document.baseURI`, or a later `<base>` mutation.
+
+New or changed absolute network resources require the `network.load` capability
+and must satisfy the exact configured origin and URL-prefix rules. `data:` is a
+separate opt-in, and a custom protocol must be explicitly allowed and registered.
+Resource values are redacted from public failures.
+
+`resourceBaseUrl` has one narrower purpose: the separate runtime-image API
+resolves a relative image input once against the base captured at connection
+creation, authorizes it, then gives the loader that exact absolute URL. A worker
+without a document therefore needs an explicit runtime-image base, but no base
+can enable relative Style resources.
+
+### Live limits and response authority
+
+The defaults and fixed ceilings exposed by the live bridge are:
+
+- 5 MiB for each WebSocket message and each validated Style;
+- 100 operations per transaction;
+- 100 returned features and 1 MiB of serialized feature-query output;
+- 64 KiB for runtime state and image-list output;
+- 3 MiB of decoded runtime image bytes;
+- 10 seconds for an operation.
+
+The 5 MiB frame and Style checks are independent. Runtime code byte-checks
+initial, externally changed, and opaque prepared-view Styles even for write-only
+connections. Browser output measures the complete result envelope. When needed,
+optional Style and diff fields are omitted deterministically, and a successful
+mutation can be reduced to its fixed receipt. Every correlated mutation failure
+that still has current authority—including ordinary `INTERNAL` or `IO_ERROR`, a
+conflict, and a post-deadline `TIMEOUT`—retains the current revision and hash
+while preserving its primary error code. Only an indivisible oversized
+`getStyle` result becomes the stable size failure.
+
+The live MCP extension uses the factory's independently resolved
+`maxMessageBytes`. Read results are finalized against that budget before a
+cache, mirror, or TTL touch; writes expose only fixed receipts whose size was
+proven in advance. Mutation errors are projected as fixed, metadata-only,
+authentic failures, so budgeting cannot hide a committed revision/hash or leak a
+Style, URL, token, or other secret. `maxStyleBytes` defaults to
+`DEFAULT_MAX_STYLE_BYTES` and may be explicitly lowered or raised independently
+of the message limit.
+
+### Replacement and reconnect recovery
+
+The browser-generated `registrationAttemptId` is private. If a registration
+acknowledgement is lost, the browser replays the byte-identical registration
+within a finite 30-second client budget; the server retains one per-map
+idempotency record for 60 seconds. A replayed generation remains server-side
+`MAP_NOT_READY` until its mandatory authoritative `mapSnapshot` confirmation is
+accepted. Active and queued work owned by the old generation is rejected and is
+never replayed on the replacement connection.
 
 ### Tools and lifecycle
 

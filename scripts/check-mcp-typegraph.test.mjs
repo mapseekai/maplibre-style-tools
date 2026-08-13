@@ -60,6 +60,7 @@ const expectedProjectClosure = Object.freeze([
   'src/core/types.ts',
   'src/core/utf8.ts',
   'src/core/validation.ts',
+  'src/mcp/bridge-options.ts',
   'src/mcp/core-adapters.ts',
   'src/mcp/create-server.ts',
   'src/mcp/document-handlers.ts',

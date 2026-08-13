@@ -962,6 +962,8 @@ import {
   createMapLibreStyleTools as createFullFromAi,
 } from 'maplibre-style-tools/ai';
 import {
+  buildLiveMapMetadataUri,
+  buildLiveMapStyleUri,
   createMapLibreStyleMcpServer,
   createLiveMapMcpExtension,
   liveMapListDataSchema,
@@ -987,6 +989,8 @@ assert.equal(typeof createMapLibreStyleMcpServer, 'function');
 assert.equal(typeof createLiveMapMcpExtension, 'function');
 assert.equal(typeof liveMapListDataSchema.safeParse, 'function');
 assert.equal(resolveMcpMessagePolicy().maxMessageBytes, 5 * 1024 * 1024);
+assert.equal(buildLiveMapMetadataUri('a.b'), 'maplibre-style://maps/~a.b');
+assert.equal(buildLiveMapStyleUri('a.b'), 'maplibre-style://maps/~a.b/style');
 assert.equal(typeof connectMapLibreBridge, 'function');
 assert.equal(BRIDGE_PROTOCOL_VERSION, 1);
 assert.equal(typeof canonicalizeJson, 'function');
