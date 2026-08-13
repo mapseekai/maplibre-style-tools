@@ -2,11 +2,10 @@ import type { ZodError } from 'zod';
 import type {
   FilterSpecification,
 } from '@maplibre/maplibre-gl-style-spec';
-import {
-  Map as MapLibreMapConstructor,
-  type Map as MapLibreMap,
-  type QueryRenderedFeaturesOptions,
-  type QuerySourceFeatureOptions,
+import type {
+  Map as MapLibreMap,
+  QueryRenderedFeaturesOptions,
+  QuerySourceFeatureOptions,
 } from 'maplibre-gl';
 import {
   createStyleToolError,
@@ -41,7 +40,6 @@ type ParsedQuery<Input> =
   | { ok: false; error: StyleToolError };
 
 type QueryFeatures = () => unknown;
-type FeatureProjector = (feature: object) => OwnDataValue;
 
 function schemaError(error: ZodError): StyleToolError {
   const issue = error.issues[0];
@@ -98,24 +96,6 @@ type OwnDataValue =
   | { kind: 'data'; value: unknown }
   | { kind: 'failure' };
 
-type MapLibreFeaturePrototype = {
-  geometryGetter: (this: object) => unknown;
-  geometrySetter: (this: object, value: unknown) => void;
-  toJson: (this: object) => unknown;
-};
-
-const MAPLIBRE_FEATURE_PROTOTYPE_KEYS = Object.freeze([
-  'constructor', 'projectPoint', 'projectLine', 'geometry', 'toJSON',
-] as const);
-const MAPLIBRE_FEATURE_OWN_KEYS = new Set([
-  'type', '_geometry', 'properties', 'id', '_x', '_y', '_z', '_vectorTileFeature',
-  'layer', 'source', 'sourceLayer', 'state', 'tile',
-]);
-const mapLibreFeaturePrototypes = new WeakMap<object, MapLibreFeaturePrototype>();
-const mapLibreMapPrototype = MapLibreMapConstructor.prototype;
-const mapLibreQuerySourceFeatures = mapLibreMapPrototype.querySourceFeatures;
-const mapLibreQueryRenderedFeatures = mapLibreMapPrototype.queryRenderedFeatures;
-
 function ownDataValue(value: unknown, key: string): OwnDataValue {
   if (typeof value !== 'object' || value === null) return { kind: 'failure' };
   try {
@@ -125,128 +105,6 @@ function ownDataValue(value: unknown, key: string): OwnDataValue {
     return { kind: 'data', value: descriptor.value };
   } catch {
     return { kind: 'failure' };
-  }
-}
-
-function isClassMethod(
-  descriptor: PropertyDescriptor | undefined,
-  length: number,
-): descriptor is PropertyDescriptor & { value: (...args: unknown[]) => unknown } {
-  return descriptor !== undefined
-    && descriptor.configurable === true
-    && descriptor.enumerable === false
-    && descriptor.writable === true
-    && typeof descriptor.value === 'function'
-    && descriptor.value.length === length;
-}
-
-function inspectMapLibreFeaturePrototype(prototype: object): MapLibreFeaturePrototype | undefined {
-  try {
-    if (Object.getPrototypeOf(prototype) !== Object.prototype) return undefined;
-    const keys = Reflect.ownKeys(prototype);
-    if (keys.length !== MAPLIBRE_FEATURE_PROTOTYPE_KEYS.length
-      || !MAPLIBRE_FEATURE_PROTOTYPE_KEYS.every((key) => keys.includes(key))) return undefined;
-    const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor');
-    const projectPoint = Object.getOwnPropertyDescriptor(prototype, 'projectPoint');
-    const projectLine = Object.getOwnPropertyDescriptor(prototype, 'projectLine');
-    const toJson = Object.getOwnPropertyDescriptor(prototype, 'toJSON');
-    if (!isClassMethod(constructor, 5)
-      || !isClassMethod(projectPoint, 4)
-      || !isClassMethod(projectLine, 4)
-      || !isClassMethod(toJson, 0)) return undefined;
-    const constructorPrototype = Object.getOwnPropertyDescriptor(
-      constructor.value, 'prototype',
-    );
-    if (constructorPrototype === undefined || !('value' in constructorPrototype)
-      || constructorPrototype.value !== prototype) return undefined;
-    const geometry = Object.getOwnPropertyDescriptor(prototype, 'geometry');
-    if (geometry === undefined
-      || geometry.configurable !== true
-      || geometry.enumerable !== false
-      || typeof geometry.get !== 'function'
-      || geometry.get.length !== 0
-      || typeof geometry.set !== 'function'
-      || geometry.set.length !== 1) return undefined;
-    return {
-      geometryGetter: geometry.get,
-      geometrySetter: geometry.set,
-      toJson: toJson.value,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function isMapLibreFeatureReceiver(feature: object): boolean {
-  try {
-    const keys = Reflect.ownKeys(feature);
-    const descriptors = Object.getOwnPropertyDescriptors(feature);
-    if (keys.some((key) => typeof key !== 'string' || !MAPLIBRE_FEATURE_OWN_KEYS.has(key))) {
-      return false;
-    }
-    for (const key of keys) {
-      const descriptor = descriptors[key as string];
-      if (descriptor === undefined || !descriptor.enumerable || !('value' in descriptor)) {
-        return false;
-      }
-    }
-    const type = descriptors.type;
-    const properties = descriptors.properties;
-    const vectorTileFeature = descriptors._vectorTileFeature;
-    const x = descriptors._x;
-    const y = descriptors._y;
-    const z = descriptors._z;
-    const id = descriptors.id;
-    return type?.value === 'Feature'
-      && typeof properties?.value === 'object' && properties.value !== null
-      && typeof vectorTileFeature?.value === 'object' && vectorTileFeature.value !== null
-      && typeof x?.value === 'number' && Number.isFinite(x.value)
-      && typeof y?.value === 'number' && Number.isFinite(y.value)
-      && typeof z?.value === 'number' && Number.isFinite(z.value)
-      && (id?.value === undefined || typeof id.value === 'string' || typeof id.value === 'number');
-  } catch {
-    return false;
-  }
-}
-
-function projectTrustedMapLibreFeature(feature: object): OwnDataValue {
-  let prototype: object | null;
-  try {
-    prototype = Object.getPrototypeOf(feature);
-  } catch {
-    return { kind: 'failure' };
-  }
-  if (prototype === null || prototype === Object.prototype) return { kind: 'failure' };
-  let trusted = mapLibreFeaturePrototypes.get(prototype);
-  if (trusted === undefined) {
-    trusted = inspectMapLibreFeaturePrototype(prototype);
-    if (trusted === undefined) return { kind: 'absent' };
-    mapLibreFeaturePrototypes.set(prototype, trusted);
-  }
-  try {
-    const geometry = Object.getOwnPropertyDescriptor(prototype, 'geometry');
-    if (geometry?.get !== trusted.geometryGetter || geometry.set !== trusted.geometrySetter
-      || Object.getPrototypeOf(feature) !== prototype || !isMapLibreFeatureReceiver(feature)) {
-      return { kind: 'failure' };
-    }
-    return { kind: 'data', value: trusted.toJson.call(feature) };
-  } catch {
-    return { kind: 'failure' };
-  }
-}
-
-function trustedFeatureProjector(
-  map: MapLibreMap,
-  actualQuery: unknown,
-  expectedQuery: unknown,
-): FeatureProjector | undefined {
-  try {
-    return actualQuery === expectedQuery
-      && Object.prototype.isPrototypeOf.call(mapLibreMapPrototype, map)
-      ? projectTrustedMapLibreFeature
-      : undefined;
-  } catch {
-    return undefined;
   }
 }
 
@@ -314,39 +172,24 @@ function projectLayer(value: unknown): JsonObject | undefined | false {
 function projectFeature(
   feature: unknown,
   propertyAllowlist: readonly string[] | undefined,
-  featureProjector: FeatureProjector | undefined,
 ): JsonObject | undefined {
   if (typeof feature !== 'object' || feature === null) return undefined;
-  let prototype: object | null;
-  try {
-    prototype = Object.getPrototypeOf(feature);
-  } catch {
-    return undefined;
-  }
-  const mapLibreDto = prototype === null || prototype === Object.prototype
-    ? { kind: 'absent' } as const
-    : featureProjector?.(feature) ?? { kind: 'failure' } as const;
-  if (mapLibreDto.kind === 'failure') return undefined;
-  const source = mapLibreDto.kind === 'data' ? mapLibreDto.value : feature;
-  if (typeof source !== 'object' || source === null) return undefined;
   const projected: JsonObject = {};
   for (const key of ['type', 'id', 'geometry', 'source', 'sourceLayer'] as const) {
-    const featureValue = ownDataValue(source, key);
+    const featureValue = ownDataValue(feature, key);
     if (featureValue.kind === 'failure') return undefined;
     if (featureValue.kind === 'data') defineJsonValue(projected, key, featureValue.value);
   }
-  const properties = ownDataValue(source, 'properties');
+  const properties = ownDataValue(feature, 'properties');
   if (properties.kind === 'failure') return undefined;
   if (properties.kind === 'data') {
-    const rawProperties = mapLibreDto.kind === 'data'
-      ? snapshotMapLibreProperties(properties.value)
-      : properties.value;
+    const rawProperties = snapshotMapLibreProperties(properties.value);
     if (rawProperties === undefined) return undefined;
     const projectedProperties = projectProperties(rawProperties, propertyAllowlist);
     if (projectedProperties === undefined) return undefined;
     defineJsonValue(projected, 'properties', projectedProperties);
   }
-  const rawLayer = ownDataValue(source, 'layer');
+  const rawLayer = ownDataValue(feature, 'layer');
   if (rawLayer.kind === 'failure') return undefined;
   if (rawLayer.kind === 'data') {
     const layer = projectLayer(rawLayer.value);
@@ -364,7 +207,6 @@ function boundFeatures(
   query: QueryFeatures,
   input: Pick<SourceFeatureQueryInput, 'propertyAllowlist' | 'limit' | 'maxSerializedBytes'>,
   limits: FeatureQueryLimits,
-  featureProjector?: FeatureProjector,
 ): BoundedFeatureQueryResult {
   let rawFeatures: unknown;
   try {
@@ -387,7 +229,7 @@ function boundFeatures(
       truncated = true;
       break;
     }
-    const projected = projectFeature(rawFeature, input.propertyAllowlist, featureProjector);
+    const projected = projectFeature(rawFeature, input.propertyAllowlist);
     if (projected === undefined) {
       return emptyFailure(createStyleToolError(
         'INTERNAL', 'MapLibre returned a feature that could not be safely projected.',
@@ -436,12 +278,10 @@ export function querySourceFeaturesBounded(
   const options: QuerySourceFeatureOptions = {};
   if (parsed.input.sourceLayer !== undefined) options.sourceLayer = parsed.input.sourceLayer;
   if (parsed.input.filter !== undefined) options.filter = parsed.input.filter as FilterSpecification;
-  const query = map.querySourceFeatures;
   return boundFeatures(
-    () => Reflect.apply(query, map, [parsed.input.sourceId, options]),
+    () => map.querySourceFeatures(parsed.input.sourceId, options),
     parsed.input,
     parsed.limits,
-    trustedFeatureProjector(map, query, mapLibreQuerySourceFeatures),
   );
 }
 
@@ -461,11 +301,9 @@ export function queryRenderedFeaturesBounded(
     : geometry.kind === 'point'
       ? geometry.point
       : geometry.bounds;
-  const query = map.queryRenderedFeatures;
   return boundFeatures(
-    () => Reflect.apply(query, map, [mapGeometry, options]),
+    () => map.queryRenderedFeatures(mapGeometry, options),
     parsed.input,
     parsed.limits,
-    trustedFeatureProjector(map, query, mapLibreQueryRenderedFeatures),
   );
 }

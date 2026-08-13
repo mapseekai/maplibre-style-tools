@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import type { Map as MapLibreMap } from 'maplibre-gl';
+import {
+  Map as MapLibreMapConstructor,
+  type Map as MapLibreMap,
+} from 'maplibre-gl';
 import { jsonUtf8ByteLength, jsonValueSchema } from '../../core/index.js';
 import {
   DEFAULT_FEATURE_QUERY_LIMITS,
@@ -57,6 +60,51 @@ function projectedFeature(id: number, name = `road-${id}`): Record<string, unkno
     sourceLayer: 'transportation',
     layer: { id: 'road-layer', type: 'line' },
   };
+}
+
+function exactShapeFeature(onPrototypeCall: () => void): object {
+  const ExactShapeFeature = class GeoJSONFeature {
+    readonly type = 'Feature';
+    readonly id = 'event-1';
+    readonly properties = Object.assign(Object.create(null) as Record<string, unknown>, {
+      category: 'festival',
+    });
+    readonly _vectorTileFeature = { trusted: true };
+    readonly _x = 0;
+    readonly _y = 0;
+    readonly _z = 0;
+    readonly tile = { z: 0, x: 0, y: 0 };
+    _geometry: unknown;
+
+    constructor(
+      feature?: unknown, z?: unknown, x?: unknown, y?: unknown, id?: unknown,
+    ) { void [feature, z, x, y, id]; }
+
+    projectPoint(point: unknown, x0: unknown, y0: unknown, size: unknown): never {
+      void [point, x0, y0, size];
+      throw new Error('fixture method is not invoked directly');
+    }
+    projectLine(line: unknown, x0: unknown, y0: unknown, size: unknown): never {
+      void [line, x0, y0, size];
+      throw new Error('fixture method is not invoked directly');
+    }
+    get geometry(): unknown {
+      onPrototypeCall();
+      this._geometry ??= { type: 'Point', coordinates: [10, 10] };
+      return this._geometry;
+    }
+    set geometry(value: unknown) { this._geometry = value; }
+    toJSON(): unknown {
+      onPrototypeCall();
+      return {
+        type: this.type,
+        id: this.id,
+        geometry: this.geometry,
+        properties: this.properties,
+      };
+    }
+  };
+  return new ExactShapeFeature();
 }
 
 test('source and rendered queries forward only documented MapLibre arguments', () => {
@@ -172,61 +220,23 @@ test('projects a fresh JSON DTO with an allowlist and never reads runtime metada
   assert.deepEqual(feature.properties, { name: 'main street', category: 'road', retained: true });
 });
 
-test('rejects an exact-shape feature impostor without invoking its accessors', () => {
+test('projects only own data from an exact-shape impostor without invoking its accessors', () => {
   const map = new FakeMap();
   let impostorCalls = 0;
-  const MapLibreGeoJSONFeature = class GeoJSONFeature {
-    readonly type = 'Feature';
-    readonly id = 'event-1';
-    readonly properties = Object.assign(Object.create(null) as Record<string, unknown>, {
-      category: 'festival',
-    });
-    readonly _vectorTileFeature = { trusted: true };
-    readonly _x = 0;
-    readonly _y = 0;
-    readonly _z = 0;
-    readonly tile = { z: 0, x: 0, y: 0 };
-    _geometry: unknown;
-
-    constructor(
-      feature?: unknown, z?: unknown, x?: unknown, y?: unknown, id?: unknown,
-    ) { void [feature, z, x, y, id]; }
-
-    projectPoint(point: unknown, x0: unknown, y0: unknown, size: unknown): never {
-      void [point, x0, y0, size];
-      throw new Error('fixture method is not invoked directly');
-    }
-    projectLine(line: unknown, x0: unknown, y0: unknown, size: unknown): never {
-      void [line, x0, y0, size];
-      throw new Error('fixture method is not invoked directly');
-    }
-    get geometry(): unknown {
-      impostorCalls += 1;
-      this._geometry ??= { type: 'Point', coordinates: [10, 10] };
-      return this._geometry;
-    }
-    set geometry(value: unknown) { this._geometry = value; }
-    toJSON(): unknown {
-      impostorCalls += 1;
-      return {
-        type: this.type,
-        id: this.id,
-        geometry: this.geometry,
-        properties: this.properties,
-      };
-    }
-  };
-  const feature = new MapLibreGeoJSONFeature();
+  const feature = exactShapeFeature(() => { impostorCalls += 1; });
   map.sourceFeatures = [feature];
 
   const result = querySourceFeaturesBounded(map.asMap(), {
     sourceId: 'events', propertyAllowlist: ['category'],
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error?.code, 'INTERNAL');
-  assert.deepEqual(result.features, []);
-  assert.equal(result.returned, 0);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.features, [{
+    type: 'Feature',
+    id: 'event-1',
+    properties: { category: 'festival' },
+  }]);
+  assert.equal(result.returned, 1);
   assert.equal(impostorCalls, 0);
 
   let foreignGeometryReads = 0;
@@ -241,6 +251,39 @@ test('rejects an exact-shape feature impostor without invoking its accessors', (
   map.sourceFeatures = [new ForeignFeature()];
   querySourceFeaturesBounded(map.asMap(), { sourceId: 'events' });
   assert.equal(foreignGeometryReads, 0);
+});
+
+test('borrowed Map prototype queries cannot authorize feature prototype execution', () => {
+  let foreignQueryCalls = 0;
+  let impostorCalls = 0;
+  const borrowed = Object.create(MapLibreMapConstructor.prototype) as MapLibreMap;
+  Object.defineProperty(borrowed, 'style', {
+    configurable: true,
+    enumerable: true,
+    value: {
+      querySourceFeatures() {
+        foreignQueryCalls += 1;
+        return [exactShapeFeature(() => { impostorCalls += 1; })];
+      },
+    },
+    writable: true,
+  });
+  const receivers = [borrowed, new Proxy(borrowed, {})];
+  const expected = [{
+    type: 'Feature',
+    id: 'event-1',
+    properties: { category: 'festival' },
+  }];
+
+  for (const receiver of receivers) {
+    const result = querySourceFeaturesBounded(receiver, {
+      sourceId: 'events', propertyAllowlist: ['category'],
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.features, expected);
+  }
+  assert.equal(foreignQueryCalls, 2);
+  assert.equal(impostorCalls, 0);
 });
 
 test('an unprojectable MapLibre feature produces a structured failure without partial results', () => {
