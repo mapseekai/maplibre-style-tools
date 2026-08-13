@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const root = process.cwd();
@@ -53,32 +54,51 @@ const staticModuleSpecifier = (node) => {
   return undefined;
 };
 
-const sdkSpecifiers = new Set();
-for (const file of sourceFilesBelow(resolve(root, 'src/mcp'))) {
-  const document = typescript.createSourceFile(
-    file,
-    readFileSync(file, 'utf8'),
-    typescript.ScriptTarget.Latest,
-    true,
-  );
-  const visit = (node) => {
-    const specifier = staticModuleSpecifier(node);
-    if (specifier?.split('/').slice(0, 2).join('/') === '@modelcontextprotocol/sdk') {
-      assert.ok(
-        approvedSdkSpecifiers.includes(specifier),
-        `MCP source imports unapproved SDK subpath ${specifier} in ${relativeToRoot(file)}`,
-      );
-      sdkSpecifiers.add(specifier);
-    }
-    typescript.forEachChild(node, visit);
-  };
-  visit(document);
-}
-assert.deepEqual([...sdkSpecifiers].sort(), [...approvedSdkSpecifiers].sort());
+const checkApprovedSdkSpecifiers = () => {
+  const sdkSpecifiers = new Set();
+  for (const file of sourceFilesBelow(resolve(root, 'src/mcp'))) {
+    const document = typescript.createSourceFile(
+      file,
+      readFileSync(file, 'utf8'),
+      typescript.ScriptTarget.Latest,
+      true,
+    );
+    const visit = (node) => {
+      const specifier = staticModuleSpecifier(node);
+      if (specifier?.split('/').slice(0, 2).join('/') === '@modelcontextprotocol/sdk') {
+        assert.ok(
+          approvedSdkSpecifiers.includes(specifier),
+          `MCP source imports unapproved SDK subpath ${specifier} in ${relativeToRoot(file)}`,
+        );
+        sdkSpecifiers.add(specifier);
+      }
+      typescript.forEachChild(node, visit);
+    };
+    visit(document);
+  }
+  assert.deepEqual([...sdkSpecifiers].sort(), [...approvedSdkSpecifiers].sort());
+};
 
-const forbiddenProjectPathReason = (file) => {
+const approvedBridgeFiles = Object.freeze([
+  'capabilities.ts',
+  'codec.ts',
+  'outbound.ts',
+  'protocol.ts',
+  'registry.ts',
+  'server.ts',
+]);
+
+export const forbiddenProjectPathReason = (file) => {
   const normalized = `/${normalize(file)}`;
   if (normalized.endsWith('/src/adapters/maplibre/style-hash.ts')) return undefined;
+  const bridgeMarker = '/src/bridge/';
+  const bridgeIndex = normalized.lastIndexOf(bridgeMarker);
+  if (bridgeIndex >= 0) {
+    const relativeBridge = normalized.slice(bridgeIndex + bridgeMarker.length);
+    return approvedBridgeFiles.includes(relativeBridge)
+      ? undefined
+      : 'unapproved bridge module';
+  }
   for (const fragment of [
     '/src/ai-sdk/',
     '/src/tools/',
@@ -93,36 +113,47 @@ const forbiddenProjectPathReason = (file) => {
   return undefined;
 };
 
-assert.equal(forbiddenProjectPathReason('/repo/src/adapters/maplibre/style-hash.ts'), undefined);
-for (const fixture of [
-  '/repo/src/adapters/maplibre/map-adapter.ts',
-  '/repo/src/ai-sdk/index.ts',
-  '/repo/src/tools/compact-tools.ts',
-  '/repo/src/engine/style-context.ts',
-  '/repo/examples/example.ts',
-  '/repo/node_modules/maplibre-gl/dist/maplibre-gl.js',
-  '/repo/node_modules/typescript/lib/lib.dom.d.ts',
-]) {
-  assert.ok(forbiddenProjectPathReason(fixture), `fixture must be rejected: ${fixture}`);
-}
+const requiredMcpClosureFiles = Object.freeze([
+  '/src/adapters/maplibre/style-hash.ts',
+  '/src/bridge/protocol.ts',
+  '/src/bridge/registry.ts',
+  '/src/bridge/server.ts',
+]);
 
-const result = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.mcp.json', '--listFiles'], {
-  cwd: root,
-  encoding: 'utf8',
-});
-if (result.error || result.status !== 0) {
-  throw new Error([
-    'MCP type graph compilation failed.',
-    result.error?.message,
-    result.stdout,
-    result.stderr,
-  ].filter(Boolean).join('\n'));
-}
+export const assertMcpTypeGraphFiles = (files) => {
+  assert.ok(files.some((file) => normalize(file).includes('/src/mcp/')),
+    'MCP type graph has no MCP source.');
+  assert.ok(files.some((file) => normalize(file).includes('/src/core/')),
+    'MCP type graph has no core source.');
+  for (const suffix of requiredMcpClosureFiles) {
+    assert.ok(files.some((file) => `/${normalize(file)}`.endsWith(suffix)),
+      `MCP type graph is missing required ${suffix}.`);
+  }
+  for (const file of files) {
+    const reason = forbiddenProjectPathReason(file);
+    assert.equal(reason, undefined, `MCP type graph includes forbidden ${reason}: ${file}`);
+  }
+};
 
-const files = result.stdout.split(/\r?\n/u).filter(Boolean);
-assert.ok(files.some((file) => relativeToRoot(file).startsWith('src/mcp/')), 'MCP type graph has no MCP source.');
-assert.ok(files.some((file) => relativeToRoot(file).startsWith('src/core/')), 'MCP type graph has no core source.');
-for (const file of files) {
-  const reason = forbiddenProjectPathReason(file);
-  assert.equal(reason, undefined, `MCP type graph includes forbidden ${reason}: ${file}`);
+export const runMcpTypegraphCheck = () => {
+  checkApprovedSdkSpecifiers();
+  const result = spawnSync(process.execPath, [tsc, '-p', 'tsconfig.mcp.json', '--listFiles'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error([
+      'MCP type graph compilation failed.',
+      result.error?.message,
+      result.stdout,
+      result.stderr,
+    ].filter(Boolean).join('\n'));
+  }
+  const files = result.stdout.split(/\r?\n/u).filter(Boolean);
+  assertMcpTypeGraphFiles(files);
+};
+
+const directPath = process.argv[1];
+if (directPath !== undefined && resolve(directPath) === fileURLToPath(import.meta.url)) {
+  runMcpTypegraphCheck();
 }

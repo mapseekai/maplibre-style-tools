@@ -111,6 +111,23 @@ export type {
   CreatedMapLibreStyleMcpServer,
   CreateMapLibreStyleMcpServerOptions,
 } from './create-server.js';
+export { createLiveMapMcpExtension } from './live-extension.js';
+export {
+  liveFeatureQueryDataSchema,
+  liveMapListDataSchema,
+  liveMapStyleDataSchema,
+  liveMutationReceiptDataSchema,
+  liveTransactionDataSchema,
+} from './live-tools.js';
+export {
+  buildLiveMapMetadataUri,
+  buildLiveMapStyleUri,
+  liveMapResourceUriAdmission,
+} from './live-resources.js';
+export { createBridgeServer as createMapLibreStyleBridgeServer } from '../bridge/server.js';
+export { LiveMapRegistry } from '../bridge/registry.js';
+export type { BridgeServerHandle, BridgeServerOptions } from '../bridge/server.js';
+export type { LiveMapMetadata } from '../bridge/registry.js';
 export { createMcpServerExtension } from './server-extension.js';
 export type {
   McpServerExtension,
