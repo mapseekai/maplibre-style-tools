@@ -6,7 +6,8 @@
     "outDir": "./.tmp/test-dist",
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["dist", ".tmp", "node_modules"]

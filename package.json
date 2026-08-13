@@ -27,23 +27,32 @@
       "types": "./dist/ai-sdk/index.d.ts",
       "import": "./dist/ai-sdk/index.js",
       "default": "./dist/ai-sdk/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/main.d.ts",
+      "import": "./dist/mcp/main.js",
+      "default": "./dist/mcp/main.js"
     }
   },
   "bin": {
-    "maplibre-style": "./dist/cli/main.js"
+    "maplibre-style": "./dist/cli/main.js",
+    "maplibre-style-mcp": "./dist/mcp/main.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
     "clean": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('.tmp/tsconfig.build.tsbuildinfo', { force: true });\"",
-    "prebuild": "pnpm run clean",
+    "generate:mcp-version": "node scripts/generate-mcp-version.mjs",
+    "check:mcp-version": "node scripts/generate-mcp-version.mjs --check",
+    "prebuild": "pnpm run clean && pnpm run check:mcp-version",
     "build": "tsc -b tsconfig.build.json",
     "check:package": "pnpm run build && node scripts/check-package.mjs",
     "typecheck:core": "tsc -p tsconfig.core.json",
-    "typecheck": "pnpm run typecheck:core && tsc -p tsconfig.json",
+    "typecheck:mcp": "tsc -p tsconfig.mcp.json",
+    "typecheck": "pnpm run check:mcp-version && pnpm run typecheck:core && pnpm run typecheck:mcp && tsc -p tsconfig.json",
     "lint": "eslint .",
-    "pretest": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/test-dist', { recursive: true, force: true });\"",
+    "pretest": "pnpm run check:mcp-version && node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/test-dist', { recursive: true, force: true });\"",
     "test": "tsc -p tsconfig.test.json",
     "posttest": "node scripts/run-tests.mjs",
     "prepack": "pnpm run build"
@@ -56,10 +65,11 @@
     "maplibre-gl": "^6.3.0"
   },
   "dependencies": {
+    "@maplibre/maplibre-gl-style-spec": "^26.2.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/geojson": "^7946.0.16",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.20.1",
-    "@maplibre/maplibre-gl-style-spec": "^26.2.1",
     "ai": "^6.0.141",
     "zod": "^4.3.6"
   },
