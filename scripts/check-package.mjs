@@ -171,6 +171,20 @@ const packedModules = [
   'engine/style-context',
   'engine/style-operations',
   'index',
+  'mcp/core-adapters',
+  'mcp/create-server',
+  'mcp/document-handlers',
+  'mcp/http',
+  'mcp/main',
+  'mcp/message-boundary',
+  'mcp/output',
+  'mcp/resources',
+  'mcp/schemas',
+  'mcp/server-extension',
+  'mcp/session-store',
+  'mcp/stdio',
+  'mcp/types',
+  'mcp/version.generated',
   'tools/compact-tools',
   'types',
 ];
@@ -557,6 +571,81 @@ void rootNodeAmbient;
 void legacy;
 `;
 
+const mcpConsumer = `import {
+  MAX_MCP_MESSAGE_BYTES,
+  MAX_STYLE_SESSION_ID_BYTES,
+  createMapLibreStyleMcpServer,
+  createStyleSessionStore,
+  resolveMcpMessagePolicy,
+} from 'maplibre-style-tools/mcp';
+import type {
+  CreateMapLibreStyleMcpServerOptions,
+  McpMessagePolicy,
+  McpServerExtension,
+  McpServerExtensionContext,
+  ResourceUriAdmission,
+  RunStdioMcpOptions,
+  StartStreamableHttpMcpOptions,
+  StyleSessionStore,
+} from 'maplibre-style-tools/mcp';
+
+declare global {
+  type HeadersInit =
+    | readonly (readonly [string, string])[]
+    | Readonly<Record<string, string | readonly string[]>>
+    | Headers;
+}
+
+const policy: McpMessagePolicy = resolveMcpMessagePolicy();
+const admission: ResourceUriAdmission = {
+  scheme: 'example',
+  authority: 'styles',
+  assertCanonical(rawUri: string): void { void rawUri; },
+};
+const extension: McpServerExtension = (
+  server,
+  context: McpServerExtensionContext,
+) => {
+  context.registerResourceUriAdmission(admission);
+  context.responseBoundary.requireToolSuccess({ ready: true });
+  void server;
+  return undefined;
+};
+const store = createStyleSessionStore();
+const options: CreateMapLibreStyleMcpServerOptions = { store, extensions: [extension] };
+const stdio: RunStdioMcpOptions = { startupDiagnosticLine: null };
+const http: StartStreamableHttpMcpOptions = { bearerToken: 'secret' };
+const created = createMapLibreStyleMcpServer(options);
+declare const transport: Parameters<typeof created.connect>[0];
+if (false) void created.connect(transport);
+void created.server.server;
+
+const plainStore = {
+  size: 0,
+  limits: store.limits,
+  open: store.open,
+  close: store.close,
+  read: store.read,
+  readRevision: store.readRevision,
+  apply: store.apply,
+  export: store.export,
+  dispose: store.dispose,
+};
+// @ts-expect-error only a factory-created branded store can be injected.
+const forgedStore: StyleSessionStore = plainStore;
+// @ts-expect-error MCP extensions must be synchronous.
+const asyncExtension: McpServerExtension = async () => undefined;
+void [
+  policy,
+  stdio,
+  http,
+  forgedStore,
+  asyncExtension,
+  MAX_MCP_MESSAGE_BYTES,
+  MAX_STYLE_SESSION_ID_BYTES,
+];
+`;
+
 const coreConfig = `{
   "compilerOptions": {
     "target": "ES2023",
@@ -608,6 +697,23 @@ const rootConfig = `{
 }
 `;
 
+const mcpConfig = `{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "skipLibCheck": false,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force"
+  },
+  "include": ["mcp-consumer.ts"]
+}
+`;
+
 const runtimeSmoke = `import assert from 'node:assert/strict';
 import {
   createCompactMapLibreStyleTools,
@@ -626,6 +732,10 @@ import {
   createCompactMapLibreStyleTools as createCompactFromAi,
   createMapLibreStyleTools as createFullFromAi,
 } from 'maplibre-style-tools/ai';
+import {
+  createMapLibreStyleMcpServer,
+  resolveMcpMessagePolicy,
+} from 'maplibre-style-tools/mcp';
 
 assert.equal(typeof createMapLibreStyleTools, 'function');
 assert.equal(typeof createCompactMapLibreStyleTools, 'function');
@@ -636,6 +746,8 @@ assert.equal(typeof inlineGeoJsonSchema.safeParse, 'function');
 assert.equal(typeof applyTransactionToMap, 'function');
 assert.equal(typeof runtimeGeoJsonSourceDiffSchema.safeParse, 'function');
 assert.equal(typeof sanitizeRuntimeGeoJsonSourceDiff, 'function');
+assert.equal(typeof createMapLibreStyleMcpServer, 'function');
+assert.equal(resolveMcpMessagePolicy().maxMessageBytes, 5 * 1024 * 1024);
 const finalized = finalizeStyleReplacement(
   { version: 8, sources: {}, layers: [] },
   { version: 8, sources: {}, layers: [], metadata: { owner: 'maps' } },
@@ -644,7 +756,8 @@ assert.equal(finalized.ok, true);
 assert.deepEqual(finalized.diff.map(({ op, path }) => ({ op, path })), [{ op: 'add', path: '/metadata' }]);
 `;
 
-const temporary = mkdtempSync(join(tmpdir(), 'maplibre-style-tools-package-'));
+const packDirectory = mkdtempSync(join(tmpdir(), 'maplibre-style-tools-package-'));
+const consumer = mkdtempSync(join(tmpdir(), 'maplibre-style-tools-consumer-'));
 try {
   const workspace = await import('maplibre-style-tools');
   assertion(typeof workspace.createMapLibreStyleTools === 'function', 'root full factory is missing');
@@ -676,8 +789,12 @@ try {
   assertion(typeof ai.createMapLibreStyleTools === 'function', 'AI full factory is missing');
   assertion(typeof ai.createCompactMapLibreStyleTools === 'function', 'AI compact factory is missing');
 
+  const mcp = await import('maplibre-style-tools/mcp');
+  assertion(typeof mcp.createMapLibreStyleMcpServer === 'function',
+    'MCP server factory is missing');
+
   const packOutput = command('npm', [
-    'pack', '--json', '--pack-destination', temporary,
+    'pack', '--json', '--pack-destination', packDirectory,
   ]);
   const packJsonStart = packOutput.lastIndexOf('\n[');
   const packed = JSON.parse(packOutput.slice(packJsonStart < 0 ? 0 : packJsonStart + 1));
@@ -686,9 +803,12 @@ try {
   const [packedResult] = packed;
   assertion(Array.isArray(packedResult.files),
     'npm pack did not return a usable JSON file list');
-  const tarballPath = join(temporary, packedResult.filename);
+  const tarballPath = join(packDirectory, packedResult.filename);
   assertion(existsSync(tarballPath), 'npm pack did not create its reported tarball');
-  assert.equal(packageJson.bin?.['maplibre-style'], './dist/cli/main.js');
+  assert.deepEqual(packageJson.bin, {
+    'maplibre-style': './dist/cli/main.js',
+    'maplibre-style-mcp': './dist/mcp/main.js',
+  });
   const packedFiles = packedResult.files.map((file) => file.path).sort();
   for (const required of [
     'dist/index.js',
@@ -705,11 +825,17 @@ try {
     'dist/ai-sdk/index.d.ts',
     'dist/cli/main.js',
     'dist/cli/main.d.ts',
+    'dist/mcp/main.js',
+    'dist/mcp/main.d.ts',
+    'dist/mcp/http.js',
+    'dist/mcp/stdio.js',
   ]) assertion(packedFiles.includes(required), `packed tarball is missing ${required}`);
   for (const file of packedFiles) {
     assertion(
       !file.startsWith('src/')
         && !file.startsWith('.tmp/')
+        && file !== 'evals'
+        && !file.startsWith('evals/')
         && !file.startsWith('examples/')
         && !file.startsWith('test-results/')
         && !file.startsWith('playwright-report/'),
@@ -726,13 +852,13 @@ try {
   }
   assert.deepEqual(packedFiles, exactPackedFiles, 'npm pack file list changed');
   assert.deepEqual(
-    readdirSync(temporary).filter((file) => file.endsWith('.tgz')),
+    readdirSync(packDirectory).filter((file) => file.endsWith('.tgz')),
     [packedResult.filename],
     'package check must create exactly one real tarball',
   );
-  const unpacked = join(temporary, 'unpacked');
-  command('tar', ['-xzf', tarballPath, '-C', temporary]);
-  command('mv', [join(temporary, 'package'), unpacked]);
+  const unpacked = join(packDirectory, 'unpacked');
+  command('tar', ['-xzf', tarballPath, '-C', packDirectory]);
+  command('mv', [join(packDirectory, 'package'), unpacked]);
   const rootDeclaration = source(join(unpacked, 'dist/index.d.ts'));
   assertion(rootDeclaration.startsWith('/// <reference types="node" preserve="true" />\n/// <reference types="geojson" preserve="true" />'),
     'root declaration references must preserve node then geojson');
@@ -741,6 +867,9 @@ try {
     'AI declaration must preserve its own root-level node reference');
   assertion(source(join(unpacked, 'dist/core/types.d.ts')).startsWith('/// <reference types="geojson" preserve="true" />'),
     'core type declaration must preserve geojson');
+  assertion(/^\/\/\/ <reference types="node" preserve="true" \/>/m.test(
+    source(join(unpacked, 'dist/mcp/main.d.ts')),
+  ), 'MCP declaration must preserve its explicit Node type reference');
   const nodeReferenceFiles = packedFiles
     .filter((file) => file.endsWith('.d.ts'))
     .filter((file) => /\/\/\/\s*<reference\s+types=["']node["']/.test(
@@ -750,23 +879,25 @@ try {
     'dist/ai-sdk/full-tools.d.ts',
     'dist/ai-sdk/index.d.ts',
     'dist/index.d.ts',
-  ], 'only root and AI declarations may reference Node ambient types');
+    'dist/mcp/http.d.ts',
+    'dist/mcp/main.d.ts',
+  ], 'only root, AI, and MCP transport declarations may reference Node ambient types');
   assertCoreDeclarationsAreTransportNeutral(packedFiles, unpacked);
   assertMapLibreDeclarationsAreNodeFree(packedFiles, unpacked);
 
-  const consumer = join(temporary, 'consumer');
-  command('mkdir', ['-p', consumer]);
   writeFileSync(join(consumer, 'package.json'), '{\n  "private": true,\n  "type": "module"\n}\n');
   command('npm', [
-    'install', '--no-save', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund',
+    'install', '--no-save', '--ignore-scripts', '--no-package-lock', '--no-audit', '--no-fund',
     tarballPath,
   ], consumer);
   writeFileSync(join(consumer, 'core-consumer.ts'), coreConsumer);
   writeFileSync(join(consumer, 'maplibre-consumer.ts'), maplibreConsumer);
   writeFileSync(join(consumer, 'root-consumer.ts'), rootConsumer);
+  writeFileSync(join(consumer, 'mcp-consumer.ts'), mcpConsumer);
   writeFileSync(join(consumer, 'tsconfig.core-consumer.json'), coreConfig);
   writeFileSync(join(consumer, 'tsconfig.maplibre-consumer.json'), maplibreConfig);
   writeFileSync(join(consumer, 'tsconfig.root-consumer.json'), rootConfig);
+  writeFileSync(join(consumer, 'tsconfig.mcp-consumer.json'), mcpConfig);
   const installedManifest = JSON.parse(source(join(consumer, 'node_modules/maplibre-style-tools/package.json')));
   assert.equal(installedManifest.dependencies['@types/geojson'], '^7946.0.16');
   assert.equal(installedManifest.dependencies['@types/json-schema'], '^7.0.15');
@@ -792,6 +923,15 @@ try {
       import: './dist/ai-sdk/index.js',
       default: './dist/ai-sdk/index.js',
     },
+    './mcp': {
+      types: './dist/mcp/main.d.ts',
+      import: './dist/mcp/main.js',
+      default: './dist/mcp/main.js',
+    },
+  });
+  assert.deepEqual(installedManifest.bin, {
+    'maplibre-style': './dist/cli/main.js',
+    'maplibre-style-mcp': './dist/mcp/main.js',
   });
   assertion(installedManifest.devDependencies?.['@types/node'] === undefined,
     'the packed manifest must not retain @types/node in devDependencies');
@@ -827,13 +967,37 @@ try {
   writeFileSync(fixture, '{"version":8,"sources":{},"layers":[]}');
   const validation = JSON.parse(runInstalledBinary(['validate', 'style.json']));
   assert.equal(validation.ok, true);
+  const installedMcpBinary = join(
+    consumer, 'node_modules/.bin/maplibre-style-mcp',
+  );
+  const mcpHelp = spawnSync(installedMcpBinary, ['--help'], {
+    cwd: consumer,
+    encoding: 'utf8',
+  });
+  if (mcpHelp.error || mcpHelp.status !== 0 || mcpHelp.stdout !== '') {
+    throw new Error([
+      'Installed MCP binary failed: --help',
+      mcpHelp.error?.message,
+      mcpHelp.stdout,
+      mcpHelp.stderr,
+    ].filter(Boolean).join('\n'));
+  }
+  assert.match(mcpHelp.stderr, /Usage: maplibre-style-mcp/);
+  const installedMcpVersion = command(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    "import('maplibre-style-tools/mcp').then(m => process.stdout.write(m.MCP_SERVER_VERSION))",
+  ], consumer);
+  assert.equal(installedMcpVersion, installedManifest.version);
   const parsedCoreConfig = JSON.parse(coreConfig);
   const parsedMapLibreConfig = JSON.parse(maplibreConfig);
   const parsedRootConfig = JSON.parse(rootConfig);
+  const parsedMcpConfig = JSON.parse(mcpConfig);
   for (const [name, config] of [
     ['core', parsedCoreConfig],
     ['maplibre', parsedMapLibreConfig],
     ['root', parsedRootConfig],
+    ['mcp', parsedMcpConfig],
   ]) {
     assert.deepEqual(config.compilerOptions.types, [], `${name} consumer must isolate ambient types`);
     assert.equal(config.compilerOptions.skipLibCheck, false,
@@ -847,7 +1011,10 @@ try {
   assert.deepEqual(parsedMapLibreConfig.include, ['maplibre-consumer.ts']);
   assert.equal(parsedRootConfig.compilerOptions.module, 'ESNext');
   assert.equal(parsedRootConfig.compilerOptions.moduleResolution, 'Bundler');
-  for (const consumerSource of [coreConsumer, maplibreConsumer, rootConsumer]) {
+  assert.equal(parsedMcpConfig.compilerOptions.module, 'NodeNext');
+  assert.equal(parsedMcpConfig.compilerOptions.moduleResolution, 'NodeNext');
+  assert.deepEqual(parsedMcpConfig.compilerOptions.lib, ['ES2023']);
+  for (const consumerSource of [coreConsumer, maplibreConsumer, rootConsumer, mcpConsumer]) {
     assertion(!consumerSource.includes('/dist/') && !consumerSource.includes('/src/'),
       'consumer source must use package specifiers rather than internal paths');
   }
@@ -858,11 +1025,28 @@ try {
   assertion(!maplibreConsumer.includes('maplibre-style-tools/ai')
       && !maplibreConsumer.includes("from 'maplibre-style-tools';"),
   'MapLibre consumer must not import the root or AI entry point');
+  assertion(!mcpConsumer.includes('maplibre-style-tools/ai')
+      && !mcpConsumer.includes('maplibre-style-tools/maplibre')
+      && !mcpConsumer.includes("from 'maplibre-style-tools';"),
+  'MCP consumer must not import root, AI, or MapLibre entry points');
   command(process.execPath, [tsc, '-p', 'tsconfig.core-consumer.json', '--noEmit'], consumer);
   command(process.execPath, [tsc, '-p', 'tsconfig.maplibre-consumer.json', '--noEmit'], consumer);
   command(process.execPath, [tsc, '-p', 'tsconfig.root-consumer.json', '--noEmit'], consumer);
+  const mcpListFiles = command(process.execPath, [
+    tsc,
+    '-p', 'tsconfig.mcp-consumer.json',
+    '--noEmit',
+    '--listFiles',
+  ], consumer);
+  const forbiddenMcpDeclaration = /node_modules\/maplibre-style-tools\/dist\/(?:index\.(?:d\.ts|js)|ai-sdk\/|adapters\/maplibre\/)[^\n]*/m
+    .exec(mcpListFiles)?.[0];
+  assertion(forbiddenMcpDeclaration === undefined,
+    `MCP declaration graph leaked ${forbiddenMcpDeclaration ?? 'a forbidden entry point'}`);
+  assertion(!/lib\.dom\.d\.ts/.test(mcpListFiles),
+    'MCP declaration graph leaked DOM ambient types');
   writeFileSync(join(consumer, 'runtime-smoke.mjs'), runtimeSmoke);
   command(process.execPath, ['runtime-smoke.mjs'], consumer);
 } finally {
-  rmSync(temporary, { recursive: true, force: true });
+  rmSync(packDirectory, { recursive: true, force: true });
+  rmSync(consumer, { recursive: true, force: true });
 }

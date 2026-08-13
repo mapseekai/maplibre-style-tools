@@ -53,14 +53,15 @@ The full factory exposes detailed tools for layers, sources, paint and layout pr
 
 ## Entry points
 
-The package has four supported entry points:
+The package has five supported entry points:
 
 - `maplibre-style-tools` is the compatibility facade and exports both factories plus the legacy root types.
 - `maplibre-style-tools/core` is the transport-neutral transaction, validation, GeoJSON, analysis, and discovery API. It requires neither DOM nor Node ambient types.
 - `maplibre-style-tools/maplibre` applies prepared transactions to MapLibre maps and exposes bounded live-map commands. It may use DOM types but does not load Node ambient types.
 - `maplibre-style-tools/ai` exports both AI SDK factories, their strict input schemas, compatibility parsers, and the common result envelope.
+- `maplibre-style-tools/mcp` exports the bounded, in-memory MCP server factory, transport runners, schemas, URI helpers, and session types.
 
-Only the root and `/ai` declaration graphs intentionally load Node types required by the AI SDK. Import `/core` or `/maplibre` directly when that ambient dependency is undesirable.
+The root, `/ai`, and `/mcp` declaration graphs intentionally load their required Node types. Import `/core` or `/maplibre` directly when that ambient dependency is undesirable.
 
 ## Pure core
 
@@ -257,6 +258,142 @@ branch. Each write owns a temporary Writable `error` listener. EPIPE and
 already-closed streams select exit `3`, and stderr reporting is best-effort: if
 stderr is closed too, the CLI preserves the selected exit code without an
 uncaught error.
+
+## MCP server
+
+Use the installed stdio server for ordinary MCP hosts:
+
+```bash
+maplibre-style-mcp --stdio
+```
+
+Stdout is reserved exclusively for newline-delimited protocol messages; startup
+diagnostics go only to stderr. The default `maxMessageBytes` is 5 MiB. Embedders
+can configure it from 128 KiB through 64 MiB. `runStdioMcp` accepts a
+`startupDiagnosticLine`: omitted writes the default ready line, a string writes
+that exact one-line diagnostic, and `null` suppresses it. A composite host should
+pass `null`, then emit and await its own handoff diagnostic after all components
+are ready.
+
+An optional protected Streamable HTTP listener is available for trusted clients:
+
+```bash
+TOKEN='replace-with-a-random-secret'
+maplibre-style-mcp --http --bearer-token "$TOKEN"
+```
+
+It binds `127.0.0.1` on a random port by default. Supplying another interface
+requires `--allow-non-loopback`. Every request must provide the bearer token and
+the exact bound `Host`; a present browser `Origin` must equal the bound origin or
+an explicit allowlist entry. The listener validates these headers before reading
+the body or allocating an MCP transport. It intentionally disables replay and
+JSON batch aggregation: Streamable HTTP uses non-replay SSE, and each response in
+a batch is independently bounded. Application style-session IDs are distinct
+from SDK transport-session IDs.
+
+Neither transport accepts a path or URL as Style input, and neither performs a
+network fetch. The package-derived server version is generated at build time.
+
+### Tools and lifecycle
+
+The server advertises exactly eight document tools:
+
+| Tool | Title | Description |
+| --- | --- | --- |
+| `style_session_open` | Open style session | Open one bounded in-memory session from inline Style JSON. |
+| `style_session_close` | Close style session | Close one in-memory style session. |
+| `style_validate` | Validate style | Validate inline Style JSON or one open session snapshot. |
+| `style_inspect` | Inspect style | Read one context, layer, source, or source-layer view from a session. |
+| `style_search_layers` | Search style layers | Search layer summaries in one session without mutation. |
+| `style_analyze_geojson` | Analyze GeoJSON | Analyze inline GeoJSON or one session GeoJSON source. |
+| `style_apply_transaction` | Apply style transaction | Dry-run or commit one revision-checked transaction. Its `transaction` field is intentionally SDK-opaque; core validates the bounded `{ "operations": [...] }` shape. |
+| `style_export` | Export style snapshot | Export the current or one retained revision of a session. |
+
+Open a session, commit only against the expected revision, and export the same
+or a retained revision:
+
+```json
+{"name":"style_session_open","arguments":{"style":{"version":8,"sources":{},"layers":[]}}}
+```
+
+```json
+{"name":"style_apply_transaction","arguments":{"sessionId":"SESSION","expectedRevision":0,"dryRun":true,"transaction":{"operations":[{"op":"setStyleRootProperties","metadata":{"owner":"maps"}}]}}}
+```
+
+```json
+{"name":"style_export","arguments":{"sessionId":"SESSION","revision":0}}
+```
+
+A dry run returns the semantic diff but does not advance revision or history. A
+commit is atomic, requires the exact current revision, advances it once, and
+retains at most 20 history entries. Defaults are 32 sessions, a 5 MiB Style, 100
+operations, a 1 MiB diff, and a 30-minute idle TTL; generated session IDs are
+limited to 512 UTF-8 bytes.
+
+Nested discovery inputs are ordinary JSON objects. For example:
+
+```json
+{"name":"style_validate","arguments":{"target":{"kind":"inline","style":{"version":8,"sources":{},"layers":[]}}}}
+```
+
+```json
+{"name":"style_analyze_geojson","arguments":{"target":{"kind":"sessionSource","sessionId":"SESSION","sourceId":"points"}}}
+```
+
+```json
+{"name":"style_inspect","arguments":{"sessionId":"SESSION","selection":{"view":"layer","layerId":"roads"}}}
+```
+
+An SDK schema rejection happens before a handler enters and therefore uses the
+SDK error shape. After handler entry, validation and domain failures use the
+stable business envelope `{ "ok": false, "error": { ... } }`. Successful tool
+results keep their JSON text content equal to `structuredContent`.
+
+### Resources and canonical identifiers
+
+The six advertised resource templates are:
+
+- `maplibre-style://sessions/~{sessionId}`
+- `maplibre-style://sessions/~{sessionId}/style`
+- `maplibre-style://sessions/~{sessionId}/context`
+- `maplibre-style://sessions/~{sessionId}/layers/~{layerId}`
+- `maplibre-style://sessions/~{sessionId}/sources/~{sourceId}`
+- `maplibre-style://sessions/~{sessionId}/revisions/~{revision}/diff`
+
+The literal `~` marker belongs to every semantic variable. A generic client
+supplies each raw semantic ID under RFC6570—the template performs exactly one encoding
+step. Do not pre-mark, double encode, or normalize it. Exported helpers such as
+`makeSessionUri`, `makeStyleUri`, `makeContextUri`, `makeLayerUri`, `makeSourceUri`,
+and `makeDiffUri` preserve identifiers including `.`, `..`, `~`, `%`, and `/`
+without aliases or double decoding.
+
+### Embedding
+
+```ts
+import {
+  createMapLibreStyleMcpServer,
+  createStyleSessionStore,
+} from 'maplibre-style-tools/mcp';
+
+const store = createStyleSessionStore();
+const created = createMapLibreStyleMcpServer({ store });
+await created.connect(transport);
+```
+
+An injected store must be the exact branded object returned by
+`createStyleSessionStore`; structural fakes and proxies are rejected. Extensions
+are strictly synchronous and explicitly return `undefined`. Each resource
+extension registers one disjoint `ResourceUriAdmission` with `scheme`,
+`authority`, and `assertCanonical` through the shared context before composition
+freezes; registration and extension composition remain synchronous.
+
+The public factory's `connect` and `close` methods are already bounded and
+stateful. Do not retain or invoke raw SDK low-level connect/close methods.
+`maxMessageBytes` replaces oversized application results atomically with the
+fixed `responseTooLarge` envelope: projection work is not rerun and no partial
+result is emitted. Its inbound boundary counts exact raw bytes, and its outbound
+boundary gates the final serialized JSON-RPC message. Only the stdio and HTTP runners select prebounded-input mode;
+direct factory connections perform canonical inbound byte validation themselves.
 
 ## Development
 

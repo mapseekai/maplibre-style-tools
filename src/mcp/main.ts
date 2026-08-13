@@ -3,6 +3,7 @@
 
 import { resolve } from 'node:path';
 import process from 'node:process';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -209,8 +210,17 @@ const runExecutable = async (args: readonly string[]): Promise<number> => {
   }
 };
 
-const directPath = process.argv[1];
-if (directPath !== undefined && resolve(directPath) === fileURLToPath(import.meta.url)) {
+const isDirectExecution = (directPath: string | undefined): boolean => {
+  if (directPath === undefined) return false;
+  try {
+    return realpathSync(resolve(directPath))
+      === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+};
+
+if (isDirectExecution(process.argv[1])) {
   process.exitCode = await runExecutable(process.argv.slice(2));
 }
 export type {
