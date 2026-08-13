@@ -395,6 +395,22 @@ result is emitted. Its inbound boundary counts exact raw bytes, and its outbound
 boundary gates the final serialized JSON-RPC message. Only the stdio and HTTP runners select prebounded-input mode;
 direct factory connections perform canonical inbound byte validation themselves.
 
+### Read-only MCP Builder evaluation
+
+After building the repository, start the deterministic evaluation-only fixture
+server with:
+
+```bash
+node evals/maplibre-style-mcp-fixture-server.mjs
+```
+
+It pre-seeds the ten independent sessions described by
+`evals/maplibre-style-mcp.xml` and then uses the same public bounded stdio
+runner, tools, resources, and server metadata as the installed server. The
+fixture is repository-only and is excluded from the packed package. The default
+`maplibre-style-mcp` binary never contains or discovers these evaluation
+sessions.
+
 ## Development
 
 ```bash
