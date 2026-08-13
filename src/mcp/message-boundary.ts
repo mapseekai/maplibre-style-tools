@@ -292,6 +292,25 @@ const assertSingleInboundMcpFraming = (
   context?.admissions?.assertCanonical(uri);
 };
 
+const isAdmissionFailure = (error: unknown): error is StyleToolError =>
+  isStyleToolError(error)
+  && (error.details?.reason === 'nonCanonicalResourceUri'
+    || error.details?.reason === 'unregisteredResourceNamespace');
+
+const inspectSingleInboundMcpFraming = (
+  value: unknown,
+  policy: McpMessagePolicy,
+  context: InboundMcpFramingContext | undefined,
+): StyleToolError | undefined => {
+  try {
+    assertSingleInboundMcpFraming(value, policy, context);
+    return undefined;
+  } catch (error: unknown) {
+    if (isAdmissionFailure(error)) return error;
+    throw error;
+  }
+};
+
 export const assertInboundMcpFraming = (
   value: unknown,
   policy: McpMessagePolicy,
@@ -300,11 +319,7 @@ export const assertInboundMcpFraming = (
   assertInboundMessageSize(value, policy, context);
   if (Array.isArray(value)) {
     for (const member of value) {
-      try {
-        assertSingleInboundMcpFraming(member, policy, context);
-      } catch (error: unknown) {
-        if (!isAdmissionFailure(error)) throw error;
-      }
+      inspectSingleInboundMcpFraming(member, policy, context);
     }
     return;
   }
@@ -321,11 +336,6 @@ const assertInboundMessageSize = (
     throw invalidInput('messageTooLarge', 'MCP message exceeds the configured byte limit.');
   }
 };
-
-const isAdmissionFailure = (error: unknown): error is StyleToolError =>
-  isStyleToolError(error)
-  && (error.details?.reason === 'nonCanonicalResourceUri'
-    || error.details?.reason === 'unregisteredResourceNamespace');
 
 const safeRequestId = (value: unknown): string | number | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -531,9 +541,12 @@ export const createBoundedMcpTransport = (
     message,
     extra?: McpMessageExtra,
   ): void => {
-    const dispatchMember = (member: unknown): void => {
+    const dispatchCheckedMember = (
+      member: unknown,
+      admissionFailure: StyleToolError | undefined,
+    ): void => {
       try {
-        assertSingleInboundMcpFraming(member, policy, inboundContext);
+        if (admissionFailure !== undefined) throw admissionFailure;
         publicOnMessage?.(member as McpTransportMessage, extra);
       } catch (error: unknown) {
         if (isAdmissionFailure(error)) {
@@ -550,16 +563,22 @@ export const createBoundedMcpTransport = (
     };
     try {
       assertInboundMessageSize(message, policy, inboundContext);
+      const inbound: unknown = message;
+      if (Array.isArray(inbound)) {
+        const admissionFailures = inbound.map((member) =>
+          inspectSingleInboundMcpFraming(member, policy, inboundContext));
+        for (const [index, member] of inbound.entries()) {
+          dispatchCheckedMember(member, admissionFailures[index]);
+        }
+      } else {
+        dispatchCheckedMember(
+          inbound,
+          inspectSingleInboundMcpFraming(inbound, policy, inboundContext),
+        );
+      }
     } catch (error: unknown) {
       void signalTerminal(error);
-      return;
     }
-    const inbound: unknown = message;
-    if (Array.isArray(inbound)) {
-      for (const member of inbound) dispatchMember(member);
-      return;
-    }
-    dispatchMember(inbound);
   };
 
   const installedOnError: NonNullable<McpTransport['onerror']> = (error): void => {

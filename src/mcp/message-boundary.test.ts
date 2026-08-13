@@ -358,6 +358,60 @@ test('batch admission forwards valid members and binds every invalid request to 
   await bounded.close();
 });
 
+for (const { label, invalid, reason } of [
+  {
+    label: 'request ID',
+    invalid: {
+      jsonrpc: '2.0',
+      id: 'x'.repeat(MAX_MCP_REQUEST_ID_BYTES),
+      method: 'tools/list',
+    } as TransportMessage,
+    reason: 'requestIdTooLarge',
+  },
+  {
+    label: 'method',
+    invalid: {
+      jsonrpc: '2.0',
+      id: 'late-method',
+      method: 'x'.repeat(MAX_MCP_METHOD_BYTES + 1),
+    } as TransportMessage,
+    reason: 'methodTooLarge',
+  },
+  {
+    label: 'resource URI',
+    invalid: resourceRead(
+      `example-resource://items/${'x'.repeat(MAX_MCP_RESOURCE_URI_BYTES)}`,
+      'late-uri',
+    ),
+    reason: 'resourceUriTooLarge',
+  },
+] as const) {
+  test(`batch preflights a later oversized ${label} before forwarding an earlier member`, async () => {
+    const raw = new RecordingTransport();
+    const terminal: unknown[] = [];
+    const bounded = createBoundedMcpTransport(
+      raw,
+      resolveMcpMessagePolicy({}),
+      createInboundMcpFramingContext(),
+      (error) => { terminal.push(error); },
+    );
+    const validFirst = { ...smallRequest, id: `valid-before-${label}` } as TransportMessage;
+    const forwarded: TransportMessage[] = [];
+    bounded.onmessage = (message) => { forwarded.push(message); };
+    await bounded.start();
+
+    raw.emitMessage([validFirst, invalid] as unknown as TransportMessage);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(forwarded, []);
+    assert.equal(terminal.length, 1);
+    assert.equal(isStyleToolError(terminal[0]), true);
+    assert.equal(isStyleToolError(terminal[0]) && terminal[0].details?.reason, reason);
+    assert.deepEqual(raw.sent, []);
+    assert.equal(raw.closeCalls, 1);
+  });
+}
+
 test('raw send rejection enters the terminal latch for ordinary and fallback sends', async () => {
   for (const message of [smallRequest, makeResponseOfSize(MIN_MCP_MESSAGE_BYTES + 1)]) {
     const primary = new Error('raw-send-primary');
