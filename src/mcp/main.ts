@@ -6,11 +6,18 @@ import process from 'node:process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { createBridgeServer, type BridgeServerHandle } from '../bridge/server.js';
+import {
+  formatBridgeConnectionInfo,
+  parseBridgeOptions,
+  type ParsedBridgeOptions,
+} from './bridge-options.js';
 import {
   startStreamableHttpMcp,
   type StartedHttpMcp,
   type StartStreamableHttpMcpOptions,
 } from './http.js';
+import { createLiveMapMcpExtension } from './live-extension.js';
 import { runStdioMcp, writeMcpStderrLine } from './stdio.js';
 
 export { MCP_SERVER_VERSION } from './version.generated.js';
@@ -137,40 +144,87 @@ export type {
 export { runStdioMcp } from './stdio.js';
 export type { RunStdioMcpOptions, StartedStdioMcp } from './stdio.js';
 
-const parseHttpOptions = (
+type ParsedHttpOptions = Omit<StartStreamableHttpMcpOptions, 'extensions'>;
+
+export type ParsedMcpProcessOptions =
+  | {
+    readonly mcpTransport: 'stdio';
+    readonly bridge: ParsedBridgeOptions;
+  }
+  | {
+    readonly mcpTransport: 'http';
+    readonly bridge: ParsedBridgeOptions;
+    readonly http: ParsedHttpOptions;
+  };
+
+const invalidArguments = (): never => {
+  throw new TypeError('invalid arguments');
+};
+
+export const parseMcpProcessOptions = (
   args: readonly string[],
-): StartStreamableHttpMcpOptions | undefined => {
-  if (args[0] !== '--http') return undefined;
+): ParsedMcpProcessOptions => {
+  let mcpTransport: 'stdio' | 'http' | undefined;
   let bearerToken: string | undefined;
   let host: string | undefined;
   let port: number | undefined;
   let allowNonLoopback = false;
   const allowedOrigins: string[] = [];
-  for (let index = 1; index < args.length; index += 1) {
+  const bridgeArgs: string[] = [];
+  let sawHttpOption = false;
+
+  for (let index = 0; index < args.length; index += 1) {
     const name = args[index];
+    if (name === '--stdio' || name === '--http') {
+      if (mcpTransport !== undefined) invalidArguments();
+      mcpTransport = name === '--stdio' ? 'stdio' : 'http';
+      continue;
+    }
+    if (name === '--bridge-host'
+      || name === '--bridge-port'
+      || name === '--bridge-token'
+      || name === '--bridge-origin') {
+      const value = args[index + 1];
+      if (value === undefined) invalidArguments();
+      bridgeArgs.push(name, value);
+      index += 1;
+      continue;
+    }
     if (name === '--allow-non-loopback') {
-      if (allowNonLoopback) return undefined;
+      sawHttpOption = true;
+      if (allowNonLoopback) invalidArguments();
       allowNonLoopback = true;
       continue;
     }
     const value = args[index + 1];
-    if (value === undefined) return undefined;
+    if (value === undefined) invalidArguments();
     index += 1;
-    if (name === '--bearer-token' && bearerToken === undefined) bearerToken = value;
-    else if (name === '--host' && host === undefined) host = value;
+    sawHttpOption = true;
+    if (name === '--bearer-token' && bearerToken === undefined && value.length > 0) {
+      bearerToken = value;
+    } else if (name === '--host' && host === undefined && value.length > 0) host = value;
     else if (name === '--port' && port === undefined && /^(?:0|[1-9][0-9]{0,4})$/u.test(value)) {
       port = Number(value);
     } else if (name === '--allowed-origin') allowedOrigins.push(value);
-    else return undefined;
+    else invalidArguments();
   }
-  if (bearerToken === undefined) return undefined;
-  return {
-    bearerToken,
+
+  const bridge = parseBridgeOptions(bridgeArgs);
+  const resolvedTransport = mcpTransport ?? 'stdio';
+  if (resolvedTransport === 'stdio') {
+    if (sawHttpOption) invalidArguments();
+    return { mcpTransport: 'stdio', bridge };
+  }
+  const requiredBearerToken = bearerToken ?? invalidArguments();
+  if (port !== undefined && port > 65_535) invalidArguments();
+  const http: ParsedHttpOptions = {
+    bearerToken: requiredBearerToken,
     ...(host === undefined ? {} : { host }),
     ...(port === undefined ? {} : { port }),
     ...(allowNonLoopback ? { allowNonLoopback: true } : {}),
     ...(allowedOrigins.length === 0 ? {} : { allowedOrigins }),
   };
+  return { mcpTransport: 'http', bridge, http };
 };
 
 const waitForShutdownSignal = (): Promise<void> => new Promise((resolveSignal) => {
@@ -187,31 +241,50 @@ const runExecutable = async (args: readonly string[]): Promise<number> => {
   if (args.includes('--help')) {
     await writeMcpStderrLine(
       process.stderr,
-      'Usage: maplibre-style-mcp [--stdio] | --http --bearer-token TOKEN [--host HOST] [--port PORT] [--allow-non-loopback] [--allowed-origin ORIGIN]',
+      'Usage: maplibre-style-mcp [--stdio | --http --bearer-token TOKEN [--host HOST] [--port PORT] [--allow-non-loopback] [--allowed-origin ORIGIN]] --bridge-origin ORIGIN [--bridge-host HOST] [--bridge-port PORT] [--bridge-token TOKEN]',
     );
     return 0;
   }
-  const httpOptions = parseHttpOptions(args);
-  if (args.includes('--http') && httpOptions === undefined) {
+  let parsed: ParsedMcpProcessOptions;
+  try {
+    parsed = parseMcpProcessOptions(args);
+  } catch {
     await writeMcpStderrLine(process.stderr, 'maplibre-style-mcp: invalid arguments');
     return 1;
   }
-  if (httpOptions === undefined && args.some((arg) => arg !== '--stdio')) {
-    await writeMcpStderrLine(process.stderr, 'maplibre-style-mcp: invalid arguments');
-    return 1;
-  }
+  let bridge: BridgeServerHandle | undefined;
   let started: Awaited<ReturnType<typeof runStdioMcp>> | StartedHttpMcp | undefined;
   try {
-    if (httpOptions !== undefined) {
-      started = await startStreamableHttpMcp(httpOptions);
+    bridge = await createBridgeServer(parsed.bridge);
+    const extension = createLiveMapMcpExtension(bridge.registry);
+    if (parsed.mcpTransport === 'http') {
+      started = await startStreamableHttpMcp({
+        ...parsed.http,
+        extensions: [extension],
+      });
       await writeMcpStderrLine(
         process.stderr,
-        `maplibre-style-mcp: listening ${started.url}`,
+        formatBridgeConnectionInfo(
+          bridge,
+          parsed.bridge.allowedOrigins,
+          { mcpTransport: 'http', mcpUrl: started.url },
+        ),
       );
       await waitForShutdownSignal();
     } else {
-      const stdio = await runStdioMcp();
+      const stdio = await runStdioMcp({
+        startupDiagnosticLine: null,
+        serverOptions: { extensions: [extension] },
+      });
       started = stdio;
+      await writeMcpStderrLine(
+        process.stderr,
+        formatBridgeConnectionInfo(
+          bridge,
+          parsed.bridge.allowedOrigins,
+          { mcpTransport: 'stdio' },
+        ),
+      );
       await stdio.closed;
     }
     return 0;
@@ -223,7 +296,8 @@ const runExecutable = async (args: readonly string[]): Promise<number> => {
     }
     return 1;
   } finally {
-    await started?.close();
+    await started?.close().catch(() => undefined);
+    await bridge?.close().catch(() => undefined);
   }
 };
 
