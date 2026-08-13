@@ -27,6 +27,8 @@ class FakeMap {
   addImageCalls = 0;
   sourceFeatures: unknown[] = [];
   readonly images = new Map<string, unknown>();
+  readonly synchronousCalls = new Map<string, number>();
+  beforeSynchronousCommand: (() => void) | undefined;
   private readonly listeners = new Map<EventName, Set<Listener>>();
 
   constructor(style: StyleSpecification) {
@@ -69,11 +71,18 @@ class FakeMap {
     return this;
   }
 
+  private recordSynchronousCall(name: string): void {
+    this.synchronousCalls.set(name, (this.synchronousCalls.get(name) ?? 0) + 1);
+    this.beforeSynchronousCommand?.();
+  }
+
   querySourceFeatures(): unknown[] {
+    this.recordSynchronousCall('querySourceFeatures');
     return this.sourceFeatures;
   }
 
   queryRenderedFeatures(): unknown[] {
+    this.recordSynchronousCall('queryRenderedFeatures');
     return this.sourceFeatures;
   }
 
@@ -81,10 +90,12 @@ class FakeMap {
   removeFeatureState(): void {}
 
   setGlobalStateProperty(): void {
+    this.recordSynchronousCall('setGlobalState');
     this.setGlobalStateCalls += 1;
   }
 
   listImages(): string[] {
+    this.recordSynchronousCall('listImages');
     return [...this.images.keys()];
   }
 
@@ -93,6 +104,7 @@ class FakeMap {
   }
 
   addImage(id: string, image: unknown): void {
+    this.recordSynchronousCall('addImage');
     this.addImageCalls += 1;
     this.images.set(id, image);
   }
@@ -314,4 +326,52 @@ test('rejects oversized initial styles and invalid explicit deadlines before wor
     runtime.execute({ type: 'getStyle' }, { deadlineAt: now + 10_001 }),
     hasCode('INVALID_INPUT'),
   );
+});
+
+test('returns authentic TIMEOUT after synchronous abortable Map work crosses its deadline', async (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const map = new FakeMap(rawStyle());
+  map.sourceFeatures = [rawFeature(1)];
+  map.images.set('existing', { width: 1, height: 1, data: new Uint8Array(4) });
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const cases: ReadonlyArray<{ name: string; command: BridgeCommand }> = [
+    {
+      name: 'querySourceFeatures',
+      command: { type: 'querySourceFeatures', sourceId: 'roads' },
+    },
+    {
+      name: 'queryRenderedFeatures',
+      command: { type: 'queryRenderedFeatures' },
+    },
+    {
+      name: 'setGlobalState',
+      command: { type: 'setGlobalState', propertyName: 'theme', value: 'night' },
+    },
+    { name: 'listImages', command: { type: 'listImages' } },
+    {
+      name: 'addImage',
+      command: {
+        type: 'addImage', imageId: 'marker',
+        image: { kind: 'rgba', width: 1, height: 1, data: btoa('\0\0\0\0') },
+      },
+    },
+  ];
+  const outcomes: string[] = [];
+
+  for (const fixture of cases) {
+    const before = map.synchronousCalls.get(fixture.name) ?? 0;
+    const deadlineAt = now + 5_000;
+    map.beforeSynchronousCommand = () => { now = deadlineAt; };
+    try {
+      await runtime.execute(fixture.command, { deadlineAt });
+      outcomes.push('success');
+    } catch (error) {
+      outcomes.push(isStyleToolError(error) ? error.code : 'foreign-error');
+    }
+    assert.equal(map.synchronousCalls.get(fixture.name), before + 1);
+    now += 1;
+  }
+
+  assert.deepEqual(outcomes, cases.map(() => 'TIMEOUT'));
 });

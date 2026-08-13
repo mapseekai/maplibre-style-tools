@@ -921,11 +921,16 @@ export async function createBrowserMapRuntime(
       if (commandDeadline.deadline.signal?.aborted === true) onDeadlineAbort();
       tail = tail.then(async () => {
         try {
-          resolve(await executeQueued(
+          const executed = await executeQueued(
             parsed.data,
             commandDeadline.deadline,
             executionState,
-          ) as BrowserRuntimeResult<C>);
+          ) as BrowserRuntimeResult<C>;
+          if (!executionState.nonAbortableMapWorkStarted
+            && deadlineExpired(commandDeadline.deadline)) {
+            throw timeoutError();
+          }
+          resolve(executed);
         } catch (error) {
           reject(publicFailure('Browser map command failed.', error));
         } finally {
