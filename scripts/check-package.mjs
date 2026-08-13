@@ -577,6 +577,8 @@ const mcpConsumer = `import {
   createMapLibreStyleMcpServer,
   createStyleSessionStore,
   resolveMcpMessagePolicy,
+  runStdioMcp,
+  startStreamableHttpMcp,
 } from 'maplibre-style-tools/mcp';
 import type {
   CreateMapLibreStyleMcpServerOptions,
@@ -643,6 +645,8 @@ void [
   asyncExtension,
   MAX_MCP_MESSAGE_BYTES,
   MAX_STYLE_SESSION_ID_BYTES,
+  runStdioMcp,
+  startStreamableHttpMcp,
 ];
 `;
 
