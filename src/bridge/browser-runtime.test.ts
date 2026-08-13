@@ -1,0 +1,317 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+
+import { hashStyle } from '../adapters/maplibre/index.js';
+import {
+  DEFAULT_MAX_STYLE_BYTES,
+  isStyleToolError,
+  validateStyleDocument,
+  type StyleDocument,
+  type StyleToolError,
+} from '../core/index.js';
+import type { BridgeCapability, BridgeCommand } from './protocol.js';
+import {
+  createBrowserMapRuntime,
+  type BrowserRuntimeOptions,
+} from './browser-runtime.js';
+
+type EventName = 'style.load' | 'error';
+type Listener = (event: { type: EventName; error?: Error }) => void;
+
+class FakeMap {
+  style: StyleSpecification;
+  loaded = true;
+  setStyleCalls = 0;
+  setGlobalStateCalls = 0;
+  addImageCalls = 0;
+  sourceFeatures: unknown[] = [];
+  readonly images = new Map<string, unknown>();
+  private readonly listeners = new Map<EventName, Set<Listener>>();
+
+  constructor(style: StyleSpecification) {
+    this.style = structuredClone(style);
+  }
+
+  on(type: EventName, listener: Listener): { unsubscribe(): void } {
+    let listeners = this.listeners.get(type);
+    if (listeners === undefined) {
+      listeners = new Set();
+      this.listeners.set(type, listeners);
+    }
+    listeners.add(listener);
+    return { unsubscribe: () => listeners!.delete(listener) };
+  }
+
+  off(type: EventName, listener: Listener): this {
+    this.listeners.get(type)?.delete(listener);
+    return this;
+  }
+
+  emit(type: EventName, error?: Error): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener({ type, error });
+  }
+
+  getStyle(): StyleSpecification {
+    return this.style;
+  }
+
+  isStyleLoaded(): boolean {
+    return this.loaded;
+  }
+
+  setStyle(style: StyleSpecification | string): this {
+    assert.notEqual(typeof style, 'string');
+    this.setStyleCalls += 1;
+    this.style = structuredClone(style as StyleSpecification);
+    this.loaded = true;
+    queueMicrotask(() => this.emit('style.load'));
+    return this;
+  }
+
+  querySourceFeatures(): unknown[] {
+    return this.sourceFeatures;
+  }
+
+  queryRenderedFeatures(): unknown[] {
+    return this.sourceFeatures;
+  }
+
+  setFeatureState(): void {}
+  removeFeatureState(): void {}
+
+  setGlobalStateProperty(): void {
+    this.setGlobalStateCalls += 1;
+  }
+
+  listImages(): string[] {
+    return [...this.images.keys()];
+  }
+
+  hasImage(id: string): boolean {
+    return this.images.has(id);
+  }
+
+  addImage(id: string, image: unknown): void {
+    this.addImageCalls += 1;
+    this.images.set(id, image);
+  }
+
+  updateImage(id: string, image: unknown): void {
+    this.addImageCalls += 1;
+    this.images.set(id, image);
+  }
+
+  removeImage(id: string): void {
+    this.images.delete(id);
+  }
+
+  external(style: StyleSpecification): void {
+    this.style = structuredClone(style);
+  }
+
+  asMap(): MapLibreMap {
+    return this as unknown as MapLibreMap;
+  }
+}
+
+const rawStyle = (color = '#000000'): StyleSpecification => ({
+  version: 8,
+  sources: {
+    base: { type: 'vector', tiles: ['https://tiles.example/{z}/{x}/{y}.pbf'] },
+  },
+  layers: [{
+    id: 'roads',
+    type: 'line',
+    source: 'base',
+    'source-layer': 'roads',
+    paint: { 'line-color': color },
+  }],
+});
+
+const strictStyle = (color = '#000000'): StyleDocument => {
+  const validated = validateStyleDocument(rawStyle(color));
+  assert.equal(validated.ok, true);
+  if (!validated.ok) assert.fail('fixture must be valid');
+  return validated.style;
+};
+
+const allCapabilities: BridgeCapability[] = [
+  'style.read',
+  'style.write',
+  'features.query',
+  'runtime.state',
+  'images.write',
+  'network.load',
+];
+
+const runtimeOptions = (
+  overrides: Partial<BrowserRuntimeOptions> = {},
+): BrowserRuntimeOptions => ({
+  capabilities: allCapabilities,
+  resourcePolicy: {
+    baseUrl: 'https://images.example/app/',
+    allowedResourceOrigins: ['https://images.example', 'https://tiles.example'],
+  },
+  ...overrides,
+});
+
+const applyCommand = async (
+  expectedRevision: number,
+  expectedStyleHash: string,
+  color: string,
+): Promise<BridgeCommand> => ({
+  type: 'applyTransaction',
+  expectedRevision,
+  expectedStyleHash,
+  transaction: {
+    operations: [{
+      op: 'setLayerProperties',
+      layerId: 'roads',
+      paint: { 'line-color': color },
+    }],
+    validate: true,
+  },
+});
+
+const hasCode = (code: StyleToolError['code']) => (error: unknown): boolean =>
+  isStyleToolError(error) && error.code === code;
+
+const rawFeature = (id: number): Record<string, unknown> => ({
+  type: 'Feature',
+  id,
+  geometry: { type: 'Point', coordinates: [id, id + 1] },
+  properties: { name: `road-${id}`, secret: 'omit' },
+  source: 'roads',
+  sourceLayer: 'transportation',
+  layer: { id: 'road-layer', type: 'line' },
+});
+
+test('initializes from normalized authority and records external changes once', async () => {
+  const map = new FakeMap(rawStyle());
+  const external: number[] = [];
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    onExternalStyleChange: (snapshot) => external.push(snapshot.revision),
+  }));
+  assert.deepEqual(runtime.snapshot(), {
+    revision: 0,
+    styleHash: await hashStyle(strictStyle()),
+    style: strictStyle(),
+  });
+  map.external(rawStyle('#ff0000'));
+  assert.equal((await runtime.noteExternalStyle()).revision, 1);
+  assert.equal((await runtime.noteExternalStyle()).revision, 1);
+  assert.deepEqual(external, [1]);
+});
+
+test('rechecks revision and canonical hash only when a queued mutation dequeues', async () => {
+  const map = new FakeMap(rawStyle());
+  let release: ((image: { width: number; height: number; data: Uint8Array }) => void) | undefined;
+  let markLoaderStarted: (() => void) | undefined;
+  const loaderStarted = new Promise<void>((resolve) => { markLoaderStarted = resolve; });
+  const imageLoader = {
+    load: () => new Promise<{ width: number; height: number; data: Uint8Array }>((done) => {
+      release = done;
+      markLoaderStarted?.();
+    }),
+  };
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({ imageLoader }));
+  const hash0 = runtime.snapshot().styleHash;
+  const blocker = runtime.execute({
+    type: 'addImage', imageId: 'marker', image: { kind: 'url', url: './marker.png' },
+  });
+  const mutation = runtime.execute(await applyCommand(0, hash0, '#ff0000'));
+  await loaderStarted;
+  map.external(rawStyle('#00ff00'));
+  release?.({ width: 1, height: 1, data: new Uint8Array(4) });
+  await blocker;
+  await assert.rejects(mutation, hasCode('REVISION_CONFLICT'));
+  assert.equal(map.setStyleCalls, 0);
+  assert.equal(runtime.snapshot().revision, 1);
+});
+
+test('applies once, advances revision after completion, and preserves no-op revision', async () => {
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const baseline = runtime.snapshot();
+  const applied = await runtime.execute(await applyCommand(0, baseline.styleHash, '#ff0000'));
+  assert.equal(applied.type, 'transaction');
+  if (applied.type !== 'transaction') assert.fail('expected transaction');
+  assert.equal(applied.applied, true);
+  assert.equal(applied.revision, 1);
+  assert.equal(map.setStyleCalls, 1);
+  const noOp = await runtime.execute(await applyCommand(1, applied.styleHash, '#ff0000'));
+  assert.equal(noOp.type === 'transaction' && noOp.noOp, true);
+  assert.equal(noOp.type === 'transaction' && noOp.revision, 1);
+  assert.equal(map.setStyleCalls, 1);
+});
+
+test('rejects invalid external authority and blocks commands until explicit recovery', async () => {
+  const map = new FakeMap(rawStyle());
+  const syncEvents: string[] = [];
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    onSyncStateChange: (event) => syncEvents.push(event.reason),
+  }));
+  map.external({ ...rawStyle(), version: 7 } as unknown as StyleSpecification);
+  await assert.rejects(runtime.noteExternalStyle(), hasCode('INVALID_INPUT'));
+  await assert.rejects(runtime.execute({ type: 'getStyle' }), hasCode('MAP_NOT_READY'));
+  map.external(rawStyle('#00ff00'));
+  await runtime.noteExternalStyle();
+  assert.equal((await runtime.execute({ type: 'getStyle' })).type, 'style');
+  assert.deepEqual(syncEvents, ['invalid-map-style']);
+});
+
+test('bounds feature/state/image paths before Map mutation', async () => {
+  const map = new FakeMap(rawStyle());
+  map.sourceFeatures = Array.from({ length: 101 }, (_, index) => rawFeature(index));
+  const loadedUrls: string[] = [];
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    imageLoader: {
+      async load(url) {
+        loadedUrls.push(url);
+        return { width: 1, height: 1, data: new Uint8Array(4) };
+      },
+    },
+  }));
+  const features = await runtime.execute({
+    type: 'querySourceFeatures', sourceId: 'roads', properties: ['name'], limit: 100,
+  });
+  assert.equal(features.type === 'features' && features.returned, 100);
+  assert.equal(features.type === 'features' && features.truncated, true);
+  if (features.type !== 'features') assert.fail('expected features');
+  assert.deepEqual(Object.keys(features.features[0]?.properties ?? {}), ['name']);
+
+  await assert.rejects(runtime.execute({
+    type: 'setGlobalState', propertyName: 'payload', value: 'x'.repeat(65 * 1024),
+  }), hasCode('INVALID_INPUT'));
+  assert.equal(map.setGlobalStateCalls, 0);
+  await assert.rejects(runtime.execute({
+    type: 'addImage', imageId: 'bad',
+    image: { kind: 'rgba', width: 2, height: 2, data: btoa('short') },
+  }), hasCode('INVALID_INPUT'));
+  assert.equal(map.addImageCalls, 0);
+  await runtime.execute({
+    type: 'addImage', imageId: 'marker', image: { kind: 'url', url: './marker.png' },
+  });
+  assert.deepEqual(loadedUrls, ['https://images.example/app/marker.png']);
+});
+
+test('rejects oversized initial styles and invalid explicit deadlines before work', async () => {
+  const oversized = rawStyle();
+  Object.assign(oversized, { metadata: { padding: 'x'.repeat(DEFAULT_MAX_STYLE_BYTES) } });
+  await assert.rejects(
+    createBrowserMapRuntime(new FakeMap(oversized).asMap(), runtimeOptions()),
+    hasCode('INVALID_INPUT'),
+  );
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const now = Date.now();
+  await assert.rejects(
+    runtime.execute({ type: 'getStyle' }, { deadlineAt: now }),
+    hasCode('TIMEOUT'),
+  );
+  await assert.rejects(
+    runtime.execute({ type: 'getStyle' }, { deadlineAt: now + 10_001 }),
+    hasCode('INVALID_INPUT'),
+  );
+});
