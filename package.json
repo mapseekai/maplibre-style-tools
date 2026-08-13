@@ -32,6 +32,11 @@
       "types": "./dist/mcp/main.d.ts",
       "import": "./dist/mcp/main.js",
       "default": "./dist/mcp/main.js"
+    },
+    "./bridge": {
+      "types": "./dist/bridge/index.d.ts",
+      "import": "./dist/bridge/index.js",
+      "default": "./dist/bridge/index.js"
     }
   },
   "bin": {
@@ -49,8 +54,9 @@
     "build": "tsc -b tsconfig.build.json",
     "check:package": "pnpm run build && node scripts/check-package.mjs",
     "typecheck:core": "tsc -p tsconfig.core.json",
+    "typecheck:browser": "tsc -p tsconfig.browser.json",
     "typecheck:mcp": "tsc -p tsconfig.mcp.json",
-    "typecheck": "pnpm run check:mcp-version && pnpm run typecheck:core && pnpm run typecheck:mcp && tsc -p tsconfig.json",
+    "typecheck": "pnpm run check:mcp-version && pnpm run typecheck:core && pnpm run typecheck:browser && pnpm run typecheck:mcp && tsc -p tsconfig.json",
     "lint": "eslint .",
     "pretest": "pnpm run check:mcp-version && node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/test-dist', { recursive: true, force: true });\"",
     "test": "tsc -p tsconfig.test.json",

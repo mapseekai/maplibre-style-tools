@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": [
+    "src/bridge/index.ts",
+    "src/bridge/client.ts",
+    "src/bridge/protocol.ts",
+    "src/bridge/codec.ts",
+    "src/bridge/capabilities.ts",
+    "src/bridge/outbound.ts",
+    "src/bridge/resource-policy.ts",
+    "src/bridge/browser-runtime.ts",
+    "src/adapters/maplibre/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/bridge/server.ts",
+    "src/bridge/registry.ts",
+    "dist",
+    ".tmp",
+    "node_modules"
+  ]
+}

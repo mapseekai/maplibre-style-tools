@@ -5,17 +5,145 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createRequire } from 'node:module';
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path';
+import { builtinModules, createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const typescript = require('typescript');
 const tsc = require.resolve('typescript/bin/tsc');
 const root = process.cwd();
+const assertion = (condition, message) => assert.ok(condition, message);
+const source = (file) => readFileSync(file, 'utf8');
+
+const browserClosureRequiredModules = [
+  'dist/bridge/index.js',
+  'dist/bridge/client.js',
+  'dist/bridge/protocol.js',
+  'dist/bridge/codec.js',
+  'dist/bridge/capabilities.js',
+  'dist/bridge/outbound.js',
+  'dist/bridge/resource-policy.js',
+  'dist/bridge/browser-runtime.js',
+];
+
+const builtinSpecifiers = new Set([
+  ...builtinModules,
+  ...builtinModules.map((name) => `node:${name}`),
+]);
+
+const isInside = (parent, candidate) => {
+  const child = relative(parent, candidate);
+  return child === '' || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child));
+};
+
+const assertBrowserClosure = ({
+  entry,
+  packageRoot,
+  requireProductionModules,
+}) => {
+  const canonicalPackageRoot = realpathSync(packageRoot);
+  const canonicalEntry = realpathSync(entry);
+  assertion(isInside(canonicalPackageRoot, canonicalEntry),
+    `browser closure entry escapes package root: ${entry}`);
+  const visited = new Set();
+
+  const visitFile = (file) => {
+    const canonicalFile = realpathSync(file);
+    assertion(isInside(canonicalPackageRoot, canonicalFile),
+      `browser closure edge escapes package root: ${file}`);
+    if (visited.has(canonicalFile)) return;
+    assertion(statSync(canonicalFile).isFile(),
+      `browser closure edge is not a file: ${file}`);
+    visited.add(canonicalFile);
+    const document = typescript.createSourceFile(
+      canonicalFile,
+      source(canonicalFile),
+      typescript.ScriptTarget.Latest,
+      true,
+      typescript.ScriptKind.JS,
+    );
+
+    const follow = (specifier) => {
+      assertion(!specifier.startsWith('node:') && !builtinSpecifiers.has(specifier),
+        `${relative(canonicalPackageRoot, canonicalFile)} imports Node builtin ${specifier}`);
+      assertion(specifier !== 'ws' && !specifier.startsWith('ws/'),
+        `${relative(canonicalPackageRoot, canonicalFile)} imports forbidden browser dependency ${specifier}`);
+      if (!specifier.startsWith('.')) return;
+      const target = resolve(dirname(canonicalFile), specifier);
+      assertion(existsSync(target),
+        `${relative(canonicalPackageRoot, canonicalFile)} has unresolved relative import ${specifier}`);
+      visitFile(target);
+    };
+
+    const visitNode = (node) => {
+      if ((typescript.isImportDeclaration(node) || typescript.isExportDeclaration(node))
+        && node.moduleSpecifier !== undefined) {
+        assertion(typescript.isStringLiteral(node.moduleSpecifier),
+          `${relative(canonicalPackageRoot, canonicalFile)} has a non-literal module specifier`);
+        follow(node.moduleSpecifier.text);
+      } else if (typescript.isCallExpression(node) && typescript.isImportCall(node)) {
+        const [argument] = node.arguments;
+        assertion(argument !== undefined && typescript.isStringLiteral(argument),
+          `${relative(canonicalPackageRoot, canonicalFile)} has a non-literal dynamic import`);
+        follow(argument.text);
+      }
+      typescript.forEachChild(node, visitNode);
+    };
+    visitNode(document);
+  };
+
+  visitFile(canonicalEntry);
+  const files = [...visited]
+    .map((file) => relative(canonicalPackageRoot, file).split(sep).join('/'))
+    .sort();
+  if (requireProductionModules) {
+    for (const required of browserClosureRequiredModules) {
+      assertion(files.includes(required), `browser closure did not reach ${required}`);
+    }
+    assertion(files.some((file) => file.startsWith('dist/adapters/maplibre/')),
+      'browser closure did not reach a MapLibre adapter module');
+  }
+  return files;
+};
+
+if (process.argv[2] === '--check-browser-closure') {
+  const arguments_ = process.argv.slice(3);
+  let entryArgument;
+  let json = false;
+  for (const argument of arguments_) {
+    if (argument === '--json' && !json) json = true;
+    else if (entryArgument === undefined && !argument.startsWith('--')) entryArgument = argument;
+    else throw new TypeError(`invalid browser closure argument: ${argument}`);
+  }
+  const productionEntry = resolve(root, 'dist/bridge/index.js');
+  const entry = entryArgument === undefined ? productionEntry : resolve(root, entryArgument);
+  const production = entry === productionEntry;
+  const packageRoot = production ? root : dirname(entry);
+  if (!production) {
+    assertion(isInside(resolve(root, '.tmp'), entry),
+      'explicit browser closure fixtures must live under repository .tmp');
+  }
+  const files = assertBrowserClosure({
+    entry,
+    packageRoot,
+    requireProductionModules: production,
+  });
+  if (json) process.stdout.write(`${JSON.stringify({ files })}\n`);
+  process.exit(0);
+}
 
 const command = (program, args, cwd = root) => {
   const result = spawnSync(program, args, { cwd, encoding: 'utf8' });
@@ -30,8 +158,6 @@ const command = (program, args, cwd = root) => {
   return result.stdout;
 };
 
-const assertion = (condition, message) => assert.ok(condition, message);
-const source = (file) => readFileSync(file, 'utf8');
 const packageJson = JSON.parse(source(join(root, 'package.json')));
 
 const declarationSpecifier = (node) => {
@@ -140,6 +266,16 @@ const packedModules = [
   'ai-sdk/result',
   'ai-sdk/schemas',
   'ai-sdk/tool-contracts',
+  'bridge/browser-runtime',
+  'bridge/capabilities',
+  'bridge/client',
+  'bridge/codec',
+  'bridge/index',
+  'bridge/outbound',
+  'bridge/protocol',
+  'bridge/registry',
+  'bridge/resource-policy',
+  'bridge/server',
   'cli/args',
   'cli/file-output',
   'cli/input',
@@ -171,10 +307,14 @@ const packedModules = [
   'engine/style-context',
   'engine/style-operations',
   'index',
+  'mcp/bridge-options',
   'mcp/core-adapters',
   'mcp/create-server',
   'mcp/document-handlers',
   'mcp/http',
+  'mcp/live-extension',
+  'mcp/live-resources',
+  'mcp/live-tools',
   'mcp/main',
   'mcp/message-boundary',
   'mcp/output',
@@ -324,6 +464,19 @@ import type {
   RuntimeGeoJsonPropertyPatch,
   RuntimeGeoJsonSourceDiff,
 } from 'maplibre-style-tools/maplibre';
+import {
+  BRIDGE_PROTOCOL_VERSION,
+  canonicalizeJson,
+  connectMapLibreBridge,
+  sha256CanonicalJson,
+} from 'maplibre-style-tools/bridge';
+import type {
+  BridgeCommand,
+  ConnectMapLibreBridgeOptions,
+  MapLibreBridgeConnection,
+  MapLibreBridgeStatus,
+  ResourcePolicy,
+} from 'maplibre-style-tools/bridge';
 import type { JsonObject } from 'maplibre-style-tools/core';
 import type { GeoJSONSource, GeoJSONSourceDiff } from 'maplibre-gl';
 
@@ -377,6 +530,20 @@ const diff: RuntimeGeoJsonSourceDiff = {
   }],
 };
 const upstreamDiff: GeoJSONSourceDiff = diff;
+const bridgeOptions: ConnectMapLibreBridgeOptions = {
+  mapId: 'consumer-map',
+  url: 'ws://127.0.0.1:7788',
+  token: 't'.repeat(32),
+  capabilities: ['style.read'],
+  allowedResourceOrigins: ['https://maps.example'],
+};
+const bridgeStatus: MapLibreBridgeStatus = 'connected';
+const bridgeCommand: BridgeCommand = { type: 'getStyle' };
+const resourcePolicy: ResourcePolicy = {
+  baseUrl: 'https://maps.example/style.json',
+  allowedResourceOrigins: ['https://maps.example'],
+};
+declare const bridgeConnection: MapLibreBridgeConnection;
 // @ts-expect-error incremental diff envelopes are closed.
 const extraDiff: RuntimeGeoJsonSourceDiff = { removeAll: true, extra: true };
 // @ts-expect-error feature patch objects are closed.
@@ -496,6 +663,15 @@ void [
   invalidMaxOperations,
   invalidTimeout,
   inspectResult,
+  bridgeOptions,
+  bridgeStatus,
+  bridgeCommand,
+  resourcePolicy,
+  bridgeConnection,
+  BRIDGE_PROTOCOL_VERSION,
+  canonicalizeJson,
+  connectMapLibreBridge,
+  sha256CanonicalJson,
   applyTransactionToMap,
   runtimeGeoJsonSourceDiffSchema,
   sanitizeRuntimeGeoJsonSourceDiff,
@@ -574,8 +750,16 @@ void legacy;
 const mcpConsumer = `import {
   MAX_MCP_MESSAGE_BYTES,
   MAX_STYLE_SESSION_ID_BYTES,
+  buildLiveMapMetadataUri,
+  buildLiveMapStyleUri,
+  createLiveMapMcpExtension,
   createMapLibreStyleMcpServer,
   createStyleSessionStore,
+  liveFeatureQueryDataSchema,
+  liveMapListDataSchema,
+  liveMapStyleDataSchema,
+  liveMutationReceiptDataSchema,
+  liveTransactionDataSchema,
   resolveMcpMessagePolicy,
   runStdioMcp,
   startStreamableHttpMcp,
@@ -618,6 +802,41 @@ const options: CreateMapLibreStyleMcpServerOptions = { store, extensions: [exten
 const stdio: RunStdioMcpOptions = { startupDiagnosticLine: null };
 const http: StartStreamableHttpMcpOptions = { bearerToken: 'secret' };
 const created = createMapLibreStyleMcpServer(options);
+const liveStyleHash = 'a'.repeat(64);
+const liveList = liveMapListDataSchema.parse({ maps: [] });
+const liveStyle = liveMapStyleDataSchema.parse({
+  type: 'style',
+  revision: 0,
+  styleHash: liveStyleHash,
+  style: { version: 8, sources: {}, layers: [] },
+});
+const liveTransaction = liveTransactionDataSchema.parse({
+  type: 'transaction',
+  detail: 'receipt',
+  revision: 1,
+  styleHash: liveStyleHash,
+  applied: true,
+  noOp: false,
+});
+const liveMutation = liveMutationReceiptDataSchema.parse({
+  type: 'mutationReceipt',
+  command: 'setGlobalState',
+  accepted: true,
+});
+const liveFeatures = liveFeatureQueryDataSchema.parse({
+  type: 'features',
+  features: [],
+  returned: 0,
+  truncated: false,
+  serializedBytes: 2,
+  warnings: [],
+});
+if (buildLiveMapMetadataUri('consumer-map') !== 'maplibre-style://maps/~consumer-map') {
+  throw new Error('unexpected live map metadata URI');
+}
+if (buildLiveMapStyleUri('consumer-map') !== 'maplibre-style://maps/~consumer-map/style') {
+  throw new Error('unexpected live map Style URI');
+}
 declare const transport: Parameters<typeof created.connect>[0];
 if (false) void created.connect(transport);
 void created.server.server;
@@ -643,6 +862,12 @@ void [
   http,
   forgedStore,
   asyncExtension,
+  liveList,
+  liveStyle,
+  liveTransaction,
+  liveMutation,
+  liveFeatures,
+  createLiveMapMcpExtension,
   MAX_MCP_MESSAGE_BYTES,
   MAX_STYLE_SESSION_ID_BYTES,
   runStdioMcp,
@@ -738,8 +963,16 @@ import {
 } from 'maplibre-style-tools/ai';
 import {
   createMapLibreStyleMcpServer,
+  createLiveMapMcpExtension,
+  liveMapListDataSchema,
   resolveMcpMessagePolicy,
 } from 'maplibre-style-tools/mcp';
+import {
+  BRIDGE_PROTOCOL_VERSION,
+  canonicalizeJson,
+  connectMapLibreBridge,
+  sha256CanonicalJson,
+} from 'maplibre-style-tools/bridge';
 
 assert.equal(typeof createMapLibreStyleTools, 'function');
 assert.equal(typeof createCompactMapLibreStyleTools, 'function');
@@ -751,7 +984,13 @@ assert.equal(typeof applyTransactionToMap, 'function');
 assert.equal(typeof runtimeGeoJsonSourceDiffSchema.safeParse, 'function');
 assert.equal(typeof sanitizeRuntimeGeoJsonSourceDiff, 'function');
 assert.equal(typeof createMapLibreStyleMcpServer, 'function');
+assert.equal(typeof createLiveMapMcpExtension, 'function');
+assert.equal(typeof liveMapListDataSchema.safeParse, 'function');
 assert.equal(resolveMcpMessagePolicy().maxMessageBytes, 5 * 1024 * 1024);
+assert.equal(typeof connectMapLibreBridge, 'function');
+assert.equal(BRIDGE_PROTOCOL_VERSION, 1);
+assert.equal(typeof canonicalizeJson, 'function');
+assert.equal(typeof sha256CanonicalJson, 'function');
 const finalized = finalizeStyleReplacement(
   { version: 8, sources: {}, layers: [] },
   { version: 8, sources: {}, layers: [], metadata: { owner: 'maps' } },
@@ -796,6 +1035,25 @@ try {
   const mcp = await import('maplibre-style-tools/mcp');
   assertion(typeof mcp.createMapLibreStyleMcpServer === 'function',
     'MCP server factory is missing');
+  assertion(typeof mcp.createLiveMapMcpExtension === 'function',
+    'MCP live extension is missing');
+
+  const bridge = await import('maplibre-style-tools/bridge');
+  assertion(typeof bridge.connectMapLibreBridge === 'function',
+    'browser bridge client is missing');
+  assertion(bridge.BRIDGE_PROTOCOL_VERSION === 1,
+    'browser bridge protocol version is incorrect');
+  assertion(typeof bridge.canonicalizeJson === 'function',
+    'browser canonical JSON export is missing');
+  assertion(typeof bridge.sha256CanonicalJson === 'function',
+    'browser Style hash export is missing');
+  assertion(!('createBridgeServer' in bridge) && !('LiveMapRegistry' in bridge),
+    'browser bridge entry exposes Node server state');
+  assertBrowserClosure({
+    entry: join(root, 'dist/bridge/index.js'),
+    packageRoot: root,
+    requireProductionModules: true,
+  });
 
   const packOutput = command('npm', [
     'pack', '--json', '--pack-destination', packDirectory,
@@ -833,6 +1091,8 @@ try {
     'dist/mcp/main.d.ts',
     'dist/mcp/http.js',
     'dist/mcp/stdio.js',
+    'dist/bridge/index.js',
+    'dist/bridge/index.d.ts',
   ]) assertion(packedFiles.includes(required), `packed tarball is missing ${required}`);
   for (const file of packedFiles) {
     assertion(
@@ -902,7 +1162,13 @@ try {
   writeFileSync(join(consumer, 'tsconfig.maplibre-consumer.json'), maplibreConfig);
   writeFileSync(join(consumer, 'tsconfig.root-consumer.json'), rootConfig);
   writeFileSync(join(consumer, 'tsconfig.mcp-consumer.json'), mcpConfig);
-  const installedManifest = JSON.parse(source(join(consumer, 'node_modules/maplibre-style-tools/package.json')));
+  const installedPackageRoot = join(consumer, 'node_modules/maplibre-style-tools');
+  const installedManifest = JSON.parse(source(join(installedPackageRoot, 'package.json')));
+  assertBrowserClosure({
+    entry: join(installedPackageRoot, 'dist/bridge/index.js'),
+    packageRoot: installedPackageRoot,
+    requireProductionModules: true,
+  });
   assert.equal(installedManifest.dependencies['@types/geojson'], '^7946.0.16');
   assert.equal(installedManifest.dependencies['@types/json-schema'], '^7.0.15');
   assert.equal(installedManifest.dependencies['@types/node'], '^22.20.1');
@@ -931,6 +1197,11 @@ try {
       types: './dist/mcp/main.d.ts',
       import: './dist/mcp/main.js',
       default: './dist/mcp/main.js',
+    },
+    './bridge': {
+      types: './dist/bridge/index.d.ts',
+      import: './dist/bridge/index.js',
+      default: './dist/bridge/index.js',
     },
   });
   assert.deepEqual(installedManifest.bin, {
