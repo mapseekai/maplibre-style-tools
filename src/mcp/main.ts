@@ -1,4 +1,11 @@
+#!/usr/bin/env node
 /// <reference types="node" preserve="true" />
+
+import { resolve } from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
+
+import { runStdioMcp, writeMcpStderrLine } from './stdio.js';
 
 export { MCP_SERVER_VERSION } from './version.generated.js';
 export {
@@ -104,6 +111,42 @@ export type {
   McpServerExtensionContext,
   McpServerExtensionDependencies,
 } from './server-extension.js';
+export { runStdioMcp } from './stdio.js';
+export type { RunStdioMcpOptions, StartedStdioMcp } from './stdio.js';
+
+const runExecutable = async (args: readonly string[]): Promise<number> => {
+  if (args.includes('--help')) {
+    await writeMcpStderrLine(
+      process.stderr,
+      'Usage: maplibre-style-mcp [--stdio] [--help]',
+    );
+    return 0;
+  }
+  if (args.some((arg) => arg !== '--stdio')) {
+    await writeMcpStderrLine(process.stderr, 'maplibre-style-mcp: invalid arguments');
+    return 1;
+  }
+  let started: Awaited<ReturnType<typeof runStdioMcp>> | undefined;
+  try {
+    started = await runStdioMcp();
+    await started.closed;
+    return 0;
+  } catch {
+    try {
+      await writeMcpStderrLine(process.stderr, 'maplibre-style-mcp: failed');
+    } catch {
+      // stderr failure cannot be reported recursively.
+    }
+    return 1;
+  } finally {
+    await started?.close();
+  }
+};
+
+const directPath = process.argv[1];
+if (directPath !== undefined && resolve(directPath) === fileURLToPath(import.meta.url)) {
+  process.exitCode = await runExecutable(process.argv.slice(2));
+}
 export type {
   McpResourceResolver,
   ParsedContextUri,
