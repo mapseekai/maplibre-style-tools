@@ -59,6 +59,9 @@
     "build:example:bridge": "pnpm run example:typecheck && vite build --config examples/browser-bridge/vite.config.ts",
     "example:dev": "pnpm run build && pnpm run example:typecheck && vite --config examples/browser-bridge/vite.config.ts",
     "example:build": "pnpm run build && pnpm run build:example:bridge",
+    "pretest:e2e:bridge": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; for (const path of ['.tmp/playwright-output/browser-bridge', '.tmp/playwright-report/browser-bridge']) rmSync(path, { recursive: true, force: true });\"",
+    "typecheck:e2e:bridge": "tsc -p examples/browser-bridge/tsconfig.e2e.json",
+    "test:e2e:bridge": "pnpm run build && pnpm run build:example:bridge && pnpm run typecheck:e2e:bridge && playwright test --config examples/browser-bridge/playwright.config.ts",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "typecheck:browser": "tsc -p tsconfig.browser.json",
     "typecheck:mcp": "tsc -p tsconfig.mcp.json",
@@ -88,6 +91,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.62.1",
     "@types/ws": "^8.18.1",
     "eslint": "^9.39.4",
     "maplibre-gl": "^6.3.0",
