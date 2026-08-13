@@ -172,6 +172,77 @@ test('projects a fresh JSON DTO with an allowlist and never reads runtime metada
   assert.deepEqual(feature.properties, { name: 'main street', category: 'road', retained: true });
 });
 
+test('projects geometry from MapLibre GeoJSONFeature prototype without invoking foreign accessors', () => {
+  const map = new FakeMap();
+  const MapLibreGeoJSONFeature = class GeoJSONFeature {
+    readonly type = 'Feature';
+    readonly id = 'event-1';
+    readonly properties = Object.assign(Object.create(null) as Record<string, unknown>, {
+      category: 'festival',
+    });
+    readonly _vectorTileFeature = { trusted: true };
+    readonly _x = 0;
+    readonly _y = 0;
+    readonly _z = 0;
+    readonly tile = { z: 0, x: 0, y: 0 };
+    _geometry: unknown;
+
+    constructor(
+      feature?: unknown, z?: unknown, x?: unknown, y?: unknown, id?: unknown,
+    ) { void [feature, z, x, y, id]; }
+
+    projectPoint(point: unknown, x0: unknown, y0: unknown, size: unknown): never {
+      void [point, x0, y0, size];
+      throw new Error('fixture method is not invoked directly');
+    }
+    projectLine(line: unknown, x0: unknown, y0: unknown, size: unknown): never {
+      void [line, x0, y0, size];
+      throw new Error('fixture method is not invoked directly');
+    }
+    get geometry(): unknown {
+      this._geometry ??= { type: 'Point', coordinates: [10, 10] };
+      return this._geometry;
+    }
+    set geometry(value: unknown) { this._geometry = value; }
+    toJSON(): unknown {
+      return {
+        type: this.type,
+        id: this.id,
+        geometry: this.geometry,
+        properties: this.properties,
+      };
+    }
+  };
+  const feature = new MapLibreGeoJSONFeature();
+  map.sourceFeatures = [feature];
+
+  const result = querySourceFeaturesBounded(map.asMap(), {
+    sourceId: 'events', propertyAllowlist: ['category'],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.returned, 1);
+  assert.deepEqual(result.features[0], {
+    type: 'Feature',
+    id: 'event-1',
+    geometry: { type: 'Point', coordinates: [10, 10] },
+    properties: { category: 'festival' },
+  });
+
+  let foreignGeometryReads = 0;
+  class ForeignFeature {
+    readonly type = 'Feature';
+    readonly properties = { category: 'foreign' };
+    get geometry(): unknown {
+      foreignGeometryReads += 1;
+      return { type: 'Point', coordinates: [99, 99] };
+    }
+  }
+  map.sourceFeatures = [new ForeignFeature()];
+  querySourceFeaturesBounded(map.asMap(), { sourceId: 'events' });
+  assert.equal(foreignGeometryReads, 0);
+});
+
 test('an unprojectable MapLibre feature produces a structured failure without partial results', () => {
   const map = new FakeMap();
   const invalid = rawFeature(1);
