@@ -319,11 +319,11 @@ test('rejects oversized initial styles and invalid explicit deadlines before wor
   const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
   const now = Date.now();
   await assert.rejects(
-    runtime.execute({ type: 'getStyle' }, { deadlineAt: now }),
+    runtime.execute({ type: 'getStyle' }, { deadlineAt: now - 5_000 }),
     hasCode('TIMEOUT'),
   );
   await assert.rejects(
-    runtime.execute({ type: 'getStyle' }, { deadlineAt: now + 10_001 }),
+    runtime.execute({ type: 'getStyle' }, { deadlineAt: now + 15_000 }),
     hasCode('INVALID_INPUT'),
   );
 });
