@@ -11,4 +11,22 @@ export {
   MCP_RESPONSE_ENVELOPE_RESERVE_BYTES,
   MIN_MCP_MESSAGE_BYTES,
 } from './types.js';
-export type { McpJsonValue } from './types.js';
+export type {
+  McpJsonValue,
+  McpMessagePolicy,
+  McpTextToolResult,
+  McpToolEnvelope,
+  McpToolMeta,
+  ResourceUriAdmission,
+} from './types.js';
+export {
+  createMcpToolEnvelopeSchema,
+  mcpToolEnvelopeSchema,
+  parseMcpToolEnvelope,
+  parseOfficialCallToolResult,
+  parseStyleToolErrorShape,
+  styleToolErrorWireSchema,
+  toolFailure,
+  toolSuccess,
+} from './output.js';
+export { resolveMcpMessagePolicy } from './message-boundary.js';
