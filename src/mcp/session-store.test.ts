@@ -9,8 +9,10 @@ import {
   type StyleDocument,
 } from '../core/index.js';
 import * as publicMcpModule from './main.js';
+import { createMcpResponseBoundary, resolveMcpMessagePolicy } from './message-boundary.js';
 import {
   DEFAULT_STYLE_SESSION_LIMITS,
+  applyStyleSessionTransactionResult,
   assertFactoryStyleSessionStore,
   createStyleSessionStore,
   createStyleSessionStoreWithDependencies,
@@ -18,6 +20,7 @@ import {
   projectStyleSessionRevision,
   type FrozenSessionSnapshot,
 } from './session-store.js';
+import { MIN_MCP_MESSAGE_BYTES } from './types.js';
 
 const validStyle: StyleDocument = {
   version: 8,
@@ -58,6 +61,12 @@ const createFakeClock = () => {
 const sequentialIds = () => {
   let next = 0;
   return () => `session-${++next}`;
+};
+
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
 };
 
 test('session defaults retain the core authorities and reject session 33', async () => {
@@ -364,6 +373,235 @@ test('public snapshots and exports are detached frozen JSON projections', async 
     }, TypeError);
   }
   assert.equal((await store.read(opened.sessionId)).style.layers.length, validStyle.layers.length);
+});
+
+test('dry run returns a diff without changing revision or history', async () => {
+  const store = createStyleSessionStore();
+  const opened = await store.open(validStyle);
+  const preview = await store.apply(opened.sessionId, {
+    expectedRevision: 0,
+    dryRun: true,
+    transaction: changeRoads,
+  });
+  const after = await store.read(opened.sessionId);
+  assert.equal(preview.revision, 0);
+  assert.equal(preview.dryRun, true);
+  assert.ok(preview.diff.length > 0);
+  assert.equal(after.revision, 0);
+  assert.equal(after.history.length, 0);
+});
+
+test('same-session jobs serialize while separate sessions overlap', async () => {
+  const held = deferred();
+  const firstAStarted = deferred();
+  const bStarted = deferred();
+  const starts: string[] = [];
+  let aApplyCount = 0;
+  const ids = ['a', 'b'];
+  const store = createStyleSessionStoreWithDependencies(
+    { idFactory: () => ids.shift()! },
+    undefined,
+    {
+      queueScheduler: {
+        beforeQueuedWork: async ({ sessionId, kind }) => {
+          if (kind !== 'apply') return;
+          starts.push(sessionId);
+          if (sessionId === 'a') {
+            aApplyCount += 1;
+            if (aApplyCount === 1) {
+              firstAStarted.resolve();
+              await held.promise;
+            }
+          } else {
+            bStarted.resolve();
+          }
+        },
+      },
+    },
+  );
+  await store.open(validStyle);
+  await store.open(validStyle);
+  const first = store.apply('a', { expectedRevision: 0, transaction: changeRoads });
+  const second = store.apply('a', { expectedRevision: 1, transaction: {
+    operations: [{
+      op: 'setLayerProperties',
+      layerId: 'roads',
+      paint: { 'line-width': 2 },
+    }],
+  } });
+  const other = store.apply('b', { expectedRevision: 0, transaction: changeRoads });
+  await firstAStarted.promise;
+  await bStarted.promise;
+  assert.deepEqual(starts, ['a', 'b']);
+  held.resolve();
+  await Promise.all([first, second, other]);
+  assert.deepEqual(starts, ['a', 'b', 'a']);
+  assert.equal((await store.read('a')).revision, 2);
+  assert.equal((await store.read('b')).revision, 1);
+});
+
+test('read, export, and terminal close share the apply queue', async () => {
+  const held = deferred();
+  const started = deferred();
+  let firstApply = true;
+  const store = createStyleSessionStoreWithDependencies(
+    { idFactory: () => 'queue-session' },
+    undefined,
+    {
+      queueScheduler: {
+        beforeQueuedWork: async ({ kind }) => {
+          if (kind === 'apply' && firstApply) {
+            firstApply = false;
+            started.resolve();
+            await held.promise;
+          }
+        },
+      },
+    },
+  );
+  const opened = await store.open(validStyle);
+  const apply = store.apply(opened.sessionId, { expectedRevision: 0, transaction: changeRoads });
+  await started.promise;
+  const read = store.read(opened.sessionId);
+  const exported = store.export(opened.sessionId);
+  const close = store.close(opened.sessionId);
+  await assert.rejects(
+    () => store.read(opened.sessionId),
+    { code: 'NOT_FOUND', details: { reason: 'closing' } },
+  );
+  held.resolve();
+  await apply;
+  assert.equal((await read).revision, 1);
+  assert.equal((await exported).revision, 1);
+  assert.deepEqual(await close, { sessionId: opened.sessionId, closed: true });
+  await assert.rejects(() => store.read(opened.sessionId), { code: 'NOT_FOUND' });
+});
+
+test('store delegates opaque transaction and resolved limits to core exactly once', async () => {
+  const transaction = Object.freeze({ deliberately: 'opaque' });
+  const calls: unknown[][] = [];
+  const store = createStyleSessionStoreWithDependencies(
+    { limits: { maxOperations: 7, maxStyleBytes: 8_000, maxDiffBytes: 9_000 } },
+    {
+      applyStyleTransaction: (style, seen, options) => {
+        calls.push([style, seen, options]);
+        return {
+          ok: true,
+          style,
+          changedLayers: [],
+          changedSources: [],
+          diff: [],
+          warnings: [],
+        };
+      },
+    },
+  );
+  const opened = await store.open(validStyle);
+  await store.apply(opened.sessionId, { expectedRevision: 0, transaction });
+  assert.equal(calls.length, 1);
+  assert.strictEqual(calls[0]?.[1], transaction);
+  assert.deepEqual(calls[0]?.[2], {
+    maxOperations: 7,
+    maxStyleBytes: 8_000,
+    maxDiffBytes: 9_000,
+  });
+});
+
+test('a core failure is rethrown unchanged and never committed', async () => {
+  const error = createStyleToolError(
+    'INVALID_INPUT',
+    'Too many operations.',
+    '/operations',
+    { reason: 'maxOperations' },
+  );
+  const store = createStyleSessionStoreWithDependencies({}, {
+    applyStyleTransaction: (style) => ({
+      ok: false,
+      error,
+      style,
+      changedLayers: [],
+      changedSources: [],
+      diff: [],
+      warnings: [],
+    }),
+  });
+  const opened = await store.open(validStyle);
+  await assert.rejects(
+    () => store.apply(opened.sessionId, { expectedRevision: 0, transaction: {} }),
+    (caught: unknown) => caught === error,
+  );
+  assert.equal((await store.read(opened.sessionId)).revision, 0);
+});
+
+test('history uses exact revision values and the configured FIFO bound', async () => {
+  const store = createStyleSessionStore({ limits: { maxHistory: 2 } });
+  const opened = await store.open(validStyle);
+  const changes = ['#111111', '#222222', '#333333', '#444444'];
+  for (const [index, color] of changes.entries()) {
+    await store.apply(opened.sessionId, {
+      expectedRevision: index,
+      transaction: { operations: [{
+        op: 'setLayerProperties',
+        layerId: 'roads',
+        paint: { 'line-color': color },
+      }] },
+    });
+  }
+  assert.deepEqual(
+    (await store.read(opened.sessionId)).history.map(({ revision }) => revision),
+    [2, 3],
+  );
+  assert.equal((await store.export(opened.sessionId)).revision, 4);
+  assert.equal((await store.export(opened.sessionId, 2)).revision, 2);
+  await assert.rejects(
+    () => store.export(opened.sessionId, 1),
+    { code: 'NOT_FOUND', details: { reason: 'revisionEvicted' } },
+  );
+  const revision = await store.readRevision(opened.sessionId, 4);
+  assert.equal(revision.incomingDiff.length > 0, true);
+});
+
+test('response finalizer failure neither commits, touches TTL, nor reruns core', async () => {
+  for (const dryRun of [false, true]) {
+    const clock = createFakeClock();
+    let calls = 0;
+    const store = createStyleSessionStoreWithDependencies(
+      { clock, limits: { ttlMs: 100 } },
+      {
+        applyStyleTransaction: (style) => {
+          calls += 1;
+          return {
+            ok: true,
+            style,
+            changedLayers: ['x'.repeat(80_000)],
+            changedSources: [],
+            diff: [],
+            warnings: [],
+          };
+        },
+      },
+    );
+    const opened = await store.open(validStyle);
+    const boundary = createMcpResponseBoundary(resolveMcpMessagePolicy({
+      maxMessageBytes: MIN_MCP_MESSAGE_BYTES,
+    }));
+    clock.value = 99;
+    await assert.rejects(
+      () => applyStyleSessionTransactionResult(
+        store,
+        opened.sessionId,
+        { expectedRevision: 0, dryRun, transaction: changeRoads },
+        (result) => boundary.requireToolSuccess(result),
+      ),
+      { code: 'INVALID_INPUT', details: { reason: 'responseTooLarge' } },
+    );
+    assert.equal(calls, 1);
+    clock.value = 101;
+    await assert.rejects(
+      () => store.read(opened.sessionId),
+      { code: 'NOT_FOUND', details: { reason: 'expired' } },
+    );
+  }
 });
 
 const assertFrozenSnapshotTypes = (snapshot: FrozenSessionSnapshot): void => {

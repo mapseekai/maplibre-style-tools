@@ -147,6 +147,11 @@ interface InternalStoreCapability {
     revision: number | undefined,
     projector: (snapshot: FrozenRevisionSnapshot) => Result,
   ) => Promise<Result>;
+  readonly apply: <Result>(
+    sessionId: string,
+    request: ApplyStyleSessionRequest,
+    finalizer: (result: ApplySessionTransactionResult) => Result,
+  ) => Promise<Result>;
 }
 
 const factoryStoreCapabilities = new WeakMap<StyleSessionStore, InternalStoreCapability>();
@@ -300,6 +305,17 @@ export const projectStyleSessionRevision = async <Result>(
   sessionId,
   revision,
   projector,
+);
+
+export const applyStyleSessionTransactionResult = async <Result>(
+  store: StyleSessionStore,
+  sessionId: string,
+  request: ApplyStyleSessionRequest,
+  finalizer: (result: ApplySessionTransactionResult) => Result,
+): Promise<Result> => requireFactoryStoreCapability(store).apply(
+  sessionId,
+  request,
+  finalizer,
 );
 
 export function createStyleSessionStoreWithDependencies(
@@ -517,7 +533,7 @@ export function createStyleSessionStoreWithDependencies(
     return cloneKnownJson({ sessionId: candidateId, revision: 0, expiresAt: session.expiresAt });
   };
 
-  const read = (sessionId: string): Promise<SessionSnapshot> => {
+  const read = async (sessionId: string): Promise<SessionSnapshot> => {
     const session = captureSession(sessionId);
     return enqueue(session, 'read', () => {
       const now = clock.now();
@@ -529,7 +545,7 @@ export function createStyleSessionStoreWithDependencies(
     });
   };
 
-  const readRevision = (
+  const readRevision = async (
     sessionId: string,
     revision: number,
   ): Promise<RevisionSnapshot> => {
@@ -544,7 +560,7 @@ export function createStyleSessionStoreWithDependencies(
     });
   };
 
-  const exportStyle = (
+  const exportStyle = async (
     sessionId: string,
     revision?: number,
   ): Promise<ExportStyleSessionResult> => {
@@ -563,10 +579,11 @@ export function createStyleSessionStoreWithDependencies(
     });
   };
 
-  const apply = (
+  const applyFinalized = <Result>(
     sessionId: string,
     request: ApplyStyleSessionRequest,
-  ): Promise<ApplySessionTransactionResult> => {
+    finalizer: (result: ApplySessionTransactionResult) => Result,
+  ): Promise<Result> => {
     const session = captureSession(sessionId);
     return enqueue(session, 'apply', () => {
       const now = clock.now();
@@ -612,6 +629,9 @@ export function createStyleSessionStoreWithDependencies(
         changedSources: result.changedSources,
         warnings: result.warnings,
       });
+      const finalized = finalizer(publicResult);
+      if (isThenable(finalized)) rejectAsyncProjection();
+      const finalizedClone = cloneProjectionResult(finalized);
       if (!dryRun) {
         session.history.push(session.current);
         while (session.history.length > limits.maxHistory) session.history.shift();
@@ -623,9 +643,18 @@ export function createStyleSessionStoreWithDependencies(
         });
       }
       touch(session, clock.now());
-      return publicResult;
+      return finalizedClone;
     });
   };
+
+  const apply = async (
+    sessionId: string,
+    request: ApplyStyleSessionRequest,
+  ): Promise<ApplySessionTransactionResult> => applyFinalized(
+    sessionId,
+    request,
+    (result) => result,
+  );
 
   const close = async (sessionId: string): Promise<CloseStyleSessionResult> => {
     const session = captureSession(sessionId);
@@ -661,7 +690,12 @@ export function createStyleSessionStoreWithDependencies(
     value: true,
     writable: false,
   });
-  const capability: InternalStoreCapability = { store, project, projectRevision };
+  const capability: InternalStoreCapability = {
+    store,
+    project,
+    projectRevision,
+    apply: applyFinalized,
+  };
   factoryStoreCapabilities.set(store, capability);
   return store;
 }
