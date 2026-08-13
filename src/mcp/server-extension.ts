@@ -3,6 +3,7 @@ import {
   type McpServer,
 } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 import type { DocumentToolHandlers } from './document-handlers.js';
 import type { McpResponseBoundary } from './message-boundary.js';
@@ -129,6 +130,75 @@ const resourceMetadata = Object.freeze([
   }),
 ] as const);
 
+type JsonSchemaObject = Record<string, unknown>;
+
+const requireJsonSchemaObject = (value: unknown): JsonSchemaObject => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Document tool input schema could not be advertised.');
+  }
+  return value as JsonSchemaObject;
+};
+
+const requireSchemaVariant = (
+  schema: JsonSchemaObject,
+  property: string,
+  discriminant: string,
+): JsonSchemaObject => {
+  const properties = requireJsonSchemaObject(schema.properties);
+  const union = requireJsonSchemaObject(properties[property]);
+  const variants = union.oneOf;
+  if (!Array.isArray(variants)) {
+    throw new TypeError('Document tool input union could not be advertised.');
+  }
+  for (const candidate of variants) {
+    const variant = requireJsonSchemaObject(candidate);
+    const variantProperties = requireJsonSchemaObject(variant.properties);
+    const kind = requireJsonSchemaObject(variantProperties.kind);
+    if (kind.const === discriminant) return variant;
+  }
+  throw new TypeError('Document tool input variant could not be advertised.');
+};
+
+const makeAdvertisedInputSchema = (name: DocumentToolName): JsonSchemaObject => {
+  const schema = requireJsonSchemaObject(z.toJSONSchema(documentToolInputSchemas[name], {
+    io: 'input',
+    unrepresentable: 'any',
+  }));
+  Reflect.deleteProperty(schema, '$schema');
+  if (name === 'style_session_open') schema.required = ['style'];
+  if (name === 'style_validate') {
+    requireSchemaVariant(schema, 'target', 'inline').required = ['kind', 'style'];
+  }
+  if (name === 'style_analyze_geojson') {
+    requireSchemaVariant(schema, 'target', 'inline').required = ['kind', 'data'];
+  }
+  return schema;
+};
+
+const sdkAdvertisedSchemas = new WeakSet<object>();
+
+const requireSdkAdvertisableInputSchema = (name: DocumentToolName) => {
+  const schema = documentToolInputSchemas[name];
+  if (!sdkAdvertisedSchemas.has(schema)) {
+    const advertised = makeAdvertisedInputSchema(name);
+    Object.defineProperty(schema._zod, 'toJSONSchema', {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: () => {
+        const parent = schema._zod.parent;
+        schema._zod.parent = undefined;
+        queueMicrotask(() => {
+          if (schema._zod.parent === undefined) schema._zod.parent = parent;
+        });
+        return structuredClone(advertised);
+      },
+    });
+    sdkAdvertisedSchemas.add(schema);
+  }
+  return schema;
+};
+
 export interface McpServerExtensionDependencies {
   readonly handlers: DocumentToolHandlers;
   readonly resources: McpResourceResolver;
@@ -144,7 +214,7 @@ export const createMcpServerExtension = (
     server.registerTool(name, {
       title: metadata.title,
       description: metadata.description,
-      inputSchema: documentToolInputSchemas[name],
+      inputSchema: requireSdkAdvertisableInputSchema(name),
       annotations: metadata.annotations,
     }, (input: unknown) => dependencies.handlers[name](input));
   }
