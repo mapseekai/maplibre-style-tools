@@ -49,6 +49,16 @@ export interface ResourceUriAdmission {
   assertCanonical(rawUri: string): void;
 }
 
+export interface McpResourceContent {
+  readonly uri: string;
+  readonly mimeType: 'application/json';
+  readonly text: string;
+}
+
+export interface McpResourceResult {
+  readonly contents: McpResourceContent[];
+}
+
 export interface Clock {
   now(): number;
 }

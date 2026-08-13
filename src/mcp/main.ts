@@ -19,6 +19,8 @@ export type {
   ExportStyleSessionResult,
   McpJsonValue,
   McpMessagePolicy,
+  McpResourceContent,
+  McpResourceResult,
   McpTextToolResult,
   McpToolEnvelope,
   McpToolMeta,
@@ -72,3 +74,29 @@ export {
 export type { DocumentToolName } from './schemas.js';
 export { createDocumentToolHandlers } from './document-handlers.js';
 export type { DocumentToolHandlers } from './document-handlers.js';
+export {
+  createResourceResolver,
+  documentResourceUriAdmission,
+  makeContextUri,
+  makeDiffUri,
+  makeLayerUri,
+  makeSessionUri,
+  makeSourceUri,
+  makeStyleUri,
+  parseContextUri,
+  parseDiffUri,
+  parseLayerUri,
+  parseSessionUri,
+  parseSourceUri,
+  parseStyleUri,
+  styleResourceTemplates,
+} from './resources.js';
+export type {
+  McpResourceResolver,
+  ParsedContextUri,
+  ParsedDiffUri,
+  ParsedLayerUri,
+  ParsedSessionUri,
+  ParsedSourceUri,
+  ParsedStyleUri,
+} from './resources.js';
