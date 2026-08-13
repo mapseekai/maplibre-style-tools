@@ -150,13 +150,24 @@ const ownDataValue = (value: unknown, key: PropertyKey): unknown => {
   }
 };
 
+const nativeMessageEventDataGetter = typeof MessageEvent === 'undefined'
+  ? undefined
+  : Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data')?.get;
+
 const closeCode = (event: unknown): number => {
   const value = ownDataValue(event, 'code');
   return typeof value === 'number' && Number.isInteger(value) ? value : 1006;
 };
 
 const messageData = (event: unknown): string | ArrayBuffer | ArrayBufferView => {
-  const value = ownDataValue(event, 'data');
+  let value = ownDataValue(event, 'data');
+  if (value === undefined && nativeMessageEventDataGetter !== undefined) {
+    try {
+      value = nativeMessageEventDataGetter.call(event);
+    } catch {
+      // The native getter's brand check rejects non-MessageEvent values.
+    }
+  }
   if (typeof value === 'string' || value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     return value;
   }

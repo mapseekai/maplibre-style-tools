@@ -67,6 +67,10 @@ class FakeSocket implements WebSocketLike {
     this.emit('message', { data: JSON.stringify(frame) });
   }
 
+  receiveNative(frame: BridgeFrame): void {
+    this.emit('message', new MessageEvent('message', { data: JSON.stringify(frame) }));
+  }
+
   closeFromServer(code: number): void {
     this.readyState = 3;
     this.emit('close', { code });
@@ -248,6 +252,34 @@ test('authenticates first without URL secrets and registers the current snapshot
   assert.equal(connection.status, 'connected');
 });
 
+test('reads data through the native MessageEvent prototype accessor', async () => {
+  const sockets = new FakeSockets();
+  const connection = connectMapLibreBridge(
+    new FakeMap(rawStyle()).asMap(),
+    options(sockets),
+  );
+  const socket = sockets.latest();
+  socket.open();
+  const auth = await waitForSent<BridgeAuthFrame>(socket, 0);
+  socket.receiveNative({
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    kind: 'result',
+    correlationId: auth.correlationId,
+    ok: true,
+    result: { type: 'authenticated', connectionId: 'connection-1', limits: defaultLimits },
+  });
+  const registration = await waitForSent<BridgeRegisterFrame>(socket, 1);
+  socket.receiveNative({
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    kind: 'result',
+    correlationId: registration.correlationId,
+    ok: true,
+    result: { type: 'registered', leaseId: 'L'.repeat(43), limits: registration.limits },
+  });
+  await connection.whenReady();
+  assert.equal(connection.status, 'connected');
+});
+
 test('validates resource policy before opening a socket', () => {
   const sockets = new FakeSockets();
   assert.throws(() => connectMapLibreBridge(
@@ -357,4 +389,3 @@ test('terminal close removes Map listeners and never reconnects', async () => {
   assert.equal(map.listenerCount(), 0);
   assert.equal(sockets.sockets.length, 1);
 });
-
