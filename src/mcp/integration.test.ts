@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import {
   createStyleToolError,
@@ -14,6 +15,7 @@ import { createMapLibreStyleMcpServer } from './create-server.js';
 import {
   parseMcpToolEnvelope,
   parseOfficialCallToolResult,
+  parseStyleToolErrorShape,
 } from './output.js';
 import {
   makeContextUri,
@@ -303,6 +305,37 @@ test('official Client separates SDK rejection from stable core business failures
   if (tooManyEnvelope.ok) assert.fail('expected failure');
   assert.equal(tooManyEnvelope.error.code, 'INVALID_INPUT');
   assert.equal((await created.store.read('s1')).revision, 0);
+});
+
+test('official source resources reject inherited names authentically without touching TTL', async (t) => {
+  const clock = { value: 0, now: () => clock.value };
+  const store = createStyleSessionStore({
+    clock, limits: { ttlMs: 100 }, idFactory: () => 'empty-sources',
+  });
+  await store.open({ version: 8, sources: {}, layers: [] });
+  const created = createMapLibreStyleMcpServer({ store });
+  const client = new Client({ name: 'source-resource-test', version: '1.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  t.after(async () => {
+    await Promise.allSettled([client.close(), created.close()]);
+    store.dispose();
+  });
+  await Promise.all([created.connect(serverTransport), client.connect(clientTransport)]);
+
+  clock.value = 99;
+  for (const sourceId of ['toString', 'constructor', '__proto__']) {
+    await assert.rejects(
+      () => client.readResource({ uri: makeSourceUri('empty-sources', sourceId).href }),
+      (error) => {
+        if (!(error instanceof McpError)) return false;
+        const parsed = parseStyleToolErrorShape(error.data);
+        return parsed.code === 'NOT_FOUND'
+          && parsed.details?.reason === 'sourceNotFound';
+      },
+    );
+  }
+  clock.value = 101;
+  await assert.rejects(() => store.read('empty-sources'), { code: 'NOT_FOUND' });
 });
 
 void (undefined as unknown as DocumentToolName);

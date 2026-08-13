@@ -10,8 +10,8 @@ import {
 } from 'node:http';
 import { isIP } from 'node:net';
 import type { AddressInfo } from 'node:net';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 
 import { createStyleToolError } from '../core/errors.js';
@@ -38,6 +38,8 @@ import type {
 } from './types.js';
 
 export const MAX_HTTP_BEARER_TOKEN_BYTES = 4096;
+
+type Transport = Parameters<McpServer['connect']>[0];
 
 const defaultHost = '127.0.0.1';
 const defaultPort = 0;

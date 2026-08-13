@@ -297,15 +297,29 @@ export const assertInboundMcpFraming = (
   policy: McpMessagePolicy,
   context?: InboundMcpFramingContext,
 ): void => {
+  assertInboundMessageSize(value, policy, context);
+  if (Array.isArray(value)) {
+    for (const member of value) {
+      try {
+        assertSingleInboundMcpFraming(member, policy, context);
+      } catch (error: unknown) {
+        if (!isAdmissionFailure(error)) throw error;
+      }
+    }
+    return;
+  }
+  assertSingleInboundMcpFraming(value, policy, context);
+};
+
+const assertInboundMessageSize = (
+  value: unknown,
+  policy: McpMessagePolicy,
+  context: InboundMcpFramingContext | undefined,
+): void => {
   if (context?.totalBytesAlreadyBounded !== true
     && utf8JsonBytes(value) > policy.maxMessageBytes) {
     throw invalidInput('messageTooLarge', 'MCP message exceeds the configured byte limit.');
   }
-  if (Array.isArray(value)) {
-    for (const member of value) assertSingleInboundMcpFraming(member, policy, context);
-    return;
-  }
-  assertSingleInboundMcpFraming(value, policy, context);
 };
 
 const isAdmissionFailure = (error: unknown): error is StyleToolError =>
@@ -328,23 +342,6 @@ const safeRequestId = (value: unknown): string | number | undefined => {
   } catch {
     return undefined;
   }
-};
-
-const correlatableAdmissionId = (message: unknown): string | number | undefined => {
-  for (const value of Array.isArray(message) ? message : [message]) {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue;
-    let method: unknown;
-    try {
-      method = ownDataValue(value, 'method');
-    } catch {
-      continue;
-    }
-    if (method === 'resources/read') {
-      const id = safeRequestId(value);
-      if (id !== undefined) return id;
-    }
-  }
-  return undefined;
 };
 
 const inboundAdmissionError = (
@@ -534,22 +531,35 @@ export const createBoundedMcpTransport = (
     message,
     extra?: McpMessageExtra,
   ): void => {
-    try {
-      assertInboundMcpFraming(message, policy, inboundContext);
-      publicOnMessage?.(message, extra);
-    } catch (error: unknown) {
-      if (isAdmissionFailure(error)) {
-        const id = correlatableAdmissionId(message);
-        if (id !== undefined) {
+    const dispatchMember = (member: unknown): void => {
+      try {
+        assertSingleInboundMcpFraming(member, policy, inboundContext);
+        publicOnMessage?.(member as McpTransportMessage, extra);
+      } catch (error: unknown) {
+        if (isAdmissionFailure(error)) {
+          const id = safeRequestId(member);
+          if (id === undefined) return;
           const fallback = inboundAdmissionError(id, error);
           if (utf8JsonBytes(fallback) <= policy.maxMessageBytes) {
             void rawSend(fallback).catch(() => undefined);
             return;
           }
         }
+        void signalTerminal(error);
       }
+    };
+    try {
+      assertInboundMessageSize(message, policy, inboundContext);
+    } catch (error: unknown) {
       void signalTerminal(error);
+      return;
     }
+    const inbound: unknown = message;
+    if (Array.isArray(inbound)) {
+      for (const member of inbound) dispatchMember(member);
+      return;
+    }
+    dispatchMember(inbound);
   };
 
   const installedOnError: NonNullable<McpTransport['onerror']> = (error): void => {

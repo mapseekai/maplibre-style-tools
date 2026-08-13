@@ -318,6 +318,46 @@ test('correlatable resource admission failure replies once and keeps connection 
   await bounded.close();
 });
 
+test('batch admission forwards valid members and binds every invalid request to its own id', async () => {
+  const registry = createResourceUriAdmissionRegistry();
+  registry.register(exampleAdmission);
+  const raw = new RecordingTransport();
+  let terminalCalls = 0;
+  const bounded = createBoundedMcpTransport(
+    raw,
+    resolveMcpMessagePolicy({}),
+    createInboundMcpFramingContext({ admissions: registry.freeze() }),
+    () => { terminalCalls += 1; },
+  );
+  const validResource = resourceRead('example-resource://items/~.', 'valid-resource');
+  const validTool = { ...smallRequest, id: 'valid-tool' } as TransportMessage;
+  const invalidNotification = {
+    jsonrpc: '2.0',
+    method: 'resources/read',
+    params: { uri: 'example-resource://items/%2e%2e' },
+  } as TransportMessage;
+  const forwarded: TransportMessage[] = [];
+  bounded.onmessage = (message) => { forwarded.push(message); };
+  await bounded.start();
+  raw.emitMessage([
+    validResource,
+    resourceRead('example-resource://items/%2e%2e', 'invalid-1'),
+    invalidNotification,
+    validTool,
+    resourceRead('example-resource://unknown/~.', 'invalid-2'),
+  ] as unknown as TransportMessage);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(forwarded, [validResource, validTool]);
+  assert.deepEqual(raw.sent.map((message) => 'id' in message ? message.id : undefined), [
+    'invalid-1',
+    'invalid-2',
+  ]);
+  assert.equal(raw.sent.every((message) => 'error' in message), true);
+  assert.equal(terminalCalls, 0);
+  await bounded.close();
+});
+
 test('raw send rejection enters the terminal latch for ordinary and fallback sends', async () => {
   for (const message of [smallRequest, makeResponseOfSize(MIN_MCP_MESSAGE_BYTES + 1)]) {
     const primary = new Error('raw-send-primary');

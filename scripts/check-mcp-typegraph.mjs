@@ -1,14 +1,80 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { relative, resolve, sep } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const root = process.cwd();
+const typescript = require('typescript');
 const tsc = require.resolve('typescript/bin/tsc');
-
 const normalize = (value) => value.split(sep).join('/');
 const relativeToRoot = (value) => normalize(relative(root, resolve(value)));
+
+const approvedSdkSpecifiers = Object.freeze([
+  '@modelcontextprotocol/sdk/client/index.js',
+  '@modelcontextprotocol/sdk/client/stdio.js',
+  '@modelcontextprotocol/sdk/client/streamableHttp.js',
+  '@modelcontextprotocol/sdk/inMemory.js',
+  '@modelcontextprotocol/sdk/server/mcp.js',
+  '@modelcontextprotocol/sdk/server/stdio.js',
+  '@modelcontextprotocol/sdk/server/streamableHttp.js',
+  '@modelcontextprotocol/sdk/types.js',
+]);
+
+const sourceFilesBelow = (directory) => readdirSync(directory, { withFileTypes: true })
+  .flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return sourceFilesBelow(path);
+    return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
+  });
+
+const staticModuleSpecifier = (node) => {
+  if ((typescript.isImportDeclaration(node) || typescript.isExportDeclaration(node))
+    && node.moduleSpecifier && typescript.isStringLiteral(node.moduleSpecifier)) {
+    return node.moduleSpecifier.text;
+  }
+  if (typescript.isImportEqualsDeclaration(node)
+    && typescript.isExternalModuleReference(node.moduleReference)
+    && node.moduleReference.expression
+    && typescript.isStringLiteral(node.moduleReference.expression)) {
+    return node.moduleReference.expression.text;
+  }
+  if (typescript.isImportTypeNode(node)
+    && typescript.isLiteralTypeNode(node.argument)
+    && typescript.isStringLiteral(node.argument.literal)) {
+    return node.argument.literal.text;
+  }
+  if (typescript.isCallExpression(node)
+    && typescript.isImportCall(node)
+    && typescript.isStringLiteral(node.arguments[0])) {
+    return node.arguments[0].text;
+  }
+  return undefined;
+};
+
+const sdkSpecifiers = new Set();
+for (const file of sourceFilesBelow(resolve(root, 'src/mcp'))) {
+  const document = typescript.createSourceFile(
+    file,
+    readFileSync(file, 'utf8'),
+    typescript.ScriptTarget.Latest,
+    true,
+  );
+  const visit = (node) => {
+    const specifier = staticModuleSpecifier(node);
+    if (specifier?.split('/').slice(0, 2).join('/') === '@modelcontextprotocol/sdk') {
+      assert.ok(
+        approvedSdkSpecifiers.includes(specifier),
+        `MCP source imports unapproved SDK subpath ${specifier} in ${relativeToRoot(file)}`,
+      );
+      sdkSpecifiers.add(specifier);
+    }
+    typescript.forEachChild(node, visit);
+  };
+  visit(document);
+}
+assert.deepEqual([...sdkSpecifiers].sort(), [...approvedSdkSpecifiers].sort());
 
 const forbiddenProjectPathReason = (file) => {
   const normalized = `/${normalize(file)}`;

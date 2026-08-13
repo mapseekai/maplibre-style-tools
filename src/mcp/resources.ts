@@ -274,14 +274,17 @@ export const createResourceResolver = (
           });
         case 'source':
           return snapshot.style.withStyle((style) => {
-            const source = style.sources[route.sourceId];
-            if (source === undefined) {
+            const descriptor = Object.getOwnPropertyDescriptor(
+              style.sources,
+              route.sourceId,
+            );
+            if (descriptor === undefined || !('value' in descriptor)) {
               throw resourceError('NOT_FOUND', 'Style source was not found.', 'sourceNotFound');
             }
             return responseBoundary.requireResourceResult(resultFor(uri, {
               sessionId: snapshot.sessionId,
               revision: snapshot.revision,
-              source,
+              source: descriptor.value,
             }));
           });
       }

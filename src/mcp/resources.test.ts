@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import type { StyleDocument } from '../core/index.js';
+import { isStyleToolError, type StyleDocument } from '../core/index.js';
 import {
   createMcpResponseBoundary,
   resolveMcpMessagePolicy,
@@ -165,6 +165,43 @@ test('unknown layer and source resources fail without refreshing TTL', async () 
     clock.value = 101;
     await assert.rejects(() => store.read(opened.sessionId), { code: 'NOT_FOUND' });
   }
+});
+
+test('source resources require own data properties without reading inherited accessors', async () => {
+  const clock = fakeClock();
+  const store = createStyleSessionStore({
+    clock, limits: { ttlMs: 100 }, idFactory: () => 'empty-sources',
+  });
+  await store.open({ version: 8, sources: {}, layers: [] });
+  const resolver = createResourceResolver(store, boundary);
+  const originalProto = Object.getOwnPropertyDescriptor(Object.prototype, '__proto__');
+  if (originalProto === undefined || originalProto.get === undefined) {
+    assert.fail('expected the built-in __proto__ accessor');
+  }
+  let inheritedGets = 0;
+  try {
+    Object.defineProperty(Object.prototype, '__proto__', {
+      ...originalProto,
+      get() {
+        inheritedGets += 1;
+        return originalProto.get?.call(this);
+      },
+    });
+    clock.value = 99;
+    for (const sourceId of ['toString', 'constructor', '__proto__']) {
+      await assert.rejects(
+        () => resolver.resolve(makeSourceUri('empty-sources', sourceId)),
+        (error) => isStyleToolError(error)
+          && error.code === 'NOT_FOUND'
+          && error.details?.reason === 'sourceNotFound',
+      );
+    }
+  } finally {
+    Object.defineProperty(Object.prototype, '__proto__', originalProto);
+  }
+  assert.equal(inheritedGets, 0);
+  clock.value = 101;
+  await assert.rejects(() => store.read('empty-sources'), { code: 'NOT_FOUND' });
 });
 
 test('successful and over-budget resource projections update TTL only after completion', async () => {
