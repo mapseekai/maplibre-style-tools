@@ -5,6 +5,10 @@ import type {
   JsonValue,
   StyleDiffEntry,
   StyleDocument,
+  StyleContext,
+  StyleLayer,
+  StyleSource,
+  SourceLayerUsage,
   StyleToolError,
   StyleWarning,
 } from '../core/types.js';
@@ -116,3 +120,29 @@ export interface ApplySessionTransactionResult {
   readonly changedSources: readonly string[];
   readonly warnings: readonly StyleWarning[];
 }
+
+export type StyleInspectResult =
+  | {
+      readonly view: 'context';
+      readonly sessionId: string;
+      readonly revision: number;
+      readonly context: StyleContext;
+    }
+  | {
+      readonly view: 'layer';
+      readonly sessionId: string;
+      readonly revision: number;
+      readonly layer: StyleLayer;
+    }
+  | {
+      readonly view: 'source';
+      readonly sessionId: string;
+      readonly revision: number;
+      readonly source: StyleSource;
+    }
+  | {
+      readonly view: 'sourceLayers';
+      readonly sessionId: string;
+      readonly revision: number;
+      readonly sourceLayers: SourceLayerUsage[];
+    };

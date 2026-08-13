@@ -29,6 +29,7 @@ export type {
   OpenStyleSessionResult,
   StyleSessionLimits,
   StyleSessionStoreOptions,
+  StyleInspectResult,
 } from './types.js';
 export {
   createMcpToolEnvelopeSchema,
@@ -46,3 +47,28 @@ export {
   createStyleSessionStore,
 } from './session-store.js';
 export type { StyleSessionStore } from './session-store.js';
+export {
+  DOCUMENT_TOOL_NAMES,
+  documentToolInputSchemas,
+  documentToolResponseDataSchemas,
+  parseDocumentToolSuccessData,
+  styleAnalyzeGeoJsonDataSchema,
+  styleAnalyzeGeoJsonInputSchema,
+  styleApplyTransactionDataSchema,
+  styleApplyTransactionInputSchema,
+  styleExportDataSchema,
+  styleExportInputSchema,
+  styleInspectDataSchema,
+  styleInspectInputSchema,
+  styleSearchLayersDataSchema,
+  styleSearchLayersInputSchema,
+  styleSessionCloseDataSchema,
+  styleSessionCloseInputSchema,
+  styleSessionOpenDataSchema,
+  styleSessionOpenInputSchema,
+  styleValidateDataSchema,
+  styleValidateInputSchema,
+} from './schemas.js';
+export type { DocumentToolName } from './schemas.js';
+export { createDocumentToolHandlers } from './document-handlers.js';
+export type { DocumentToolHandlers } from './document-handlers.js';
