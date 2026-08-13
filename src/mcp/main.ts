@@ -91,6 +91,19 @@ export {
   parseStyleUri,
   styleResourceTemplates,
 } from './resources.js';
+export {
+  createMapLibreStyleMcpServer,
+} from './create-server.js';
+export type {
+  CreatedMapLibreStyleMcpServer,
+  CreateMapLibreStyleMcpServerOptions,
+} from './create-server.js';
+export { createMcpServerExtension } from './server-extension.js';
+export type {
+  McpServerExtension,
+  McpServerExtensionContext,
+  McpServerExtensionDependencies,
+} from './server-extension.js';
 export type {
   McpResourceResolver,
   ParsedContextUri,
