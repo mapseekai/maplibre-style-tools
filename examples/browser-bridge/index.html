@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MapLibre live bridge</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="map" aria-label="MapLibre map"></section>
+      <aside class="control-pane" aria-label="Bridge controls">
+        <h1>Live MapLibre bridge</h1>
+        <div id="bridge-form"></div>
+        <dl class="status-grid" aria-live="polite">
+          <dt>Status</dt><dd data-testid="bridge-status">disconnected</dd>
+          <dt>Map ID</dt><dd data-testid="map-id">demo-map</dd>
+          <dt>Revision</dt><dd data-testid="revision">0</dd>
+          <dt>Style hash</dt><dd data-testid="style-hash">unavailable</dd>
+          <dt>Last operation</dt><dd data-testid="last-operation">none</dd>
+        </dl>
+        <section class="demo-actions" aria-labelledby="demo-actions-title">
+          <h2 id="demo-actions-title">Local map edits</h2>
+          <button type="button" data-testid="demo-filter">Compose park filter</button>
+          <button type="button" data-testid="demo-duplicate">Duplicate places layer</button>
+          <button type="button" data-testid="demo-add-geojson">Add event layer</button>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

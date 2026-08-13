@@ -53,6 +53,12 @@
     "prebuild": "pnpm run clean && pnpm run check:mcp-version",
     "build": "tsc -b tsconfig.build.json",
     "check:package": "pnpm run build && node scripts/check-package.mjs",
+    "example:typecheck": "tsc -p examples/browser-bridge/tsconfig.json",
+    "pretest:example:bridge": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/example-test-dist', { recursive: true, force: true });\"",
+    "test:example:bridge": "pnpm run build && tsc -p examples/browser-bridge/tsconfig.test.json && node --test .tmp/example-test-dist/src/main.test.js",
+    "build:example:bridge": "pnpm run example:typecheck && vite build --config examples/browser-bridge/vite.config.ts",
+    "example:dev": "pnpm run build && pnpm run example:typecheck && vite --config examples/browser-bridge/vite.config.ts",
+    "example:build": "pnpm run build && pnpm run build:example:bridge",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "typecheck:browser": "tsc -p tsconfig.browser.json",
     "typecheck:mcp": "tsc -p tsconfig.mcp.json",
@@ -86,6 +92,7 @@
     "eslint": "^9.39.4",
     "maplibre-gl": "^6.3.0",
     "typescript": "~5.9.3",
-    "typescript-eslint": "^8.57.0"
+    "typescript-eslint": "^8.57.0",
+    "vite": "^8.2.1"
   }
 }

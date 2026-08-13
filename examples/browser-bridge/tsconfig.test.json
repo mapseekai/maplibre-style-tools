@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "../../.tmp/example-test-dist",
+    "types": ["node"]
+  },
+  "include": [
+    "src/connection-form.ts",
+    "src/demo-style.ts",
+    "src/main.test.ts"
+  ],
+  "exclude": []
+}
