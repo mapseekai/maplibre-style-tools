@@ -1,6 +1,13 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
-import type { JsonObject, JsonValue, StyleToolError } from '../core/types.js';
+import type {
+  JsonObject,
+  JsonValue,
+  StyleDiffEntry,
+  StyleDocument,
+  StyleToolError,
+  StyleWarning,
+} from '../core/types.js';
 
 export const MAX_MCP_MESSAGE_BYTES = 5 * 1024 * 1024;
 export const MIN_MCP_MESSAGE_BYTES = 128 * 1024;
@@ -36,4 +43,76 @@ export interface ResourceUriAdmission {
   readonly scheme: string;
   readonly authority: string;
   assertCanonical(rawUri: string): void;
+}
+
+export interface Clock {
+  now(): number;
+}
+
+export interface StyleSessionLimits {
+  readonly maxSessions: number;
+  readonly maxStyleBytes: number;
+  readonly maxOperations: number;
+  readonly maxHistory: number;
+  readonly maxDiffBytes: number;
+  readonly ttlMs: number;
+}
+
+export interface StyleSessionStoreOptions {
+  readonly clock?: Clock;
+  readonly idFactory?: () => string;
+  readonly limits?: Partial<StyleSessionLimits>;
+}
+
+export interface SessionRevisionMetadata {
+  readonly revision: number;
+  readonly committedAt: number;
+}
+
+export interface RevisionSnapshot {
+  readonly revision: number;
+  readonly style: StyleDocument;
+  readonly incomingDiff: readonly StyleDiffEntry[];
+  readonly committedAt: number;
+}
+
+export interface SessionSnapshot {
+  readonly sessionId: string;
+  readonly revision: number;
+  readonly style: StyleDocument;
+  readonly history: readonly SessionRevisionMetadata[];
+  readonly lastAccessedAt: number;
+  readonly expiresAt: number;
+}
+
+export interface OpenStyleSessionResult {
+  readonly sessionId: string;
+  readonly revision: number;
+  readonly expiresAt: number;
+}
+
+export interface CloseStyleSessionResult {
+  readonly sessionId: string;
+  readonly closed: true;
+}
+
+export interface ExportStyleSessionResult {
+  readonly sessionId: string;
+  readonly revision: number;
+  readonly style: StyleDocument;
+}
+
+export interface ApplyStyleSessionRequest {
+  readonly expectedRevision: number;
+  readonly transaction: unknown;
+  readonly dryRun?: boolean;
+}
+
+export interface ApplySessionTransactionResult {
+  readonly revision: number;
+  readonly dryRun: boolean;
+  readonly diff: readonly StyleDiffEntry[];
+  readonly changedLayers: readonly string[];
+  readonly changedSources: readonly string[];
+  readonly warnings: readonly StyleWarning[];
 }

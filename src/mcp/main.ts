@@ -12,12 +12,23 @@ export {
   MIN_MCP_MESSAGE_BYTES,
 } from './types.js';
 export type {
+  ApplySessionTransactionResult,
+  ApplyStyleSessionRequest,
+  Clock,
+  CloseStyleSessionResult,
+  ExportStyleSessionResult,
   McpJsonValue,
   McpMessagePolicy,
   McpTextToolResult,
   McpToolEnvelope,
   McpToolMeta,
   ResourceUriAdmission,
+  RevisionSnapshot,
+  SessionRevisionMetadata,
+  SessionSnapshot,
+  OpenStyleSessionResult,
+  StyleSessionLimits,
+  StyleSessionStoreOptions,
 } from './types.js';
 export {
   createMcpToolEnvelopeSchema,
@@ -30,3 +41,8 @@ export {
   toolSuccess,
 } from './output.js';
 export { resolveMcpMessagePolicy } from './message-boundary.js';
+export {
+  DEFAULT_STYLE_SESSION_LIMITS,
+  createStyleSessionStore,
+} from './session-store.js';
+export type { StyleSessionStore } from './session-store.js';
