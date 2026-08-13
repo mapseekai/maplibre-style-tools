@@ -110,6 +110,57 @@ describe('separate CLI output files', () => {
       }
     }
   });
+
+  it('does not unlink a foreign file swapped over its created output path', async () => {
+    const cwd = await makeDirectory();
+    const outputPath = join(cwd, 'swapped-output.json');
+    const createdAsidePath = join(cwd, 'created-output-aside.json');
+    const probePath = join(cwd, 'probe');
+    const probe = await open(probePath, 'wx', 0o600);
+    const prototype = Object.getPrototypeOf(probe) as object;
+    await probe.close();
+    await rm(probePath);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'sync');
+    assert.notEqual(descriptor, undefined);
+    let swapped = false;
+    Object.defineProperty(prototype, 'sync', {
+      ...descriptor,
+      value: async () => {
+        if (!swapped) {
+          swapped = true;
+          await rename(outputPath, createdAsidePath);
+          await writeFile(outputPath, 'FOREIGN OUTPUT');
+        }
+        throw new Error('injected output sync failure');
+      },
+    });
+    let failure: unknown;
+    try {
+      await assert.rejects(
+        writeNewOutputFile(outputPath, style, cwd),
+        (error: unknown) => {
+          failure = error;
+          return true;
+        },
+      );
+    } finally {
+      if (descriptor !== undefined) {
+        Object.defineProperty(prototype, 'sync', descriptor);
+      }
+    }
+    assert.ok(failure instanceof CliOutputError);
+    assert.match(failure.message, /injected output sync failure/);
+    assert.equal(await readFile(outputPath, 'utf8'), 'FOREIGN OUTPUT');
+    assert.equal(await readFile(createdAsidePath, 'utf8'), JSON.stringify(style));
+    const withDetails = failure as CliOutputError & { details?: unknown };
+    assert.deepEqual(JSON.parse(JSON.stringify(withDetails.details)), {
+      cleanup: [{
+        artifact: 'output',
+        path: outputPath,
+        reason: 'identity-mismatch',
+      }],
+    });
+  });
 });
 
 describe('atomic in-place Style replacement', () => {
@@ -250,6 +301,100 @@ describe('atomic in-place Style replacement', () => {
     await assert.rejects(stat(`${failedPath}.bak`), { code: 'ENOENT' });
     assert.equal(phases.filter((phase) => phase === 'backup').length >= 2, true);
     assert.deepEqual(await tempArtifacts(cwd), []);
+  });
+
+  it('does not unlink a foreign file swapped over its created temporary path', async () => {
+    const cwd = await makeDirectory();
+    const stylePath = join(cwd, 'temp-swap.json');
+    const styleAsidePath = join(cwd, 'temp-swap-style-aside.json');
+    const temporaryAsidePath = join(cwd, 'created-temporary-aside.json');
+    await writeFile(stylePath, JSON.stringify(style));
+    const source = await readFileSource(stylePath);
+    let temporaryPath = '';
+    let failure: unknown;
+    await assert.rejects(
+      replaceStyleFileAtomically(stylePath, nextStyle(), {
+        backup: false,
+        expectedIdentity: source.identity,
+        originalBytes: source.originalBytes,
+        hooks: {
+          afterTempSync: async () => {
+            const [temporaryName] = await tempArtifacts(cwd);
+            assert.notEqual(temporaryName, undefined);
+            temporaryPath = join(cwd, temporaryName as string);
+            await rename(temporaryPath, temporaryAsidePath);
+            await writeFile(temporaryPath, 'FOREIGN TEMPORARY');
+            await rename(stylePath, styleAsidePath);
+            await writeFile(stylePath, 'FOREIGN STYLE');
+          },
+        },
+      }),
+      (error: unknown) => {
+        failure = error;
+        return true;
+      },
+    );
+    assert.ok(failure instanceof CliOutputError);
+    assert.match(failure.message, /Style path identity changed at pre-rename/);
+    assert.equal(await readFile(stylePath, 'utf8'), 'FOREIGN STYLE');
+    assert.equal(await readFile(temporaryPath, 'utf8'), 'FOREIGN TEMPORARY');
+    assert.equal(
+      await readFile(temporaryAsidePath, 'utf8'),
+      JSON.stringify(nextStyle()),
+    );
+    const withDetails = failure as CliOutputError & { details?: unknown };
+    assert.deepEqual(JSON.parse(JSON.stringify(withDetails.details)), {
+      cleanup: [{
+        artifact: 'temporary',
+        path: temporaryPath,
+        reason: 'identity-mismatch',
+      }],
+    });
+  });
+
+  it('does not unlink a foreign file swapped over its created backup path', async () => {
+    const cwd = await makeDirectory();
+    const stylePath = join(cwd, 'backup-swap.json');
+    const backupPath = `${stylePath}.bak`;
+    const backupAsidePath = join(cwd, 'created-backup-aside.json');
+    const originalBytes = Buffer.from(`${JSON.stringify(style)}\n`);
+    await writeFile(stylePath, originalBytes);
+    const source = await readFileSource(stylePath);
+    let backupSyncCalls = 0;
+    let failure: unknown;
+    await assert.rejects(
+      replaceStyleFileAtomically(stylePath, nextStyle(), {
+        backup: true,
+        expectedIdentity: source.identity,
+        originalBytes: source.originalBytes,
+        hooks: {
+          syncDirectory: async (_directory, phase) => {
+            if (phase !== 'backup' || backupSyncCalls > 0) return;
+            backupSyncCalls += 1;
+            await rename(backupPath, backupAsidePath);
+            await writeFile(backupPath, 'FOREIGN BACKUP');
+            throw new Error('injected backup directory sync failure');
+          },
+        },
+      }),
+      (error: unknown) => {
+        failure = error;
+        return true;
+      },
+    );
+    assert.ok(failure instanceof CliOutputError);
+    assert.match(failure.message, /injected backup directory sync failure/);
+    assert.equal(await readFile(backupPath, 'utf8'), 'FOREIGN BACKUP');
+    assert.deepEqual(await readFile(backupAsidePath), originalBytes);
+    assert.deepEqual(await readFile(stylePath), originalBytes);
+    const withDetails = failure as CliOutputError & { details?: unknown };
+    assert.deepEqual(JSON.parse(JSON.stringify(withDetails.details)), {
+      cleanup: [{
+        artifact: 'backup',
+        path: backupPath,
+        reason: 'identity-mismatch',
+      }],
+    });
   });
 
   it('reports non-portable post-rename sync failures as committed but not durable', async () => {

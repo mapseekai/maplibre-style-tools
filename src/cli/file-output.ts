@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { lstat, open, rename, rm } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { StyleDocument } from '../core/index.js';
 import type { FileIdentity } from './input.js';
@@ -8,12 +9,28 @@ export type CliOutputFailureState =
   | { committed: false }
   | { committed: true; durable: false };
 
+export interface CliOutputCleanupDetail {
+  artifact: 'output' | 'temporary' | 'backup';
+  path: string;
+  reason:
+    | 'identity-unavailable'
+    | 'identity-mismatch'
+    | 'unsafe-entry'
+    | 'inspection-failed'
+    | 'unlink-failed';
+}
+
+export interface CliOutputErrorDetails {
+  cleanup: CliOutputCleanupDetail[];
+}
+
 export class CliOutputError extends Error {
   override readonly name = 'CliOutputError';
 
   constructor(
     message: string,
     readonly state: CliOutputFailureState = { committed: false },
+    readonly details?: CliOutputErrorDetails,
   ) {
     super(message);
   }
@@ -21,6 +38,34 @@ export class CliOutputError extends Error {
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+interface ArtifactIdentity {
+  device: bigint;
+  inode: bigint;
+}
+
+interface CreatedArtifact {
+  artifact: CliOutputCleanupDetail['artifact'];
+  path: string;
+  identity?: ArtifactIdentity;
+}
+
+const captureCreatedArtifactIdentity = async (
+  handle: FileHandle,
+  created: CreatedArtifact,
+): Promise<void> => {
+  const entry = await handle.stat({ bigint: true });
+  if (!entry.isFile()) {
+    throw new Error(`Created ${created.artifact} artifact is not a regular file.`);
+  }
+  created.identity = { device: entry.dev, inode: entry.ino };
+};
+
+const outputErrorDetails = (
+  cleanup: CliOutputCleanupDetail[],
+): CliOutputErrorDetails | undefined => cleanup.length === 0
+  ? undefined
+  : { cleanup };
 
 export function serializeStyleFile(style: StyleDocument): string {
   let encoded: string | undefined;
@@ -42,27 +87,30 @@ export async function writeNewOutputFile(
 ): Promise<void> {
   const absolutePath = resolve(cwd, path);
   const encoded = serializeStyleFile(style);
-  let created = false;
+  let created: CreatedArtifact | undefined;
   try {
     const handle = await open(absolutePath, 'wx', 0o600);
-    created = true;
+    created = { artifact: 'output', path: absolutePath };
     try {
+      await captureCreatedArtifactIdentity(handle, created);
       await handle.writeFile(encoded, 'utf8');
       await handle.sync();
     } finally {
       await handle.close();
     }
   } catch (error) {
-    let cleanupMessage = '';
-    if (created) {
-      try {
-        await rm(absolutePath);
-      } catch (cleanupError) {
-        cleanupMessage = ` Cleanup failed: ${messageOf(cleanupError)}`;
-      }
+    const cleanupFailures: string[] = [];
+    const cleanupDetails: CliOutputCleanupDetail[] = [];
+    if (created !== undefined) {
+      await cleanupCreatedArtifact(created, cleanupFailures, cleanupDetails);
     }
+    const cleanupSuffix = cleanupFailures.length === 0
+      ? ''
+      : ` ${cleanupFailures.join(' ')}`;
     throw new CliOutputError(
-      `Unable to write output file ${JSON.stringify(path)}: ${messageOf(error)}.${cleanupMessage}`,
+      `Unable to write output file ${JSON.stringify(path)}: ${messageOf(error)}.${cleanupSuffix}`,
+      { committed: false },
+      outputErrorDetails(cleanupDetails),
     );
   }
 }
@@ -144,15 +192,83 @@ const requireExpectedIdentity = async (
   }
 };
 
-const cleanupCreatedPath = async (
-  path: string,
-  label: string,
+const cleanupCreatedArtifact = async (
+  created: CreatedArtifact,
   failures: string[],
+  details: CliOutputCleanupDetail[],
 ): Promise<void> => {
+  const label = created.artifact[0]?.toUpperCase()
+    + created.artifact.slice(1);
+  if (created.identity === undefined) {
+    failures.push(`${label} cleanup skipped: created identity is unavailable.`);
+    details.push({
+      artifact: created.artifact,
+      path: created.path,
+      reason: 'identity-unavailable',
+    });
+    return;
+  }
+
+  let entry;
   try {
-    await rm(path, { force: true });
+    entry = await lstat(created.path, { bigint: true });
   } catch (error) {
+    if (errorCode(error) === 'ENOENT') return;
+    failures.push(`${label} cleanup skipped: identity inspection failed.`);
+    details.push({
+      artifact: created.artifact,
+      path: created.path,
+      reason: 'inspection-failed',
+    });
+    return;
+  }
+
+  let isSymbolicLink: boolean;
+  let isFile: boolean;
+  try {
+    isSymbolicLink = entry.isSymbolicLink();
+    isFile = entry.isFile();
+  } catch {
+    failures.push(`${label} cleanup skipped: entry inspection failed.`);
+    details.push({
+      artifact: created.artifact,
+      path: created.path,
+      reason: 'inspection-failed',
+    });
+    return;
+  }
+  if (isSymbolicLink || !isFile) {
+    failures.push(`${label} cleanup skipped: pathname is not a regular file.`);
+    details.push({
+      artifact: created.artifact,
+      path: created.path,
+      reason: 'unsafe-entry',
+    });
+    return;
+  }
+  if (
+    entry.dev !== created.identity.device
+    || entry.ino !== created.identity.inode
+  ) {
+    failures.push(`${label} cleanup skipped: pathname identity changed.`);
+    details.push({
+      artifact: created.artifact,
+      path: created.path,
+      reason: 'identity-mismatch',
+    });
+    return;
+  }
+
+  try {
+    await rm(created.path);
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return;
     failures.push(`${label} cleanup failed: ${messageOf(error)}`);
+    details.push({
+      artifact: created.artifact,
+      path: created.path,
+      reason: 'unlink-failed',
+    });
   }
 };
 
@@ -173,8 +289,8 @@ export async function replaceStyleFileAtomically(
     stylePath,
     `${process.pid}.${randomUUID()}`,
   );
-  let backupCreated = false;
-  let temporaryCreated = false;
+  let backupCreated: CreatedArtifact | undefined;
+  let temporaryCreated: CreatedArtifact | undefined;
   let committed = false;
 
   try {
@@ -183,8 +299,9 @@ export async function replaceStyleFileAtomically(
     if (options.backup) {
       await options.hooks?.beforeBackupWrite?.();
       const backupHandle = await open(backupPath, 'wx', 0o600);
-      backupCreated = true;
+      backupCreated = { artifact: 'backup', path: backupPath };
       try {
+        await captureCreatedArtifactIdentity(backupHandle, backupCreated);
         await backupHandle.writeFile(options.originalBytes);
         await backupHandle.sync();
       } finally {
@@ -195,8 +312,9 @@ export async function replaceStyleFileAtomically(
 
     const encoded = serializeStyleFile(style);
     const temporaryHandle = await open(temporaryPath, 'wx', 0o600);
-    temporaryCreated = true;
+    temporaryCreated = { artifact: 'temporary', path: temporaryPath };
     try {
+      await captureCreatedArtifactIdentity(temporaryHandle, temporaryCreated);
       await temporaryHandle.writeFile(encoded, 'utf8');
       await temporaryHandle.sync();
     } finally {
@@ -207,7 +325,7 @@ export async function replaceStyleFileAtomically(
 
     await rename(temporaryPath, stylePath);
     committed = true;
-    temporaryCreated = false;
+    temporaryCreated = undefined;
     try {
       await syncDirectoryPhase(directoryPath, 'replacement', options.hooks);
     } catch (error) {
@@ -226,13 +344,18 @@ export async function replaceStyleFileAtomically(
     }
 
     const cleanupFailures: string[] = [];
-    if (temporaryCreated) {
-      await cleanupCreatedPath(temporaryPath, 'Temporary file', cleanupFailures);
+    const cleanupDetails: CliOutputCleanupDetail[] = [];
+    if (temporaryCreated !== undefined) {
+      await cleanupCreatedArtifact(
+        temporaryCreated,
+        cleanupFailures,
+        cleanupDetails,
+      );
     }
-    if (backupCreated) {
-      await cleanupCreatedPath(backupPath, 'Backup file', cleanupFailures);
+    if (backupCreated !== undefined) {
+      await cleanupCreatedArtifact(backupCreated, cleanupFailures, cleanupDetails);
     }
-    if (temporaryCreated || backupCreated) {
+    if (temporaryCreated !== undefined || backupCreated !== undefined) {
       try {
         await syncDirectoryPhase(directoryPath, 'backup', options.hooks);
       } catch (cleanupError) {
@@ -240,9 +363,16 @@ export async function replaceStyleFileAtomically(
       }
     }
     const primary = error instanceof CliOutputError ? error.message : messageOf(error);
+    if (error instanceof CliOutputError && error.details !== undefined) {
+      cleanupDetails.unshift(...error.details.cleanup);
+    }
     const cleanupSuffix = cleanupFailures.length === 0
       ? ''
       : ` ${cleanupFailures.join(' ')}`;
-    throw new CliOutputError(`Unable to replace Style file: ${primary}.${cleanupSuffix}`);
+    throw new CliOutputError(
+      `Unable to replace Style file: ${primary}.${cleanupSuffix}`,
+      { committed: false },
+      outputErrorDetails(cleanupDetails),
+    );
   }
 }
