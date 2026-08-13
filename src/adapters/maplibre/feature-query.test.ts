@@ -172,8 +172,9 @@ test('projects a fresh JSON DTO with an allowlist and never reads runtime metada
   assert.deepEqual(feature.properties, { name: 'main street', category: 'road', retained: true });
 });
 
-test('projects geometry from MapLibre GeoJSONFeature prototype without invoking foreign accessors', () => {
+test('rejects an exact-shape feature impostor without invoking its accessors', () => {
   const map = new FakeMap();
+  let impostorCalls = 0;
   const MapLibreGeoJSONFeature = class GeoJSONFeature {
     readonly type = 'Feature';
     readonly id = 'event-1';
@@ -200,11 +201,13 @@ test('projects geometry from MapLibre GeoJSONFeature prototype without invoking 
       throw new Error('fixture method is not invoked directly');
     }
     get geometry(): unknown {
+      impostorCalls += 1;
       this._geometry ??= { type: 'Point', coordinates: [10, 10] };
       return this._geometry;
     }
     set geometry(value: unknown) { this._geometry = value; }
     toJSON(): unknown {
+      impostorCalls += 1;
       return {
         type: this.type,
         id: this.id,
@@ -220,14 +223,11 @@ test('projects geometry from MapLibre GeoJSONFeature prototype without invoking 
     sourceId: 'events', propertyAllowlist: ['category'],
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.returned, 1);
-  assert.deepEqual(result.features[0], {
-    type: 'Feature',
-    id: 'event-1',
-    geometry: { type: 'Point', coordinates: [10, 10] },
-    properties: { category: 'festival' },
-  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'INTERNAL');
+  assert.deepEqual(result.features, []);
+  assert.equal(result.returned, 0);
+  assert.equal(impostorCalls, 0);
 
   let foreignGeometryReads = 0;
   class ForeignFeature {

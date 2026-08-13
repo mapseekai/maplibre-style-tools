@@ -2,10 +2,11 @@ import type { ZodError } from 'zod';
 import type {
   FilterSpecification,
 } from '@maplibre/maplibre-gl-style-spec';
-import type {
-  Map,
-  QueryRenderedFeaturesOptions,
-  QuerySourceFeatureOptions,
+import {
+  Map as MapLibreMapConstructor,
+  type Map as MapLibreMap,
+  type QueryRenderedFeaturesOptions,
+  type QuerySourceFeatureOptions,
 } from 'maplibre-gl';
 import {
   createStyleToolError,
@@ -40,6 +41,7 @@ type ParsedQuery<Input> =
   | { ok: false; error: StyleToolError };
 
 type QueryFeatures = () => unknown;
+type FeatureProjector = (feature: object) => OwnDataValue;
 
 function schemaError(error: ZodError): StyleToolError {
   const issue = error.issues[0];
@@ -110,6 +112,9 @@ const MAPLIBRE_FEATURE_OWN_KEYS = new Set([
   'layer', 'source', 'sourceLayer', 'state', 'tile',
 ]);
 const mapLibreFeaturePrototypes = new WeakMap<object, MapLibreFeaturePrototype>();
+const mapLibreMapPrototype = MapLibreMapConstructor.prototype;
+const mapLibreQuerySourceFeatures = mapLibreMapPrototype.querySourceFeatures;
+const mapLibreQueryRenderedFeatures = mapLibreMapPrototype.queryRenderedFeatures;
 
 function ownDataValue(value: unknown, key: string): OwnDataValue {
   if (typeof value !== 'object' || value === null) return { kind: 'failure' };
@@ -204,14 +209,14 @@ function isMapLibreFeatureReceiver(feature: object): boolean {
   }
 }
 
-function mapLibreFeatureDto(feature: object): OwnDataValue {
+function projectTrustedMapLibreFeature(feature: object): OwnDataValue {
   let prototype: object | null;
   try {
     prototype = Object.getPrototypeOf(feature);
   } catch {
     return { kind: 'failure' };
   }
-  if (prototype === null || prototype === Object.prototype) return { kind: 'absent' };
+  if (prototype === null || prototype === Object.prototype) return { kind: 'failure' };
   let trusted = mapLibreFeaturePrototypes.get(prototype);
   if (trusted === undefined) {
     trusted = inspectMapLibreFeaturePrototype(prototype);
@@ -227,6 +232,21 @@ function mapLibreFeatureDto(feature: object): OwnDataValue {
     return { kind: 'data', value: trusted.toJson.call(feature) };
   } catch {
     return { kind: 'failure' };
+  }
+}
+
+function trustedFeatureProjector(
+  map: MapLibreMap,
+  actualQuery: unknown,
+  expectedQuery: unknown,
+): FeatureProjector | undefined {
+  try {
+    return actualQuery === expectedQuery
+      && Object.prototype.isPrototypeOf.call(mapLibreMapPrototype, map)
+      ? projectTrustedMapLibreFeature
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -294,9 +314,18 @@ function projectLayer(value: unknown): JsonObject | undefined | false {
 function projectFeature(
   feature: unknown,
   propertyAllowlist: readonly string[] | undefined,
+  featureProjector: FeatureProjector | undefined,
 ): JsonObject | undefined {
   if (typeof feature !== 'object' || feature === null) return undefined;
-  const mapLibreDto = mapLibreFeatureDto(feature);
+  let prototype: object | null;
+  try {
+    prototype = Object.getPrototypeOf(feature);
+  } catch {
+    return undefined;
+  }
+  const mapLibreDto = prototype === null || prototype === Object.prototype
+    ? { kind: 'absent' } as const
+    : featureProjector?.(feature) ?? { kind: 'failure' } as const;
   if (mapLibreDto.kind === 'failure') return undefined;
   const source = mapLibreDto.kind === 'data' ? mapLibreDto.value : feature;
   if (typeof source !== 'object' || source === null) return undefined;
@@ -335,6 +364,7 @@ function boundFeatures(
   query: QueryFeatures,
   input: Pick<SourceFeatureQueryInput, 'propertyAllowlist' | 'limit' | 'maxSerializedBytes'>,
   limits: FeatureQueryLimits,
+  featureProjector?: FeatureProjector,
 ): BoundedFeatureQueryResult {
   let rawFeatures: unknown;
   try {
@@ -357,7 +387,7 @@ function boundFeatures(
       truncated = true;
       break;
     }
-    const projected = projectFeature(rawFeature, input.propertyAllowlist);
+    const projected = projectFeature(rawFeature, input.propertyAllowlist, featureProjector);
     if (projected === undefined) {
       return emptyFailure(createStyleToolError(
         'INTERNAL', 'MapLibre returned a feature that could not be safely projected.',
@@ -397,7 +427,7 @@ function boundFeatures(
 }
 
 export function querySourceFeaturesBounded(
-  map: Map,
+  map: MapLibreMap,
   input: SourceFeatureQueryInput,
   limits?: FeatureQueryLimits,
 ): BoundedFeatureQueryResult {
@@ -406,15 +436,17 @@ export function querySourceFeaturesBounded(
   const options: QuerySourceFeatureOptions = {};
   if (parsed.input.sourceLayer !== undefined) options.sourceLayer = parsed.input.sourceLayer;
   if (parsed.input.filter !== undefined) options.filter = parsed.input.filter as FilterSpecification;
+  const query = map.querySourceFeatures;
   return boundFeatures(
-    () => map.querySourceFeatures(parsed.input.sourceId, options),
+    () => Reflect.apply(query, map, [parsed.input.sourceId, options]),
     parsed.input,
     parsed.limits,
+    trustedFeatureProjector(map, query, mapLibreQuerySourceFeatures),
   );
 }
 
 export function queryRenderedFeaturesBounded(
-  map: Map,
+  map: MapLibreMap,
   input: RenderedFeatureQueryInput,
   limits?: FeatureQueryLimits,
 ): BoundedFeatureQueryResult {
@@ -429,9 +461,11 @@ export function queryRenderedFeaturesBounded(
     : geometry.kind === 'point'
       ? geometry.point
       : geometry.bounds;
+  const query = map.queryRenderedFeatures;
   return boundFeatures(
-    () => map.queryRenderedFeatures(mapGeometry, options),
+    () => Reflect.apply(query, map, [mapGeometry, options]),
     parsed.input,
     parsed.limits,
+    trustedFeatureProjector(map, query, mapLibreQueryRenderedFeatures),
   );
 }
