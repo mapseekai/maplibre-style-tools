@@ -409,57 +409,55 @@ const uniqueNonBlankStringArray = z.array(nonBlankString).refine(
   (values) => new Set(values).size === values.length,
   'Values must not contain duplicates.',
 );
+const nonBlankStringArray = z.array(nonBlankString);
 const inspectionFieldSchema = z.enum(['paint', 'layout', 'filter', 'zoom']);
-const nonEmptyTransactionSchema = z.object({
-  operations: z.array(styleOperationSchema).min(1),
-  validate: z.boolean().optional(),
-}).strict();
+const nonEmptyTransactionSchema = styleTransactionSchema;
 const emptyTransactionSchema = z.object({
   operations: z.tuple([]),
   validate: z.boolean().optional(),
 }).strict();
 
 export const inspectStyleInputSchema: z.ZodType<InspectStyleInput> =
-  z.discriminatedUnion('action', [
+  descriptorSafeInputSchema(z.discriminatedUnion('action', [
     z.object({ action: z.literal('listLayers'), query: z.string().optional(), type: z.string().optional(), source: nonBlankString.optional(), sourceLayer: nonBlankString.optional(), limit: limit100Schema.optional() }).strict(),
     z.object({ action: z.literal('listSources'), limit: limit100Schema.optional() }).strict(),
     z.object({ action: z.literal('getLayer'), layerId: nonBlankString, fields: z.array(inspectionFieldSchema).optional() }).strict(),
     z.object({ action: z.literal('getSource'), sourceId: nonBlankString }).strict(),
     z.object({ action: z.literal('getRoot') }).strict(),
     z.object({ action: z.literal('getContext'), layerLimit: limit100Schema.optional() }).strict(),
-    z.object({ action: z.literal('inspectLayers'), layerIds: uniqueNonBlankStringArray.optional(), fields: z.array(inspectionFieldSchema).optional(), limit: limit100Schema.optional() }).strict(),
+    z.object({ action: z.literal('inspectLayers'), layerIds: nonBlankStringArray.optional(), fields: z.array(inspectionFieldSchema).optional(), limit: limit100Schema.optional() }).strict(),
     z.object({ action: z.literal('getLayerCount') }).strict(),
     z.object({ action: z.literal('validateDocument'), style: styleDocumentSchema }).strict(),
     z.object({ action: z.literal('validateCurrentMap') }).strict(),
     z.object({ action: z.literal('validateTransaction'), transaction: nonEmptyTransactionSchema }).strict(),
     z.object({ action: z.literal('analyzeGeoJson'), data: geoJsonAnalysisInputSchema, options: geoJsonAnalysisOptionsSchema.optional() }).strict(),
     z.object({ action: z.literal('listSourceLayers'), sourceId: nonBlankString.optional() }).strict(),
-  ]) as z.ZodType<InspectStyleInput>;
+  ])) as z.ZodType<InspectStyleInput>;
 
 export const applyStyleTransactionInputSchema: z.ZodType<ApplyStyleTransactionInput> =
-  z.object({
+  descriptorSafeInputSchema(z.object({
     transaction: z.union([emptyTransactionSchema, nonEmptyTransactionSchema]),
     dryRun: z.boolean().optional(),
     diff: z.boolean().optional(),
-  }).strict() as z.ZodType<ApplyStyleTransactionInput>;
+  }).strict()) as z.ZodType<ApplyStyleTransactionInput>;
 
 export const applyStyleDocumentInputSchema: z.ZodType<ApplyStyleDocumentInput> =
-  z.object({
+  descriptorSafeInputSchema(z.object({
     source: z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('style'), style: styleDocumentSchema }).strict(),
       z.object({ kind: z.literal('url'), url: absoluteUrlSchema }).strict(),
     ]),
     diff: z.boolean().optional(),
-  }).strict() as z.ZodType<ApplyStyleDocumentInput>;
+  }).strict()) as z.ZodType<ApplyStyleDocumentInput>;
 
 const featureStateTargetSchema = z.object({
   source: nonBlankString,
   sourceLayer: nonBlankString.optional(),
-  id: z.union([z.string(), z.number().finite()]),
+  id: z.union([nonBlankString, z.number().finite()]),
 }).strict();
 
 export const runMapCommandInputSchema: z.ZodType<RunMapCommandInput> =
-  z.discriminatedUnion('action', [
+  descriptorSafeInputSchema(z.discriminatedUnion('action', [
     z.object({ action: z.literal('updateGeoJsonData'), sourceId: nonBlankString, diff: runtimeGeoJsonSourceDiffSchema }).strict(),
     z.object({ action: z.literal('setSourceTileLodParams'), maxZoomLevelsOnScreen: z.number().finite().positive(), tileCountMaxMinRatio: z.number().finite().positive(), sourceId: nonBlankString.optional() }).strict(),
     z.object({ action: z.literal('setFeatureState'), target: featureStateTargetSchema, state: jsonObjectSchema }).strict(),
@@ -471,7 +469,7 @@ export const runMapCommandInputSchema: z.ZodType<RunMapCommandInput> =
     z.object({ action: z.literal('listSprites'), limit: limit100Schema.optional() }).strict(),
     z.object({ action: z.literal('addSprite'), spriteId: nonBlankString, url: nonBlankString, overwrite: z.boolean().optional() }).strict(),
     z.object({ action: z.literal('removeSprite'), spriteId: nonBlankString }).strict(),
-  ]) as z.ZodType<RunMapCommandInput>;
+  ])) as z.ZodType<RunMapCommandInput>;
 
 const featureGeometrySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('viewport') }).strict(),
@@ -492,7 +490,7 @@ const featureProjectionShape = {
 };
 
 export const queryMapFeaturesInputSchema: z.ZodType<QueryMapFeaturesInput> =
-  z.discriminatedUnion('target', [
+  descriptorSafeInputSchema(z.discriminatedUnion('target', [
     z.object({
       target: z.literal('source'),
       sourceId: nonBlankString,
@@ -505,5 +503,5 @@ export const queryMapFeaturesInputSchema: z.ZodType<QueryMapFeaturesInput> =
       layerIds: uniqueNonBlankStringArray.optional(),
       ...featureProjectionShape,
     }).strict(),
-  ]) as z.ZodType<QueryMapFeaturesInput>;
+  ])) as z.ZodType<QueryMapFeaturesInput>;
 

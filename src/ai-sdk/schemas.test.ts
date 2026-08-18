@@ -245,6 +245,59 @@ test('unified schemas reject unknown keys, legacy JSON text, and empty inspectio
   }
 });
 
+
+test('unified schemas snapshot hostile root inputs without invoking accessors', () => {
+  const validRoots = [
+    { schema: inspectStyleInputSchema, input: { action: 'getRoot' } },
+    { schema: applyStyleTransactionInputSchema, input: { transaction: { operations: [] } } },
+    { schema: applyStyleDocumentInputSchema, input: { source: { kind: 'url', url: 'https://example.test/style.json' } } },
+    { schema: runMapCommandInputSchema, input: { action: 'listImages' } },
+    { schema: queryMapFeaturesInputSchema, input: { target: 'rendered' } },
+  ];
+  for (const { schema, input } of validRoots) {
+    let getterCalls = 0;
+    const hostile = { ...input };
+    Object.defineProperty(hostile, 'unknown', {
+      enumerable: true,
+      get() { getterCalls += 1; return true; },
+    });
+    assert.equal(schema.safeParse(hostile).success, false);
+    const classBacked = Object.setPrototypeOf({ ...input }, Date.prototype);
+    assert.equal(schema.safeParse(classBacked).success, false);
+    assert.equal(getterCalls, 0);
+  }
+});
+
+test('unified transaction uses the core nonempty transaction boundary', () => {
+  const operation = {
+    op: 'setLayerProperties',
+    layerId: 'roads',
+    paint: { 'line-color': null },
+  };
+  const parse = applyStyleTransactionInputSchema.safeParse({
+    transaction: { operations: Array.from({ length: 101 }, () => operation) },
+  });
+  assert.equal(parse.success, false);
+
+  const parsed = applyStyleTransactionInputSchema.safeParse({
+    transaction: { operations: [operation] },
+  });
+  assert.equal(parsed.success, true);
+  if (parsed.success) assert.equal(parsed.data.transaction.validate, true);
+});
+
+test('inspectLayers preserves duplicate order while feature-state IDs remain nonblank', () => {
+  assert.equal(inspectStyleInputSchema.safeParse({
+    action: 'inspectLayers', layerIds: ['roads', 'roads'],
+  }).success, true);
+  for (const id of ['', '   ']) {
+    assert.equal(runMapCommandInputSchema.safeParse({
+      action: 'setFeatureState',
+      target: { source: 'roads', id },
+      state: {},
+    }).success, false);
+  }
+});
 test('ParseResult narrows value to the successful branch', () => {
   const result: ParseResult<string> = { ok: true, value: 'value' };
   if (result.ok) assert.equal(result.value, 'value');
