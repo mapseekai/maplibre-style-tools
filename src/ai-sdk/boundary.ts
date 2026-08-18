@@ -144,7 +144,9 @@ export const boundMapCommandReceipt = (input:
   | { message: string; action: MapCommandReceipt['action']; kind: 'acknowledgement'; applied: boolean; result?: JsonValue; warnings: readonly StyleWarning[] }
 ): AiStyleToolResult<MapCommandReceipt> => {
   const data: MapCommandReceipt = { action: input.action, kind: input.kind, applied: input.applied, warnings: [], truncated: false };
-  if (input.kind === 'list') data.result = { items: [], returned: 0, truncated: false, warnings: [] };
+  if (input.kind === 'list') {
+    data.result = { items: [], returned: 0, truncated: true, warnings: [COMPACT_OUTPUT_TRUNCATED] };
+  }
   const { output, valid } = reserve(input.message, data, MAX_AI_OUTPUT_BYTES);
   if (!valid) throw new RangeError('AI result mandatory envelope exceeds output limit.');
   let omitted = admitWarnings(output, input.warnings, MAX_AI_OUTPUT_BYTES);
@@ -156,8 +158,9 @@ export const boundMapCommandReceipt = (input:
       if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { result.items.pop(); result.returned = result.items.length; omitted = true; break; }
     }
     omitted ||= result.items.length < input.result.items.length;
-    result.truncated = omitted;
-    if (omitted) result.warnings.push(COMPACT_OUTPUT_TRUNCATED);
+    const listOmitted = result.items.length < input.result.items.length;
+    result.truncated = listOmitted;
+    if (!listOmitted) result.warnings.pop();
   } else if (input.result !== undefined) {
     data.result = input.result;
     if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { delete data.result; omitted = true; }

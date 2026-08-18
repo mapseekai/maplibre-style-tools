@@ -111,6 +111,15 @@ describe('bounded AI result boundary', () => {
       assert.equal(bounded.data.result.truncated, true);
     }
   });
+  it('keeps both list and receipt truncation markers within a near-cap envelope', () => {
+    const bounded = boundMapCommandReceipt({
+      message: 'ok', action: 'listImages', kind: 'list', applied: true,
+      result: { items: ['x'.repeat(MAX_AI_OUTPUT_BYTES - 800), 'later'] }, warnings: [],
+    });
+    assert.ok(jsonUtf8ByteLength(bounded) <= MAX_AI_OUTPUT_BYTES);
+    assert.equal(bounded.success, true);
+  });
+
 
   it('caps messages and omits oversized atomic values', () => {
     const bounded = boundInspectionProjection({
