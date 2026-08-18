@@ -111,13 +111,17 @@ describe('bounded AI result boundary', () => {
       assert.equal(bounded.data.result.truncated, true);
     }
   });
-  it('keeps both list and receipt truncation markers within a near-cap envelope', () => {
+  it('rejects an item that fits one marker but not both reserved markers', () => {
     const bounded = boundMapCommandReceipt({
       message: 'ok', action: 'listImages', kind: 'list', applied: true,
-      result: { items: ['x'.repeat(MAX_AI_OUTPUT_BYTES - 800), 'later'] }, warnings: [],
+      result: { items: ['x'.repeat(MAX_AI_OUTPUT_BYTES - 380), 'later'] }, warnings: [],
     });
     assert.ok(jsonUtf8ByteLength(bounded) <= MAX_AI_OUTPUT_BYTES);
     assert.equal(bounded.success, true);
+    if (bounded.success && bounded.data.result && typeof bounded.data.result === 'object' && 'items' in bounded.data.result) {
+      assert.deepEqual(bounded.data.result.items, []);
+      assert.equal(bounded.data.truncated, true);
+    }
   });
 
 
