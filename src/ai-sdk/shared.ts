@@ -10,6 +10,27 @@ export type ValidatedMapStyle =
   | { ok: true; style: StyleDocument; warnings: StyleWarning[] }
   | { ok: false; error: StyleToolError; warnings: StyleWarning[] };
 
+export type AvailableMap =
+  | { ok: true; map: MapLibreMap }
+  | { ok: false; error: StyleToolError };
+
+export const getAvailableMap = (getMap: MapAccessor): AvailableMap => {
+  try {
+    const map = getMap();
+    return map === null
+      ? {
+        ok: false,
+        error: createStyleToolError('MAP_NOT_READY', 'Map is not ready yet. Please wait until the preview loads, then retry.'),
+      }
+      : { ok: true, map };
+  } catch {
+    return {
+      ok: false,
+      error: createStyleToolError('MAP_NOT_READY', 'Map is not ready yet. Please wait until the preview loads, then retry.'),
+    };
+  }
+};
+
 export const readValidatedMapStyle = (getMap: MapAccessor): ValidatedMapStyle => {
   let map: MapLibreMap | null;
   try {
