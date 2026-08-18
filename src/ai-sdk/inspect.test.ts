@@ -144,4 +144,54 @@ describe('createInspectStyleTool', () => {
     assert.equal(unreadable.success, false);
     if (!unreadable.success) assert.equal(unreadable.error.code, 'MAP_NOT_READY');
   });
+
+  it('projects inspectLayers fields exactly and rejects missing IDs beyond its output limit', async () => {
+    const explicit = items((await execute({
+      action: 'inspectLayers', layerIds: ['roads'], fields: ['layout'],
+    })).result)[0];
+    assert.deepEqual(Object.keys(explicit).sort(), ['id', 'layout', 'source', 'source-layer', 'type']);
+    const defaulted = items((await execute({ action: 'inspectLayers', layerIds: ['roads'] })).result)[0];
+    assert.deepEqual(Object.keys(defaulted).sort(), ['id', 'layout', 'paint', 'source', 'source-layer', 'type']);
+    const layerIds = Array.from({ length: 100 }, () => 'roads').concat('missing');
+    const missing = (await execute({ action: 'inspectLayers', layerIds, limit: 100 })).result;
+    assert.equal(missing.success, false);
+    if (!missing.success) assert.equal(missing.error.code, 'NOT_FOUND');
+  });
+
+  it('retains permitted null context values while dropping application state', async () => {
+    const result = await createInspectStyleTool({
+      getMap: () => new FakeMap(style as unknown as StyleSpecification).asMap(),
+      getContext: () => ({ activeSourceId: null, selectedLayerId: null, secret: 'discarded' } as never),
+    }).execute({ action: 'getContext' });
+    const context = value(result);
+    assert.equal(context.activeSourceId, null);
+    assert.equal(context.selectedLayerId, null);
+    assert.equal('secret' in context, false);
+  });
+
+  it('bounds nested GeoJSON and source-layer collections and surfaces analysis warnings', async () => {
+    const properties = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`property-${index}`, index]));
+    const geoJson = await createInspectStyleTool({ getMap: () => null }).execute({
+      action: 'analyzeGeoJson',
+      data: { type: 'Feature', properties, geometry: { type: 'Point', coordinates: [0, 0] } },
+    });
+    const analysis = value(geoJson);
+    assert.equal((analysis.properties as { items: unknown[] }).items.length, 100);
+    assert.equal((analysis.properties as { truncated: boolean }).truncated, true);
+    const remote = await createInspectStyleTool({ getMap: () => null }).execute({
+      action: 'analyzeGeoJson', data: 'https://example.test/data.geojson',
+    });
+    assert.equal(remote.success, true);
+    if (remote.success) assert.equal(remote.data.projection.warnings[0]?.code, 'GEOJSON_ANALYSIS_UNAVAILABLE');
+
+    const layers = Array.from({ length: 101 }, (_, index) => ({
+      id: `road-${index}`, type: 'line', source: 'base', 'source-layer': 'roads',
+    }));
+    const usage = await createInspectStyleTool({
+      getMap: () => new FakeMap({ ...style, layers } as unknown as StyleSpecification).asMap(),
+    }).execute({ action: 'listSourceLayers', sourceId: 'base' });
+    const sourceLayer = items(usage)[0];
+    assert.equal((sourceLayer.layers as { items: unknown[] }).items.length, 100);
+    assert.equal((sourceLayer.layers as { truncated: boolean }).truncated, true);
+  });
 });

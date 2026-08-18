@@ -8,7 +8,12 @@ import {
   validateStyleDocument,
 } from '../core/index.js';
 import type { JsonValue, StyleDocument, StyleLayer, StyleWarning } from '../core/index.js';
-import { boundInspectionProjection, createAiTool, toFailure } from './boundary.js';
+import {
+  COMPACT_OUTPUT_TRUNCATED,
+  boundInspectionProjection,
+  createAiTool,
+  toFailure,
+} from './boundary.js';
 import type {
   CreateMapLibreStyleToolsOptions,
   InspectStyleInput,
@@ -29,13 +34,16 @@ const asJson = (value: unknown): JsonValue => value as JsonValue;
 const layerProjection = (
   layer: StyleLayer,
   fields: readonly InspectionField[],
+  includeZoom: boolean,
 ): JsonValue => ({
   id: layer.id,
   type: layer.type,
   source: typeof layer.source === 'string' ? layer.source : null,
   'source-layer': typeof layer['source-layer'] === 'string' ? layer['source-layer'] : null,
-  minzoom: typeof layer.minzoom === 'number' ? layer.minzoom : null,
-  maxzoom: typeof layer.maxzoom === 'number' ? layer.maxzoom : null,
+  ...(includeZoom ? {
+    minzoom: typeof layer.minzoom === 'number' ? layer.minzoom : null,
+    maxzoom: typeof layer.maxzoom === 'number' ? layer.maxzoom : null,
+  } : {}),
   ...(fields.includes('paint') ? { paint: asJson(layer.paint ?? {}) } : {}),
   ...(fields.includes('layout') ? { layout: asJson(layer.layout ?? {}) } : {}),
   ...(fields.includes('filter') ? { filter: asJson(layer.filter ?? null) } : {}),
@@ -72,12 +80,29 @@ const project = (
   action: InspectStyleInput['action'],
   projection: { items: JsonValue[]; total?: number } | { value: JsonValue },
   warnings: readonly StyleWarning[] = [],
+  truncated = false,
 ) => boundInspectionProjection({
   message: INSPECTION_MESSAGE,
   action,
   projection,
   warnings,
+  truncated,
 });
+
+const boundedNestedItems = (items: JsonValue[]) => {
+  const bounded = items.slice(0, DEFAULT_LIMIT);
+  const truncated = bounded.length < items.length;
+  return {
+    value: {
+      items: bounded,
+      returned: bounded.length,
+      total: items.length,
+      truncated,
+      warnings: truncated ? [COMPACT_OUTPUT_TRUNCATED] : [],
+    } as JsonValue,
+    truncated,
+  };
+};
 
 export const createInspectStyleTool = (
   options: Pick<CreateMapLibreStyleToolsOptions, 'getMap' | 'getContext'>,
@@ -87,9 +112,18 @@ export const createInspectStyleTool = (
   (input) => {
     if (input.action === 'analyzeGeoJson') {
       const analysis = analyzeGeoJson(input.data, input.options);
-      return analysis.ok
-        ? project(input.action, { value: asJson(analysis.analysis) })
-        : toFailure(analysis.error);
+      if (!analysis.ok) return toFailure(analysis.error);
+      const { warnings, ...value } = analysis.analysis;
+      if (!analysis.analysis.available) {
+        return project(input.action, { value: asJson(value) }, warnings);
+      }
+      const properties = boundedNestedItems(analysis.analysis.properties.map(asJson));
+      return project(
+        input.action,
+        { value: asJson({ ...value, properties: properties.value }) },
+        warnings,
+        properties.truncated,
+      );
     }
     if (input.action === 'validateDocument') {
       const validation = validateStyleDocument(input.style);
@@ -127,7 +161,7 @@ export const createInspectStyleTool = (
         const layer = style.layers.find((candidate) => candidate.id === input.layerId);
         return layer === undefined
           ? toFailure(notFound('Layer'))
-          : project(input.action, { value: layerProjection(layer, input.fields ?? ALL_LAYER_FIELDS) }, warnings);
+          : project(input.action, { value: layerProjection(layer, input.fields ?? ALL_LAYER_FIELDS, true) }, warnings);
       }
       case 'getSource': {
         const source = style.sources[input.sourceId];
@@ -146,11 +180,14 @@ export const createInspectStyleTool = (
         }, warnings);
       case 'inspectLayers': {
         const requested = input.layerIds ?? style.layers.slice(0, input.limit ?? DEFAULT_LIMIT).map((layer) => layer.id);
+        const fields = input.fields ?? DEFAULT_INSPECT_FIELDS;
         const layers: JsonValue[] = [];
-        for (const id of requested.slice(0, input.limit ?? DEFAULT_LIMIT)) {
+        for (const id of requested) {
           const layer = style.layers.find((candidate) => candidate.id === id);
           if (layer === undefined) return toFailure(notFound('Layer'));
-          layers.push(layerProjection(layer, input.fields ?? DEFAULT_INSPECT_FIELDS));
+          if (layers.length < (input.limit ?? DEFAULT_LIMIT)) {
+            layers.push(layerProjection(layer, fields, fields.includes('zoom')));
+          }
         }
         return project(input.action, { items: layers, total: requested.length }, warnings);
       }
@@ -158,8 +195,15 @@ export const createInspectStyleTool = (
         return project(input.action, { value: { layerCount: buildStyleContext(style, { layerLimit: 1 }).layerCount } }, warnings);
       case 'validateCurrentMap':
         return project(input.action, { value: { valid: true } }, warnings);
-      case 'listSourceLayers':
-        return project(input.action, { items: listSourceLayers(style, { sourceId: input.sourceId }).map(asJson) }, warnings);
+      case 'listSourceLayers': {
+        let truncated = false;
+        const usages = listSourceLayers(style, { sourceId: input.sourceId }).map((usage) => {
+          const layers = boundedNestedItems(usage.layers.map(asJson));
+          truncated ||= layers.truncated;
+          return asJson({ sourceId: usage.sourceId, sourceLayer: usage.sourceLayer, layers: layers.value });
+        });
+        return project(input.action, { items: usages }, warnings, truncated);
+      }
     }
   },
 ) as unknown as MapLibreAiTool<InspectStyleInput, InspectionProjection>;

@@ -57,12 +57,20 @@ export const readValidatedMapStyle = (getMap: MapAccessor): ValidatedMapStyle =>
 
 export const snapshotMapToolContext = (
   getContext: (() => MapToolContext) | undefined,
-): { activeSourceId?: string; selectedLayerId?: string } => {
+): { activeSourceId?: string | null; selectedLayerId?: string | null } => {
   if (getContext === undefined) return {};
   const { activeSourceId, selectedLayerId } = getContext();
   return {
-    ...(typeof activeSourceId === 'string' ? { activeSourceId } : {}),
-    ...(typeof selectedLayerId === 'string' ? { selectedLayerId } : {}),
+    ...(
+      typeof activeSourceId === 'string' || activeSourceId === null
+        ? { activeSourceId }
+        : {}
+    ),
+    ...(
+      typeof selectedLayerId === 'string' || selectedLayerId === null
+        ? { selectedLayerId }
+        : {}
+    ),
   };
 };
 
