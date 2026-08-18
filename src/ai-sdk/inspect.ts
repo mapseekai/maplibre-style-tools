@@ -182,8 +182,9 @@ export const createInspectStyleTool = (
         const requested = input.layerIds ?? style.layers.slice(0, input.limit ?? DEFAULT_LIMIT).map((layer) => layer.id);
         const fields = input.fields ?? DEFAULT_INSPECT_FIELDS;
         const layers: JsonValue[] = [];
+        const layersById = new Map(style.layers.map((layer) => [layer.id, layer]));
         for (const id of requested) {
-          const layer = style.layers.find((candidate) => candidate.id === id);
+          const layer = layersById.get(id);
           if (layer === undefined) return toFailure(notFound('Layer'));
           if (layers.length < (input.limit ?? DEFAULT_LIMIT)) {
             layers.push(layerProjection(layer, fields, fields.includes('zoom')));

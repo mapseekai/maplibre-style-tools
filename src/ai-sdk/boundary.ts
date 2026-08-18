@@ -90,9 +90,10 @@ export const boundInspectionProjection = (input: {
     const output = { success: true as const, message: normalizedMessage(input.message), data };
     projection.truncated = true; projection.warnings.push(COMPACT_OUTPUT_TRUNCATED);
     if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI result mandatory envelope exceeds output limit.');
-    let omitted = input.truncated === true || admitNestedWarnings(
+    const warningsOmitted = admitNestedWarnings(
       output, projection, input.warnings, MAX_AI_OUTPUT_BYTES,
     );
+    let omitted = input.truncated === true || warningsOmitted;
     for (const item of input.projection.items.slice(0, MAX_AI_OUTPUT_ITEMS)) {
       projection.items.push(item); projection.returned = projection.items.length;
       if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { projection.items.pop(); projection.returned = projection.items.length; omitted = true; break; }
@@ -108,9 +109,10 @@ export const boundInspectionProjection = (input: {
   const output = { success: true as const, message: normalizedMessage(input.message), data };
   projection.truncated = true; projection.warnings.push(COMPACT_OUTPUT_TRUNCATED);
   if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI result mandatory envelope exceeds output limit.');
-  let omitted = input.truncated === true || admitNestedWarnings(
+  const warningsOmitted = admitNestedWarnings(
     output, projection, input.warnings, MAX_AI_OUTPUT_BYTES,
   );
+  let omitted = input.truncated === true || warningsOmitted;
   projection.value = input.projection.value; projection.returned = 1;
   if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { delete projection.value; projection.returned = 0; omitted = true; }
   projection.truncated = omitted;

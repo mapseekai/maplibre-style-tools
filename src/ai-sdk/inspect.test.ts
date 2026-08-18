@@ -194,4 +194,27 @@ describe('createInspectStyleTool', () => {
     assert.equal((sourceLayer.layers as { items: unknown[] }).items.length, 100);
     assert.equal((sourceLayer.layers as { truncated: boolean }).truncated, true);
   });
+
+  it('retains domain warnings when nested GeoJSON properties truncate', async () => {
+    const properties = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [`property-${index}`, index]));
+    const result = await createInspectStyleTool({ getMap: () => null }).execute({
+      action: 'analyzeGeoJson',
+      data: {
+        type: 'FeatureCollection',
+        features: [
+          { type: 'Feature', properties: { ...properties, mixed: { nested: true } }, geometry: { type: 'Point', coordinates: [0, 0] } },
+          { type: 'Feature', properties: { mixed: 'text' }, geometry: { type: 'Point', coordinates: [1, 1] } },
+        ],
+      },
+    });
+    const analysis = value(result);
+    assert.equal((analysis.properties as { truncated: boolean }).truncated, true);
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.projection.truncated, true);
+      assert.ok(result.data.projection.warnings.some((warning) => warning.code === 'COMPACT_OUTPUT_TRUNCATED'));
+      assert.ok(result.data.projection.warnings.some((warning) => warning.code === 'GEOJSON_PROPERTY_UNSUPPORTED'));
+      assert.ok(result.data.projection.warnings.some((warning) => warning.code === 'GEOJSON_PROPERTY_MIXED_TYPES'));
+    }
+  });
 });
