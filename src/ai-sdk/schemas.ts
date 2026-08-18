@@ -412,8 +412,9 @@ const uniqueNonBlankStringArray = z.array(nonBlankString).refine(
 const nonBlankStringArray = z.array(nonBlankString);
 const inspectionFieldSchema = z.enum(['paint', 'layout', 'filter', 'zoom']);
 const nonEmptyTransactionSchema = styleTransactionSchema;
-const emptyTransactionSchema = z.object({
-  operations: z.tuple([]),
+
+const transactionEnvelopeSchema = z.object({
+  operations: z.array(jsonValueSchema),
   validate: z.boolean().optional(),
 }).strict();
 
@@ -436,7 +437,7 @@ export const inspectStyleInputSchema: z.ZodType<InspectStyleInput> =
 
 export const applyStyleTransactionInputSchema: z.ZodType<ApplyStyleTransactionInput> =
   descriptorSafeInputSchema(z.object({
-    transaction: z.union([emptyTransactionSchema, nonEmptyTransactionSchema]),
+    transaction: transactionEnvelopeSchema,
     dryRun: z.boolean().optional(),
     diff: z.boolean().optional(),
   }).strict()) as z.ZodType<ApplyStyleTransactionInput>;

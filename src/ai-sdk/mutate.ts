@@ -1,5 +1,5 @@
 import { applyStyleDocumentOrUrlToMap, applyTransactionToMap, type MapStyleApplyResult } from '../adapters/maplibre/index.js';
-import { applyStyleTransaction, createStyleToolError } from '../core/index.js';
+import { applyStyleTransaction, createStyleToolError, styleTransactionSchema } from '../core/index.js';
 import type { StyleDiffEntry, StyleWarning } from '../core/index.js';
 import { boundStyleMutationReceipt, createAiTool, toFailure } from './boundary.js';
 import type {
@@ -16,6 +16,9 @@ import { getAvailableMap, readValidatedMapStyle } from './shared.js';
 const EMPTY_TRANSACTION_MESSAGE = 'Style transaction completed without changes.';
 const TRANSACTION_MESSAGE = 'Style transaction completed.';
 const DOCUMENT_MESSAGE = 'Style document completed.';
+
+const transactionIssuePath = (path: PropertyKey[]): string =>
+  `/transaction${path.length === 0 ? '' : `/${path.map((part) => String(part).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`}`;
 
 type MutationResult = {
   applied: boolean;
@@ -84,10 +87,21 @@ export const createApplyStyleTransactionTool = (
       });
     }
 
+    const parsedTransaction = styleTransactionSchema.safeParse(input.transaction);
+    if (!parsedTransaction.success) {
+      const issue = parsedTransaction.error.issues[0];
+      return toFailure(createStyleToolError(
+        'INVALID_INPUT',
+        issue?.message ?? 'Tool input is invalid.',
+        transactionIssuePath(issue?.path ?? []),
+      ));
+    }
+    const transaction = parsedTransaction.data;
+
     if (input.dryRun === true) {
       const current = readValidatedMapStyle(options.getMap);
       if (!current.ok) return toFailure(current.error);
-      const result = applyStyleTransaction(current.style, input.transaction);
+      const result = applyStyleTransaction(current.style, transaction);
       if (!result.ok) return toFailure(result.error);
       return receipt(TRANSACTION_MESSAGE, {
         applied: false,
@@ -103,7 +117,7 @@ export const createApplyStyleTransactionTool = (
     if (!available.ok) return toFailure(available.error);
     const result = await applyTransactionToMap(
       available.map,
-      input.transaction,
+      transaction,
       { diff: includeDiff },
     );
     if (!result.ok) return failure(result);

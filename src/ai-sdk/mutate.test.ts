@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import { styleTransactionSchema } from '../core/index.js';
 import type { AiStyleToolResult, ApplyStyleDocumentInput, ApplyStyleTransactionInput, StyleMutationReceipt } from './contracts.js';
 import { createApplyStyleDocumentTool, createApplyStyleTransactionTool } from './mutate.js';
 
@@ -79,6 +80,48 @@ describe('unified mutation tools', () => {
       message: 'Style transaction completed without changes.',
       data: { applied: false, noOp: true, changedLayers: [], changedSources: [], diff: [], warnings: [], truncated: false, styleAuthority: 'not-checked' },
     });
+    assert.equal(getMapCalls, 0); assert.equal(getContextCalls, 0);
+  });
+  it('preserves the strict core unknown-operation error before Map or context access', async () => {
+    let getMapCalls = 0;
+    let getContextCalls = 0;
+    const input = { transaction: { operations: [{ op: 'unknownOp' }] } };
+    const parsed = styleTransactionSchema.safeParse(input.transaction);
+    assert.equal(parsed.success, false);
+    if (parsed.success) throw new Error('Expected strict core validation to fail.');
+    const result = await createApplyStyleTransactionTool({
+      getMap: () => { getMapCalls += 1; return null; },
+      getContext: () => { getContextCalls += 1; return {}; },
+    }).execute(input as never);
+    assert.equal(result.success, false);
+    if (!result.success) {
+      assert.equal(result.error.code, 'INVALID_INPUT');
+      assert.equal(result.error.message, parsed.error.issues[0]?.message);
+      assert.equal(result.error.path, '/transaction/operations/0/op');
+    }
+    assert.equal(getMapCalls, 0); assert.equal(getContextCalls, 0);
+  });
+
+  it('preserves the strict core operation-limit error before Map or context access', async () => {
+    let getMapCalls = 0;
+    let getContextCalls = 0;
+    const result = await createApplyStyleTransactionTool({
+      getMap: () => { getMapCalls += 1; return null; },
+      getContext: () => { getContextCalls += 1; return {}; },
+    }).execute({
+      transaction: {
+        operations: Array.from(
+          { length: 101 },
+          () => ({ op: 'setStyleRootProperties', properties: {} }),
+        ),
+      },
+    } as never);
+    assert.equal(result.success, false);
+    if (!result.success) {
+      assert.equal(result.error.code, 'INVALID_INPUT');
+      assert.equal(result.error.message, 'Too many operations');
+      assert.equal(result.error.path, '/transaction/operations');
+    }
     assert.equal(getMapCalls, 0); assert.equal(getContextCalls, 0);
   });
 
