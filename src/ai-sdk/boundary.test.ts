@@ -50,6 +50,12 @@ const assertToolSignatures = (tools: MapLibreStyleTools): void => {
 };
 void [assertResultNarrowing, assertToolSignatures];
 
+const assertInvalidListReceipt = (): void => {
+  // @ts-expect-error list commands require an item collection result.
+  void boundMapCommandReceipt({ message: 'no', action: 'listImages', kind: 'list', applied: true, result: 'not-a-list', warnings: [] });
+};
+void assertInvalidListReceipt;
+
 const sourceWarnings = Array.from({ length: 21 }, (_, index) => ({
   code: `WARNING_${index}`,
   message: `Warning ${index}.`,
@@ -78,6 +84,31 @@ describe('bounded AI result boundary', () => {
       assert.equal(bounded.data.features.length, 52);
       assert.equal(bounded.data.features.at(-1)?.properties?.index, 51);
       assert.equal(bounded.data.warnings.length, 21);
+    }
+  });
+
+  it('stops at the 101st small feature', () => {
+    const features = Array.from({ length: 101 }, (_, id) => ({
+      type: 'Feature' as const, properties: { id }, geometry: { type: 'Point' as const, coordinates: [id, id] as [number, number] },
+    }));
+    const bounded = boundFeatureQueryProjection({ message: 'ok', target: 'source', features, warnings: [] });
+    assert.equal(bounded.success, true);
+    if (bounded.success) {
+      assert.equal(bounded.data.returned, 100);
+      assert.equal(bounded.data.features.at(-1)?.properties?.id, 99);
+      assert.equal(bounded.data.truncated, true);
+    }
+  });
+
+  it('omits an oversized first list item atomically', () => {
+    const bounded = boundMapCommandReceipt({
+      message: 'ok', action: 'listImages', kind: 'list', applied: true,
+      result: { items: ['x'.repeat(MAX_AI_OUTPUT_BYTES), 'later'] }, warnings: [],
+    });
+    assert.equal(bounded.success, true);
+    if (bounded.success && bounded.data.result && typeof bounded.data.result === 'object' && 'items' in bounded.data.result) {
+      assert.deepEqual(bounded.data.result.items, []);
+      assert.equal(bounded.data.result.truncated, true);
     }
   });
 

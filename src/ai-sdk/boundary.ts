@@ -32,7 +32,7 @@ type MutableData = { warnings: StyleWarning[]; truncated: boolean };
 const finalizeSuccess = <T extends MutableData>(message: string, data: T, limit: number, omitted: boolean): AiStyleToolResult<T> => {
   const output = { success: true as const, message: normalizedMessage(message), data };
   data.truncated = omitted;
-  if (omitted) data.warnings.push(COMPACT_OUTPUT_TRUNCATED);
+  if (!omitted) data.warnings.pop();
   if (jsonUtf8ByteLength(output) > limit) throw new RangeError('AI result mandatory envelope exceeds output limit.');
   return output;
 };
@@ -44,9 +44,9 @@ const admitWarnings = <T extends MutableData>(
 ): boolean => {
   let omitted = warnings.length > MAX_AI_OUTPUT_WARNINGS;
   for (const warning of warnings.slice(0, MAX_AI_OUTPUT_WARNINGS)) {
-    output.data.warnings.push(warning);
+    output.data.warnings.splice(output.data.warnings.length - 1, 0, warning);
     if (jsonUtf8ByteLength(output) > limit) {
-      output.data.warnings.pop();
+      output.data.warnings.splice(output.data.warnings.length - 2, 1);
       omitted = true;
       break;
     }
@@ -58,10 +58,7 @@ const reserve = <T extends MutableData>(message: string, data: T, limit: number)
   const output = { success: true as const, message: normalizedMessage(message), data };
   data.truncated = true;
   data.warnings.push(COMPACT_OUTPUT_TRUNCATED);
-  const valid = jsonUtf8ByteLength(output) <= limit;
-  data.warnings.pop();
-  data.truncated = false;
-  return { output, valid };
+  return { output, valid: jsonUtf8ByteLength(output) <= limit };
 };
 
 const admitNestedWarnings = <T extends { warnings: StyleWarning[] }>(
@@ -72,8 +69,8 @@ const admitNestedWarnings = <T extends { warnings: StyleWarning[] }>(
 ): boolean => {
   let omitted = warnings.length > MAX_AI_OUTPUT_WARNINGS;
   for (const warning of warnings.slice(0, MAX_AI_OUTPUT_WARNINGS)) {
-    target.warnings.push(warning);
-    if (jsonUtf8ByteLength(output) > limit) { target.warnings.pop(); omitted = true; break; }
+    target.warnings.splice(target.warnings.length - 1, 0, warning);
+    if (jsonUtf8ByteLength(output) > limit) { target.warnings.splice(target.warnings.length - 2, 1); omitted = true; break; }
   }
   return omitted;
 };
@@ -92,7 +89,6 @@ export const boundInspectionProjection = (input: {
     const output = { success: true as const, message: normalizedMessage(input.message), data };
     projection.truncated = true; projection.warnings.push(COMPACT_OUTPUT_TRUNCATED);
     if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI result mandatory envelope exceeds output limit.');
-    projection.warnings.pop(); projection.truncated = false;
     let omitted = admitNestedWarnings(output, projection, input.warnings, MAX_AI_OUTPUT_BYTES);
     for (const item of input.projection.items.slice(0, MAX_AI_OUTPUT_ITEMS)) {
       projection.items.push(item); projection.returned = projection.items.length;
@@ -100,7 +96,8 @@ export const boundInspectionProjection = (input: {
     }
     omitted ||= projection.items.length < input.projection.items.length;
     projection.truncated = omitted;
-    if (omitted) projection.warnings.push(COMPACT_OUTPUT_TRUNCATED);
+    if (!omitted) projection.warnings.pop();
+    if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI result mandatory envelope exceeds output limit.');
     return output;
   }
   const projection = { returned: 0 as 0 | 1, total: 1 as const, truncated: false, warnings: [] as StyleWarning[], value: undefined as JsonValue | undefined };
@@ -108,12 +105,12 @@ export const boundInspectionProjection = (input: {
   const output = { success: true as const, message: normalizedMessage(input.message), data };
   projection.truncated = true; projection.warnings.push(COMPACT_OUTPUT_TRUNCATED);
   if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI result mandatory envelope exceeds output limit.');
-  projection.warnings.pop(); projection.truncated = false;
   let omitted = admitNestedWarnings(output, projection, input.warnings, MAX_AI_OUTPUT_BYTES);
   projection.value = input.projection.value; projection.returned = 1;
   if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { delete projection.value; projection.returned = 0; omitted = true; }
   projection.truncated = omitted;
-  if (omitted) projection.warnings.push(COMPACT_OUTPUT_TRUNCATED);
+  if (!omitted) projection.warnings.pop();
+  if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI result mandatory envelope exceeds output limit.');
   return output;
 };
 
@@ -142,27 +139,26 @@ export const boundStyleMutationReceipt = (input: {
   return finalizeSuccess(input.message, data, MAX_AI_OUTPUT_BYTES, omitted);
 };
 
-export const boundMapCommandReceipt = (input: {
-  message: string; action: MapCommandReceipt['action']; kind: MapCommandReceipt['kind']; applied: boolean;
-  result?: JsonValue | { items: JsonValue[]; total?: number }; warnings: readonly StyleWarning[];
-}): AiStyleToolResult<MapCommandReceipt> => {
+export const boundMapCommandReceipt = (input:
+  | { message: string; action: MapCommandReceipt['action']; kind: 'list'; applied: boolean; result: { items: JsonValue[]; total?: number }; warnings: readonly StyleWarning[] }
+  | { message: string; action: MapCommandReceipt['action']; kind: 'acknowledgement'; applied: boolean; result?: JsonValue; warnings: readonly StyleWarning[] }
+): AiStyleToolResult<MapCommandReceipt> => {
   const data: MapCommandReceipt = { action: input.action, kind: input.kind, applied: input.applied, warnings: [], truncated: false };
   if (input.kind === 'list') data.result = { items: [], returned: 0, truncated: false, warnings: [] };
   const { output, valid } = reserve(input.message, data, MAX_AI_OUTPUT_BYTES);
   if (!valid) throw new RangeError('AI result mandatory envelope exceeds output limit.');
   let omitted = admitWarnings(output, input.warnings, MAX_AI_OUTPUT_BYTES);
-  if (input.kind === 'list' && input.result && typeof input.result === 'object' && !Array.isArray(input.result) && 'items' in input.result) {
-    const listResult = input.result as { items: JsonValue[]; total?: number };
+  if (input.kind === 'list') {
     const result = data.result as Extract<MapCommandReceipt['result'], { items: JsonValue[] }>;
-    if (listResult.total !== undefined) result.total = listResult.total;
-    for (const item of listResult.items.slice(0, MAX_AI_OUTPUT_ITEMS)) {
+    if (input.result.total !== undefined) result.total = input.result.total;
+    for (const item of input.result.items.slice(0, MAX_AI_OUTPUT_ITEMS)) {
       result.items.push(item); result.returned = result.items.length;
       if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { result.items.pop(); result.returned = result.items.length; omitted = true; break; }
     }
-    omitted ||= result.items.length < listResult.items.length;
+    omitted ||= result.items.length < input.result.items.length;
     result.truncated = omitted;
     if (omitted) result.warnings.push(COMPACT_OUTPUT_TRUNCATED);
-  } else if (input.kind === 'acknowledgement' && input.result !== undefined) {
+  } else if (input.result !== undefined) {
     data.result = input.result;
     if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { delete data.result; omitted = true; }
   }
@@ -188,15 +184,16 @@ export const boundFeatureQueryProjection = (input: {
 
 export const toFailure = (error: StyleToolError): AiStyleToolResult<never> => {
   const message = normalizedMessage(error.message);
-  const snapshot = createStyleToolError(error.code, message, error.path);
+  const path = error.path === undefined ? undefined : truncateUtf8(error.path, MAX_AI_MESSAGE_BYTES);
+  const snapshot = createStyleToolError(error.code, message, path);
   const output: { success: false; message: string; error: StyleToolError } = { success: false, message, error: snapshot };
   if (error.details !== undefined) {
     snapshot.details = error.details;
-    if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) {
-      snapshot.details = { outputTruncated: true };
-      if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) delete snapshot.details;
-    }
+    if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) snapshot.details = { outputTruncated: true };
+    if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) delete snapshot.details;
   }
+  if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) delete snapshot.path;
+  if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) throw new RangeError('AI failure envelope exceeds output limit.');
   return output;
 };
 
