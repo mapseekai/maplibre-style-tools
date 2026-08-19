@@ -152,6 +152,10 @@ test('composeFilter rejects nested legacy children in every position', () => {
     /not supported.*expression/s,
   );
   assert.throws(
+    () => composeFilter(classFilter, ['any', legacyChild, expressionChild], 'or'),
+    /not supported.*expression/s,
+  );
+  assert.throws(
     () => composeFilter(
       classFilter,
       ['all', expressionChild, ['any', expressionChild, legacyChild]],

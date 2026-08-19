@@ -1134,6 +1134,14 @@ test('rejects legacy filter syntax on every operation filter field', () => {
       op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
       filter: ['all', ['==', 'class', 'primary'], expression],
     },
+    {
+      op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
+      filter: ['any', expression, ['==', 'class', 'primary']],
+    },
+    {
+      op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
+      filter: ['any', ['==', 'class', 'primary'], expression],
+    },
   ];
   for (const operation of legacyOperations) {
     const result = styleTransactionSchema.safeParse({ operations: [operation] });
