@@ -129,14 +129,42 @@ test('composeFilter deterministically replaces, combines, and flattens matching 
   }
 });
 
-test('composeFilter rejects legacy property operands mixed with expression operands', () => {
+test('composeFilter rejects legacy filters with actionable guidance', () => {
   const legacy: JsonValue[] = ['==', 'class', 'road'];
-  assert.throws(() => composeFilter(legacy, classFilter, 'and'), /legacy.*expression/i);
-  assert.throws(() => composeFilter(classFilter, legacy, 'or'), /legacy.*expression/i);
+  assert.throws(() => composeFilter(classFilter, legacy, 'and'), /not supported.*expression/);
+  assert.throws(() => composeFilter(legacy, classFilter, 'or'), /existing legacy.*replace/is);
+  assert.throws(() => composeFilter(legacy, legacy, 'and'), /not supported.*expression/);
+});
+
+test('composeFilter composes neutral operands with expressions', () => {
   assert.deepEqual(
-    composeFilter(legacy, ['==', 'rank', 1], 'and'),
-    ['all', legacy, ['==', 'rank', 1]],
+    composeFilter(['has', 'name'], classFilter, 'and'),
+    ['all', ['has', 'name'], classFilter],
   );
+  assert.deepEqual(
+    composeFilter(classFilter, ['has', 'name'], 'or'),
+    ['any', classFilter, ['has', 'name']],
+  );
+});
+
+test('filter handlers reject legacy incoming filters without schema validation', () => {
+  const style = makeStyle();
+  const layerResult = applySetLayerFilter(style, {
+    op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
+    filter: ['==', 'class', 'road'],
+  }, makeContext());
+  assert.equal(layerResult.ok, false);
+  if (layerResult.ok) assert.fail('expected legacy rejection');
+  assert.equal(layerResult.error.code, 'INVALID_INPUT');
+  assert.match(layerResult.error.message, /not supported.*expression/s);
+
+  const sourceResult = applySetGeoJsonSourceFilter(style, {
+    op: 'setGeoJsonSourceFilter', sourceId: 'geo', mode: 'replace',
+    filter: ['==', 'kind', 'park'],
+  }, makeContext());
+  assert.equal(sourceResult.ok, false);
+  if (sourceResult.ok) assert.fail('expected legacy rejection');
+  assert.equal(sourceResult.error.code, 'INVALID_INPUT');
 });
 
 test('setLayerFilter replace and clear emit exact replayable layer diffs', () => {
@@ -238,12 +266,10 @@ test('setGeoJsonSourceFilter rejects missing and unsupported sources atomically'
   }
 });
 
-test('a later mixed-syntax composition rolls back an earlier valid source change', () => {
+test('a legacy filter operation rejects the whole transaction without applying earlier operations', () => {
   const style = makeStyle();
   const result = applyStyleTransaction(style, { operations: [
-    {
-      op: 'setGeoJsonSourceFilter', sourceId: 'geo', mode: 'replace', filter: rankFilter,
-    },
+    { op: 'setGeoJsonSourceFilter', sourceId: 'geo', mode: 'replace', filter: rankFilter },
     {
       op: 'setLayerFilter', layerId: 'roads', mode: 'and',
       filter: ['==', 'surface', 'paved'],
@@ -254,8 +280,9 @@ test('a later mixed-syntax composition rolls back an earlier valid source change
   assert.deepEqual(result.changedLayers, []);
   assert.deepEqual(result.changedSources, []);
   assert.deepEqual(result.diff, []);
-  if (result.ok) assert.fail('expected mixed filter syntax failure');
+  if (result.ok) assert.fail('expected legacy filter rejection');
   assert.equal(result.error.code, 'INVALID_INPUT');
+  assert.match(result.error.message, /legacy.*expression/is);
 });
 
 test('legacy history replays temporarily invalid transitions', () => {

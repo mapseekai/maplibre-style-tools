@@ -952,7 +952,7 @@ test('addLayerFromSource preserves exact sanitized field snapshots and default p
   const style = makeSourceStyle();
   const paint: JsonObject = { 'line-color': '#123456', 'line-width': 3 };
   const layout: JsonObject = { 'line-cap': 'round', visibility: 'none' };
-  const filter: JsonValue[] = ['==', 'class', 'primary'];
+  const filter: JsonValue[] = ['==', ['get', 'class'], 'primary'];
   const metadata: JsonObject = { owner: 'maps', nested: { reviewed: true } };
   const result = applyStyleTransaction(style, { operations: [{
     op: 'addLayerFromSource',
@@ -996,7 +996,10 @@ test('addLayerFromSource preserves exact sanitized field snapshots and default p
   metadata.owner = 'mutated';
   assert.equal(result.style.layers.at(-1)?.paint?.['line-color'], '#123456');
   assert.equal(result.style.layers.at(-1)?.layout?.visibility, 'none');
-  assert.equal((result.style.layers.at(-1)?.filter as JsonValue[] | undefined)?.[1], 'class');
+  assert.deepEqual(
+    (result.style.layers.at(-1)?.filter as JsonValue[] | undefined)?.[1],
+    ['get', 'class'],
+  );
   assert.equal((result.style.layers.at(-1)?.metadata as JsonObject | undefined)?.owner, 'maps');
   assertReplay(style, result);
 });

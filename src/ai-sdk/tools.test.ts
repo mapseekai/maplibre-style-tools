@@ -143,7 +143,7 @@ const migrationRows: MigrationRow[] = [
   transaction('batchSetLayerLayoutProperties', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }, ['roads'], [], (m) => assert.deepEqual(styleLayerField(m, 0, 'layout'), { visibility: 'none' })),
   transaction('clearLayerPaintProperty', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': null } }, ['roads'], [], (m) => assert.equal(Object.hasOwn(styleLayer(m, 0), 'paint'), false)),
   transaction('clearLayerLayoutProperty', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: null } }, ['roads'], [], (m) => assert.equal(Object.hasOwn(styleLayer(m, 0), 'layout'), false)),
-  transaction('setLayerFilter', { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] }, ['roads'], [], (m) => assert.deepEqual(styleLayerField(m, 0, 'filter'), ['==', 'kind', 'road'])),
+  transaction('setLayerFilter', { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', ['get', 'kind'], 'road'] }, ['roads'], [], (m) => assert.deepEqual(styleLayerField(m, 0, 'filter'), ['==', ['get', 'kind'], 'road'])),
   transaction('setLayerZoomRange', { op: 'setLayerProperties', layerId: 'roads', minzoom: 1, maxzoom: 10 }, ['roads'], [], (m) => assert.deepEqual([styleLayerField(m, 0, 'minzoom'), styleLayerField(m, 0, 'maxzoom')], [1, 10])),
   transaction('setLayerVisibility', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }, ['roads'], [], (m) => assert.equal(jsonRecord(styleLayerField(m, 0, 'layout')).visibility, 'none')),
   transaction('addLayer', { op: 'addLayerDefinition', layer: { id: 'added', type: 'line', source: 'base', 'source-layer': 'roads' } }, ['added'], [], (m) => assert.equal(m.style.layers![2]!.id, 'added')),
@@ -185,7 +185,7 @@ const migrationRows: MigrationRow[] = [
   { legacyName: 'getStyleContext', category: 'compact', tool: 'inspectStyle', input: { action: 'getContext' }, verify: (r) => assert.deepEqual(projection(r).value, { layerCount: 2, sourceCount: 2, layerTypes: { line: 1, symbol: 1 }, layers: [{ id: 'roads', type: 'line', source: 'base', sourceLayer: 'roads', visibility: 'visible' }, { id: 'labels', type: 'symbol', source: 'base', sourceLayer: 'labels' }] }) },
   { legacyName: 'searchLayers', category: 'compact', tool: 'inspectStyle', input: { action: 'listLayers', query: 'road' }, verify: (r) => assert.deepEqual(jsonItems(projection(r).items).map((value) => value.id), ['roads']) },
   { legacyName: 'inspectLayersCompact', category: 'compact', tool: 'inspectStyle', input: { action: 'inspectLayers', layerIds: ['roads'] }, verify: (r) => assert.deepEqual(jsonItems(projection(r).items)[0], { id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads', paint: { 'line-width': 1 }, layout: { visibility: 'visible' } }) },
-  { legacyName: 'applyStyleOperations', category: 'compact', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedLayers, ['roads']); assert.deepEqual(styleLayerField(m, 0, 'filter'), ['==', 'kind', 'road']); } },
+  { legacyName: 'applyStyleOperations', category: 'compact', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', ['get', 'kind'], 'road'] }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedLayers, ['roads']); assert.deepEqual(styleLayerField(m, 0, 'filter'), ['==', ['get', 'kind'], 'road']); } },
   { legacyName: 'validateStylePatchJson', category: 'compact', tool: 'inspectStyle', input: { action: 'validateTransaction', transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' }] } }, verify: (r) => assert.deepEqual(projection(r).value, { valid: true }) },
   { legacyName: 'analyzeGeoJson', category: 'retained', tool: 'inspectStyle', input: { action: 'analyzeGeoJson', data: { type: 'FeatureCollection', features: [] } }, verify: (r) => assert.deepEqual(projection(r).value, { available: true, featureCount: 0, geometryTypes: {}, properties: { items: [], returned: 0, total: 0, truncated: false, warnings: [] } }) },
   { legacyName: 'listSourceLayers', category: 'retained', tool: 'inspectStyle', input: { action: 'listSourceLayers', sourceId: 'base' }, verify: (r) => assert.deepEqual(jsonItems(projection(r).items).map((value) => [value.sourceId, value.sourceLayer, jsonItems(jsonRecord(value.layers).items).map((layer) => layer.id)]), [['base', 'labels', ['labels']], ['base', 'roads', ['roads']]]) },
@@ -224,12 +224,12 @@ test('executes setLayerFilter replace and and or clear with exact resulting filt
     assert.equal(result.success, true);
     assert.deepEqual(result.success ? result.data.changedLayers : [], ['roads']);
   };
-  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] });
-  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['==', 'kind', 'road']);
-  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'and', filter: ['!=', 'closed', true] });
-  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['all', ['==', 'kind', 'road'], ['!=', 'closed', true]]);
-  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'or', filter: ['==', 'kind', 'highway'] });
-  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['any', ['all', ['==', 'kind', 'road'], ['!=', 'closed', true]], ['==', 'kind', 'highway']]);
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', ['get', 'kind'], 'road'] });
+  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['==', ['get', 'kind'], 'road']);
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'and', filter: ['!=', ['get', 'closed'], true] });
+  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['all', ['==', ['get', 'kind'], 'road'], ['!=', ['get', 'closed'], true]]);
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'or', filter: ['==', ['get', 'kind'], 'highway'] });
+  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['any', ['all', ['==', ['get', 'kind'], 'road'], ['!=', ['get', 'closed'], true]], ['==', ['get', 'kind'], 'highway']]);
   await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' });
   assert.equal(Object.hasOwn(map.style.layers?.[0] ?? {}, 'filter'), false);
 });

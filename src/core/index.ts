@@ -110,6 +110,7 @@ export {
   duplicateSourceOperationSchema,
   deepMergeLayerDefinitionOperationSchema,
   deepMergeSourceDefinitionOperationSchema,
+  expressionFilterSchema,
   geoJsonAnalysisInputSchema,
   geoJsonAnalysisOptionsSchema,
   geoJsonLimitsSchema,

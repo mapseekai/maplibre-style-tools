@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { jsonValuesEqual } from './diff.js';
 import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
+import { classifyFilter, LEGACY_FILTER_MESSAGE } from './operations/filters.js';
 import type {
   AddGeoJsonLayerOperation, AddLayerFromSourceOperation, AddSourceOperation,
   AddLayerDefinitionOperation, CompatibilityStyleOperation,
@@ -1770,7 +1771,13 @@ export const styleDocumentSchema = sanitizeBefore(
 );
 
 const zoomSchema = z.number().finite().min(0).max(24).nullable();
-const filterArrayInnerSchema = z.array(jsonValueInnerSchema);
+export const expressionFilterSchema = z.array(jsonValueInnerSchema).superRefine(
+  (filter, context) => {
+    if (classifyFilter(filter) === 'legacy') {
+      context.addIssue({ code: 'custom', message: LEGACY_FILTER_MESSAGE });
+    }
+  },
+);
 const setLayerPropertiesOperationInnerSchema = z.object({
   op: z.literal('setLayerProperties'),
   layerId: z.string().min(1),
@@ -1816,7 +1823,7 @@ const setLayerFilterOperationInnerSchema = z.discriminatedUnion('mode', [
     op: z.literal('setLayerFilter'),
     layerId: z.string().min(1),
     mode: z.enum(['replace', 'and', 'or']),
-    filter: filterArrayInnerSchema,
+    filter: expressionFilterSchema,
   }).strict(),
   z.object({
     op: z.literal('setLayerFilter'),
@@ -1836,7 +1843,7 @@ const setGeoJsonSourceFilterOperationInnerSchema = z.discriminatedUnion('mode', 
     op: z.literal('setGeoJsonSourceFilter'),
     sourceId: z.string().min(1),
     mode: z.literal('replace'),
-    filter: filterArrayInnerSchema,
+    filter: expressionFilterSchema,
   }).strict(),
   z.object({
     op: z.literal('setGeoJsonSourceFilter'),
@@ -2050,7 +2057,7 @@ const addLayerFromSourceOperationInnerSchema = z.object({
   type: nonEmptyStringSchema,
   paint: jsonObjectInnerSchema.optional(),
   layout: jsonObjectInnerSchema.optional(),
-  filter: filterArrayInnerSchema.optional(),
+  filter: expressionFilterSchema.optional(),
   minzoom: z.number().finite().min(0).max(24).optional(),
   maxzoom: z.number().finite().min(0).max(24).optional(),
   metadata: jsonObjectInnerSchema.optional(),
@@ -2088,7 +2095,7 @@ const addGeoJsonLayerOperationInnerSchema = z.object({
   type: z.enum(GEOJSON_LAYER_TYPE_VALUES),
   paint: jsonObjectInnerSchema.optional(),
   layout: jsonObjectInnerSchema.optional(),
-  filter: filterArrayInnerSchema.optional(),
+  filter: expressionFilterSchema.optional(),
   minzoom: z.number().finite().min(0).max(24).optional(),
   maxzoom: z.number().finite().min(0).max(24).optional(),
   metadata: jsonObjectInnerSchema.optional(),
@@ -2131,11 +2138,26 @@ export const addGeoJsonLayerOperationSchema = sanitizeBefore(
   (value) => fallbackLayerLifecycleOperationIssue(value, 'addGeoJsonLayer'),
 );
 
+function rejectLegacyEmbeddedFilter(
+  payload: Record<string, JsonValue>,
+  pathPrefix: string,
+  context: z.RefinementCtx,
+): void {
+  const filter = payload['filter'];
+  if (Array.isArray(filter) && classifyFilter(filter) === 'legacy') {
+    context.addIssue({
+      code: 'custom', message: LEGACY_FILTER_MESSAGE, path: [pathPrefix, 'filter'],
+    });
+  }
+}
+
 const addLayerDefinitionOperationInnerSchema = z.object({
   op: z.literal('addLayerDefinition'),
   layer: jsonObjectInnerSchema,
   beforeId: nonEmptyStringSchema.optional(),
-}).strict() satisfies z.ZodType<AddLayerDefinitionOperation>;
+}).strict().superRefine((operation, context) => {
+  rejectLegacyEmbeddedFilter(operation.layer, 'layer', context);
+}) satisfies z.ZodType<AddLayerDefinitionOperation>;
 
 export const addLayerDefinitionOperationSchema = sanitizeBefore(
   addLayerDefinitionOperationInnerSchema,
@@ -2147,7 +2169,9 @@ const deepMergeLayerDefinitionOperationInnerSchema = z.object({
   op: z.literal('deepMergeLayerDefinition'),
   layerId: nonEmptyStringSchema,
   patch: jsonObjectInnerSchema,
-}).strict() satisfies z.ZodType<DeepMergeLayerDefinitionOperation>;
+}).strict().superRefine((operation, context) => {
+  rejectLegacyEmbeddedFilter(operation.patch, 'patch', context);
+}) satisfies z.ZodType<DeepMergeLayerDefinitionOperation>;
 
 export const deepMergeLayerDefinitionOperationSchema = sanitizeBefore(
   deepMergeLayerDefinitionOperationInnerSchema,
@@ -2159,7 +2183,9 @@ const replaceLayerDefinitionOperationInnerSchema = z.object({
   op: z.literal('replaceLayerDefinition'),
   layerId: nonEmptyStringSchema,
   layer: jsonObjectInnerSchema,
-}).strict() satisfies z.ZodType<ReplaceLayerDefinitionOperation>;
+}).strict().superRefine((operation, context) => {
+  rejectLegacyEmbeddedFilter(operation.layer, 'layer', context);
+}) satisfies z.ZodType<ReplaceLayerDefinitionOperation>;
 
 export const replaceLayerDefinitionOperationSchema = sanitizeBefore(
   replaceLayerDefinitionOperationInnerSchema,

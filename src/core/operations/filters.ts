@@ -10,7 +10,12 @@ import type {
   StyleDocument,
 } from '../types.js';
 
-type FilterSyntax = 'expression' | 'legacy' | 'neutral';
+export type FilterSyntax = 'expression' | 'legacy' | 'neutral';
+
+export const LEGACY_FILTER_MESSAGE =
+  'Legacy property filter syntax is not supported; use expression syntax (for example ["==", ["get", "kind"], "road"]).';
+export const LEGACY_COMPOSE_MESSAGE =
+  'Cannot compose with an existing legacy-syntax filter; apply mode \'replace\' with an expression filter first.';
 
 function classifyChildren(children: JsonValue[]): FilterSyntax {
   let sawLegacy = false;
@@ -22,7 +27,7 @@ function classifyChildren(children: JsonValue[]): FilterSyntax {
   return sawLegacy ? 'legacy' : 'neutral';
 }
 
-function classifyFilter(filter: JsonValue): FilterSyntax {
+export function classifyFilter(filter: JsonValue): FilterSyntax {
   if (typeof filter === 'boolean') return 'neutral';
   if (!Array.isArray(filter) || filter.length === 0) return 'legacy';
 
@@ -68,11 +73,8 @@ export function composeFilter(
   mode: 'replace' | 'and' | 'or',
 ): JsonValue[] {
   if (mode === 'replace' || existing === undefined) return incoming;
-  const existingIsLegacy = classifyFilter(existing) === 'legacy';
-  const incomingIsLegacy = classifyFilter(incoming) === 'legacy';
-  if (existingIsLegacy !== incomingIsLegacy) {
-    throw new TypeError('Legacy and expression filter syntaxes cannot be composed.');
-  }
+  if (classifyFilter(incoming) === 'legacy') throw new TypeError(LEGACY_FILTER_MESSAGE);
+  if (classifyFilter(existing) === 'legacy') throw new TypeError(LEGACY_COMPOSE_MESSAGE);
   const operator = mode === 'and' ? 'all' : 'any';
   return [
     operator,
@@ -90,6 +92,12 @@ function applyFilter(
   if (operation.mode === 'clear') {
     delete target.filter;
   } else {
+    if (classifyFilter(operation.filter) === 'legacy') {
+      return {
+        ok: false,
+        error: createStyleToolError('INVALID_INPUT', LEGACY_FILTER_MESSAGE, '/filter'),
+      };
+    }
     const existing = Array.isArray(before) ? before : undefined;
     if (
       operation.op === 'setLayerFilter'
@@ -108,12 +116,12 @@ function applyFilter(
       target.filter = operation.op === 'setLayerFilter'
         ? composeFilter(existing, operation.filter, operation.mode)
         : operation.filter;
-    } catch {
+    } catch (error) {
       return {
         ok: false,
         error: createStyleToolError(
           'INVALID_INPUT',
-          'Legacy and expression filter syntaxes cannot be composed.',
+          error instanceof Error ? error.message : LEGACY_FILTER_MESSAGE,
           '/filter',
         ),
       };

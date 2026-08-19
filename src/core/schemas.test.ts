@@ -1109,3 +1109,59 @@ test('preserves the authoritative Zod issue contracts in clean environments', ()
     }],
   ]);
 });
+
+test('rejects legacy filter syntax on every operation filter field', () => {
+  const legacy = ['==', 'kind', 'road'];
+  const expression = ['==', ['get', 'kind'], 'road'];
+
+  const legacyOperations: unknown[] = [
+    { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: legacy },
+    { op: 'setLayerFilter', layerId: 'roads', mode: 'and', filter: legacy },
+    { op: 'setGeoJsonSourceFilter', sourceId: 'geo', mode: 'replace', filter: legacy },
+    { op: 'addLayerFromSource', layerId: 'roads', sourceId: 'vector', type: 'line', filter: legacy },
+    {
+      op: 'addGeoJsonLayer', sourceId: 'geo', layerId: 'roads',
+      data: { type: 'FeatureCollection', features: [] }, type: 'line', filter: legacy,
+    },
+    { op: 'addLayerDefinition', layer: { id: 'roads', type: 'line', source: 'vector', filter: legacy } },
+    { op: 'deepMergeLayerDefinition', layerId: 'roads', patch: { filter: legacy } },
+    { op: 'replaceLayerDefinition', layerId: 'roads', layer: { id: 'roads', type: 'line', filter: legacy } },
+  ];
+  for (const operation of legacyOperations) {
+    const result = styleTransactionSchema.safeParse({ operations: [operation] });
+    assert.equal(result.success, false, JSON.stringify(operation));
+    if (!result.success) {
+      assert.ok(
+        result.error.issues.some((issue) => /legacy property filter/i.test(issue.message)),
+        `expected legacy-filter issue for ${JSON.stringify(operation)}`,
+      );
+    }
+  }
+
+  const accepted: unknown[] = [
+    { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: expression },
+    { op: 'setLayerFilter', layerId: 'roads', mode: 'and', filter: ['has', 'name'] },
+    { op: 'setGeoJsonSourceFilter', sourceId: 'geo', mode: 'replace', filter: expression },
+    { op: 'addLayerDefinition', layer: { id: 'roads', type: 'line', filter: expression } },
+    { op: 'deepMergeLayerDefinition', layerId: 'roads', patch: { filter: ['has', 'name'] } },
+  ];
+  for (const operation of accepted) {
+    assert.equal(
+      styleTransactionSchema.safeParse({ operations: [operation] }).success,
+      true, JSON.stringify(operation),
+    );
+  }
+
+  for (const legacyOnly of [['has', '$id'], ['in', 'kind', 'a', 'b'], ['none', ['==', 'kind', 'a']]]) {
+    assert.equal(styleTransactionSchema.safeParse({ operations: [
+      { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: legacyOnly },
+    ] }).success, false, JSON.stringify(legacyOnly));
+  }
+
+  // Whole style documents keep accepting legacy filters (MapLibre spec parity).
+  assert.equal(styleDocumentSchema.safeParse({
+    version: 8,
+    sources: { base: { type: 'vector', tiles: ['https://example.com/{z}/{x}/{y}.pbf'] } },
+    layers: [{ id: 'roads', type: 'line', source: 'base', filter: legacy }],
+  }).success, true);
+});
