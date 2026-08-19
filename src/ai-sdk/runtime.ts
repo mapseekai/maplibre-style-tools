@@ -75,7 +75,7 @@ export const createRunMapCommandTool = (
     })();
     if (!result.ok) return toFailure(result.error ?? createStyleToolError('INTERNAL', 'Map command failed.'));
     if (input.action === 'listImages' || input.action === 'listSprites') {
-      const list = result.data as { items: JsonValue[]; total?: number };
+      const list = result.data as { items: JsonValue[]; truncated: boolean };
       return boundMapCommandReceipt({
         message: RUNTIME_MESSAGE,
         action: input.action,
@@ -83,7 +83,7 @@ export const createRunMapCommandTool = (
         applied: true,
         result: list,
         warnings: [],
-        truncated: list.total !== undefined && list.total > list.items.length,
+        truncated: list.truncated,
       });
     }
     return boundMapCommandReceipt({

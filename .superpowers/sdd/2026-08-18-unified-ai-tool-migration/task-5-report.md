@@ -105,3 +105,21 @@ The recovery audit found the Task 5 implementation already committed across the 
 Recovery verification reran the focused TypeScript compile plus runtime, boundary, runtime-command adapter, and feature-query adapter suites. Result: 58 tests passed, 0 failed (42 top-level subtests/suites).
 
 No implementation concern remains. GitNexus still has no fresh-worktree index entries for the two changed boundary helpers; its recorded `UNKNOWN` impact result therefore cannot establish call-site coverage.
+
+## Review fix round 1
+
+Root cause: the runtime route inferred list truncation from a nonexistent `total` field instead of forwarding the adapter's `RuntimeListData.truncated` value. The route now passes that adapter flag directly into `boundMapCommandReceipt`.
+
+Red evidence: the new over-limit image-list regression failed with the receipt's top-level `truncated` value false.
+
+Green evidence:
+
+```sh
+rtk pnpm exec tsc -p tsconfig.test.json && rtk node --test \
+  .tmp/test-dist/ai-sdk/runtime.test.js \
+  .tmp/test-dist/ai-sdk/boundary.test.js \
+  .tmp/test-dist/adapters/maplibre/runtime-commands.test.js \
+  .tmp/test-dist/adapters/maplibre/feature-query.test.js
+```
+
+Result: 59 tests passed, 0 failed (42 top-level subtests/suites). The regression confirms both the outer receipt and nested list are truncated and retain `COMPACT_OUTPUT_TRUNCATED`.

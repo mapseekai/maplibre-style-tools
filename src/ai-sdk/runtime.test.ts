@@ -96,6 +96,21 @@ describe('runtime AI tools', () => {
     }
   });
 
+  it('preserves adapter list truncation in both receipt boundaries', async () => {
+    const map = new FakeMap();
+    map.images.add('first');
+    map.images.add('second');
+    const receipt = commandResult(await createRunMapCommandTool({
+      getMap: () => map.asMap(),
+      imageLoader,
+    }).execute({ action: 'listImages', limit: 1 }));
+    assert.equal(receipt.truncated, true);
+    assert.deepEqual(receipt.warnings, [{ code: 'COMPACT_OUTPUT_TRUNCATED', message: 'Output was truncated to stay within response limits.' }]);
+    const list = receipt.result as { truncated: boolean; warnings: unknown[] };
+    assert.equal(list.truncated, true);
+    assert.deepEqual(list.warnings, [{ code: 'COMPACT_OUTPUT_TRUNCATED', message: 'Output was truncated to stay within response limits.' }]);
+  });
+
   it('validates source query before reading map or context', async () => {
     let maps = 0;
     let contexts = 0;
