@@ -20,13 +20,13 @@ function baseStyle(): StyleSpecification {
   return { version: 8, name: 'base', sources: { base: { type: 'vector', tiles: ['https://example.test/{z}/{x}/{y}.pbf'] }, points: { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, cluster: true } }, layers: [{ id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads', paint: { 'line-width': 1 }, layout: { visibility: 'visible' } }, { id: 'labels', type: 'symbol', source: 'base', 'source-layer': 'labels' }] };
 }
 class FakeMap {
-  style = baseStyle(); readonly calls: string[] = []; readonly listeners = new Map<string, Set<(event: { type: string; error?: Error }) => void>>();
+  style = baseStyle(); readonly calls: string[] = []; readonly commandArguments: Record<string, unknown[]> = Object.create(null); readonly listeners = new Map<string, Set<(event: { type: string; error?: Error }) => void>>();
   getStyle() { return structuredClone(this.style); } isStyleLoaded() { return true; }
-  getSource(id: string) { return id === 'points' ? { type: 'geojson', updateData: async () => { this.calls.push('updateData'); } } : id in this.style.sources ? { type: 'vector' } : undefined; }
+  getSource(id: string) { return id === 'points' ? { type: 'geojson', updateData: async (diff: unknown) => { this.calls.push('updateData'); this.commandArguments.updateData = [diff]; } } : id in this.style.sources ? { type: 'vector' } : undefined; }
   on(type: string, listener: (event: { type: string; error?: Error }) => void) { (this.listeners.get(type) ?? this.listeners.set(type, new Set()).get(type)!).add(listener); return { unsubscribe: () => this.listeners.get(type)?.delete(listener) }; }
   off(type: string, listener: (event: { type: string; error?: Error }) => void) { this.listeners.get(type)?.delete(listener); return this; }
   setStyle(style: StyleSpecification | string) { this.calls.push('setStyle'); if (typeof style !== 'string') this.style = structuredClone(style); queueMicrotask(() => this.listeners.get('style.load')?.forEach((listener) => listener({ type: 'style.load' }))); return this; }
-  setSourceTileLodParams() { this.calls.push('setSourceTileLodParams'); } setFeatureState() { this.calls.push('setFeatureState'); } removeFeatureState() { this.calls.push('removeFeatureState'); } setGlobalStateProperty() { this.calls.push('setGlobalState'); }
+  setSourceTileLodParams(...args: unknown[]) { this.calls.push('setSourceTileLodParams'); this.commandArguments.setSourceTileLodParams = args; } setFeatureState(...args: unknown[]) { this.calls.push('setFeatureState'); this.commandArguments.setFeatureState = args; } removeFeatureState(...args: unknown[]) { this.calls.push('removeFeatureState'); this.commandArguments.removeFeatureState = args; } setGlobalStateProperty(...args: unknown[]) { this.calls.push('setGlobalState'); this.commandArguments.setGlobalState = args; }
   listImages() { this.calls.push('listImages'); return ['existing']; } hasImage(id: string) { return id === 'existing'; } addImage() { this.calls.push('addImage'); } updateImage() { this.calls.push('updateImage'); } removeImage() { this.calls.push('removeImage'); }
   getSprite() { this.calls.push('listSprites'); return [{ id: 'sprite', url: 'https://example.test/sprite' }]; } addSprite() { this.calls.push('addSprite'); } removeSprite() { this.calls.push('removeSprite'); }
   querySourceFeatures() { this.calls.push('querySourceFeatures'); return [{ type: 'Feature', geometry: null, properties: {} }]; } queryRenderedFeatures() { this.calls.push('queryRenderedFeatures'); return [{ type: 'Feature', geometry: null, properties: {} }]; }
@@ -115,6 +115,36 @@ test('composes five Promise tools and executes each migration replacement behavi
       try { row.verify(result, map); } catch (error) { assert.fail(`${row.legacyName}: ${error instanceof Error ? error.message : String(error)}`); }
     }
   }
+});
+
+test('executes setLayerFilter replace and and or clear with exact resulting filters', async () => {
+  const map = new FakeMap();
+  const tool = createMapLibreStyleTools({ getMap: () => map.asMap() }).applyStyleTransaction;
+  const apply = async (operation: Record<string, unknown>) => {
+    const result = await tool.execute({ transaction: { operations: [operation] } } as never);
+    assert.equal(result.success, true);
+    assert.deepEqual(result.success ? result.data.changedLayers : [], ['roads']);
+  };
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] });
+  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['==', 'kind', 'road']);
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'and', filter: ['!=', 'closed', true] });
+  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['all', ['==', 'kind', 'road'], ['!=', 'closed', true]]);
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'or', filter: ['==', 'kind', 'highway'] });
+  assert.deepEqual((map.style.layers?.[0] as Record<string, unknown> | undefined)?.filter, ['any', ['all', ['==', 'kind', 'road'], ['!=', 'closed', true]], ['==', 'kind', 'highway']]);
+  await apply({ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' });
+  assert.equal(Object.hasOwn(map.style.layers?.[0] ?? {}, 'filter'), false);
+});
+
+test('forwards native runtime command arguments exactly', async () => {
+  const map = new FakeMap();
+  const command = createMapLibreStyleTools({ getMap: () => map.asMap() }).runMapCommand;
+  const diff = { remove: [1] };
+  const updated = await command.execute({ action: 'updateGeoJsonData', sourceId: 'points', diff });
+  assert.equal(updated.success, true);
+  assert.deepEqual(map.commandArguments.updateData, [diff]);
+  const lod = await command.execute({ action: 'setSourceTileLodParams', sourceId: 'base', maxZoomLevelsOnScreen: 3, tileCountMaxMinRatio: 2 });
+  assert.equal(lod.success, true);
+  assert.deepEqual(map.commandArguments.setSourceTileLodParams, [3, 2, 'base']);
 });
 
 test('covers split document/update routes and authentic unavailable authority failures', async () => {
