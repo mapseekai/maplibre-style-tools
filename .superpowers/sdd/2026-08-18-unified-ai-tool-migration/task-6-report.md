@@ -48,3 +48,6 @@ Replaced generic action echoes and nonempty-ID checks in the ordered 53/5/8 matr
 CodeGraph evidence: `codegraph_explore` traced `createInspectStyleTool` projections (`src/ai-sdk/inspect.ts:107`), unified document application and its pre-invoke/rollback path (`src/adapters/maplibre/map-adapter.ts:1108`), and the `MapStyleApplyResult` authority states (`src/adapters/maplibre/types.ts:85`).
 
 Verification: `rtk pnpm exec tsc -p tsconfig.test.json` and `rtk node --test .tmp/test-dist/ai-sdk/tools.test.js` passed: 4 tests, 0 failures.
+
+## Fix round 4 — CodeGraph-only evidence
+CodeGraph traced `applyStyleDocumentOrUrlToMap` from its baseline read (`src/adapters/maplibre/map-adapter.ts:1118`) through the pre-invoke authority guard (`:1183`), confirming that `UnavailableDuringApplyMap(1)` makes the document route fail before `setStyle`. It also traced `guardBaselineBeforeInvoke` authority outcomes and `rollbackAfterFailure`, which records rollback failure after a mutation-started candidate failure. The unified matrix tests now assert direct transaction and document drift, unavailable-before-invoke, and candidate/rollback failure paths with deterministic read and `setStyle` event counts; failure results carry authentic rollback details and contain no success `data`.

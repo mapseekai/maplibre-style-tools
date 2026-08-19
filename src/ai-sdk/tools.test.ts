@@ -36,6 +36,8 @@ class FakeMap {
 class AuthorityDriftMap extends FakeMap {
   private reads = 0;
 
+  get styleReads() { return this.reads; }
+
   override getStyle() {
     this.reads += 1;
     if (this.reads === 2) this.style = { ...this.style, name: 'external-change' };
@@ -48,10 +50,39 @@ class UnavailableDuringApplyMap extends FakeMap {
 
   constructor(private readonly readableReads: number) { super(); }
 
+  get styleReads() { return this.reads; }
+
   override getStyle() {
     this.reads += 1;
     if (this.reads > this.readableReads) throw new Error('current style unavailable');
     return super.getStyle();
+  }
+}
+
+class AuthorityFailureMap extends FakeMap {
+  private mutations = 0;
+  private unreadable = false;
+  private reads = 0;
+
+  get styleReads() { return this.reads; }
+
+  override getStyle() {
+    this.reads += 1;
+    if (this.unreadable) throw new Error('current style unavailable');
+    return super.getStyle();
+  }
+
+  override setStyle(style: StyleSpecification | string) {
+    this.calls.push('setStyle');
+    this.mutations += 1;
+    queueMicrotask(() => {
+      this.listeners.get('error')?.forEach((listener) => listener({
+        type: 'error',
+        error: new Error(this.mutations === 1 ? 'candidate rejected' : 'rollback rejected'),
+      }));
+      if (this.mutations === 2) this.unreadable = true;
+    });
+    return this;
   }
 }
 const imageLoader: RuntimeImageLoader = { async load() { return { width: 1, height: 1, data: new Uint8Array(4) }; } };
@@ -206,10 +237,11 @@ test('covers split document/update routes and authentic unavailable authority fa
   const unavailable = createMapLibreStyleTools({ getMap: () => null }).applyStyleTransaction.execute({ transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' }] } }); const failed = await unavailable; assert.equal(failed.success, false); if (!failed.success) assert.equal(failed.error.code, 'MAP_NOT_READY');
 });
 
-test('retains native pre-operation drift authority failures without a success payload', async () => {
-  const drift = new AuthorityDriftMap();
-  const tools = createMapLibreStyleTools({ getMap: () => drift.asMap(), imageLoader });
-  const transaction = await tools.applyStyleTransaction.execute({
+test('retains native pre-operation drift authority failures before either live mutation', async () => {
+  const transactionMap = new AuthorityDriftMap();
+  const transaction = await createMapLibreStyleTools({
+    getMap: () => transactionMap.asMap(), imageLoader,
+  }).applyStyleTransaction.execute({
     transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }] },
   });
   assert.equal(transaction.success, false);
@@ -217,12 +249,28 @@ test('retains native pre-operation drift authority failures without a success pa
     assert.equal(transaction.error.code, 'REVISION_CONFLICT');
     assert.equal('data' in transaction, false);
   }
+  assert.equal(transactionMap.styleReads, 2);
+  assert.deepEqual(transactionMap.calls, []);
 
+  const documentMap = new AuthorityDriftMap();
+  const document = await createMapLibreStyleTools({
+    getMap: () => documentMap.asMap(), imageLoader,
+  }).applyStyleDocument.execute({
+    source: { kind: 'style', style: { ...baseStyle(), name: 'candidate' } as never },
+  });
+  assert.equal(document.success, false);
+  if (!document.success) {
+    assert.equal(document.error.code, 'REVISION_CONFLICT');
+    assert.equal('data' in document, false);
+  }
+  assert.equal(documentMap.styleReads, 3);
+  assert.deepEqual(documentMap.calls, []);
 });
 
-test('retains native unavailable-during-apply failures without rollback success leakage', async () => {
+test('retains native unavailable-before-invoke failures without success payloads', async () => {
+  const transactionMap = new UnavailableDuringApplyMap(1);
   const transaction = await createMapLibreStyleTools({
-    getMap: () => new UnavailableDuringApplyMap(1).asMap(), imageLoader,
+    getMap: () => transactionMap.asMap(), imageLoader,
   }).applyStyleTransaction.execute({
     transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }] },
   });
@@ -231,4 +279,68 @@ test('retains native unavailable-during-apply failures without rollback success 
     assert.equal(transaction.error.code, 'INTERNAL');
     assert.equal('data' in transaction, false);
   }
+  assert.equal(transactionMap.styleReads, 2);
+  assert.deepEqual(transactionMap.calls, []);
+
+  const documentMap = new UnavailableDuringApplyMap(1);
+  const document = await createMapLibreStyleTools({
+    getMap: () => documentMap.asMap(), imageLoader,
+  }).applyStyleDocument.execute({
+    source: { kind: 'style', style: { ...baseStyle(), name: 'candidate' } as never },
+  });
+  assert.equal(document.success, false);
+  if (!document.success) {
+    assert.equal(document.error.code, 'INTERNAL');
+    assert.equal('data' in document, false);
+  }
+  assert.equal(documentMap.styleReads, 3);
+  assert.deepEqual(documentMap.calls, []);
+});
+
+test('retains mutation-started rollback failures as failure-only details for both routes', async () => {
+  const transactionMap = new AuthorityFailureMap();
+  const transaction = await createMapLibreStyleTools({
+    getMap: () => transactionMap.asMap(), imageLoader,
+  }).applyStyleTransaction.execute({
+    transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }] },
+  });
+  assert.equal(transaction.success, false);
+  if (!transaction.success) {
+    assert.deepEqual(transaction.error, {
+      code: 'INTERNAL',
+      message: 'Map style application failed.',
+      details: {
+        rollback: {
+          rolledBack: false,
+          error: { code: 'INTERNAL', message: 'Map style application failed.' },
+        },
+      },
+    });
+    assert.equal('data' in transaction, false);
+  }
+  assert.equal(transactionMap.styleReads, 5);
+  assert.deepEqual(transactionMap.calls, ['setStyle', 'setStyle']);
+
+  const documentMap = new AuthorityFailureMap();
+  const document = await createMapLibreStyleTools({
+    getMap: () => documentMap.asMap(), imageLoader,
+  }).applyStyleDocument.execute({
+    source: { kind: 'style', style: { ...baseStyle(), name: 'candidate' } as never },
+  });
+  assert.equal(document.success, false);
+  if (!document.success) {
+    assert.deepEqual(document.error, {
+      code: 'INTERNAL',
+      message: 'Map style application failed.',
+      details: {
+        rollback: {
+          rolledBack: false,
+          error: { code: 'INTERNAL', message: 'Map style application failed.' },
+        },
+      },
+    });
+    assert.equal('data' in document, false);
+  }
+  assert.equal(documentMap.styleReads, 3);
+  assert.deepEqual(documentMap.calls, ['setStyle', 'setStyle']);
 });
