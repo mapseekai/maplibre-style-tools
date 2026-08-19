@@ -259,13 +259,16 @@ const packedModules = [
   'adapters/maplibre/schemas',
   'adapters/maplibre/style-hash',
   'adapters/maplibre/types',
-  'ai-sdk/compact-tools',
-  'ai-sdk/compatibility',
-  'ai-sdk/full-tools',
+  'ai-sdk/boundary',
+  'ai-sdk/contracts',
   'ai-sdk/index',
+  'ai-sdk/inspect',
+  'ai-sdk/mutate',
   'ai-sdk/result',
+  'ai-sdk/runtime',
   'ai-sdk/schemas',
-  'ai-sdk/tool-contracts',
+  'ai-sdk/shared',
+  'ai-sdk/tools',
   'bridge/browser-runtime',
   'bridge/capabilities',
   'bridge/client',
@@ -325,7 +328,6 @@ const packedModules = [
   'mcp/stdio',
   'mcp/types',
   'mcp/version.generated',
-  'tools/compact-tools',
   'types',
 ];
 const packedModuleExtensions = ['.d.ts', '.d.ts.map', '.js', '.js.map'];
@@ -678,73 +680,42 @@ void [
 ];
 `;
 
-const rootConsumer = `import {
-  createCompactMapLibreStyleTools,
-  createMapLibreStyleTools,
-} from 'maplibre-style-tools';
+const rootConsumer = `import { createMapLibreStyleTools } from 'maplibre-style-tools/ai';
 import type {
+  AiStyleToolResult,
   CreateMapLibreStyleToolsOptions,
-  StyleOperation as LegacyStyleOperation,
-} from 'maplibre-style-tools';
-import {
-  createCompactMapLibreStyleTools as createCompactFromAi,
-  createMapLibreStyleTools as createFullFromAi,
+  InspectStyleInput,
+  MapLibreStyleTools,
 } from 'maplibre-style-tools/ai';
-import type {
-  CommonResultInput,
-  ParseResult,
-} from 'maplibre-style-tools/ai';
-import type {
-  MapStyleApplyResult,
-  MapStyleCurrentResult,
-} from 'maplibre-style-tools/maplibre';
+// @ts-expect-error root AI factory was removed.
+import { createMapLibreStyleTools as rootFactory } from 'maplibre-style-tools';
+// @ts-expect-error root legacy AI options were removed.
+import type { CreateMapLibreStyleToolsOptions as RootOptions } from 'maplibre-style-tools';
+// @ts-expect-error root legacy style accessor was removed.
+import type { StyleAccessor } from 'maplibre-style-tools';
+// @ts-expect-error root legacy operation type was removed.
+import type { StyleOperation } from 'maplibre-style-tools';
+// @ts-expect-error root legacy operation result was removed.
+import type { StyleOperationResult } from 'maplibre-style-tools';
+// @ts-expect-error root legacy result wrapper was removed.
+import type { ToolCallResult } from 'maplibre-style-tools';
+// @ts-expect-error compact AI factory was removed.
+import { createCompactMapLibreStyleTools } from 'maplibre-style-tools/ai';
+// @ts-expect-error legacy AI names were removed.
+import { FULL_LEGACY_TOOL_NAMES } from 'maplibre-style-tools/ai';
+// @ts-expect-error legacy parser export was removed.
+import type { parseStrictJson } from 'maplibre-style-tools/ai';
+// @ts-expect-error legacy result converter was removed.
+import type { toAiToolResult } from 'maplibre-style-tools/ai';
 
-const legacy: LegacyStyleOperation = { layerId: 'roads', paint: {} };
-type RootOptions = CreateMapLibreStyleToolsOptions;
-type RootNodeAmbient = Buffer;
-declare const rootOptions: RootOptions;
-declare const rootNodeAmbient: RootNodeAmbient;
-
-type MapFailureError = Extract<MapStyleApplyResult, { ok: false }>['error'];
-const requireError = (error: MapFailureError): void => { void error.code; };
-const consumeCurrent = (result: MapStyleCurrentResult): void => { void result.style; };
-const inspectAiEnvelope = (
-  envelope: CommonResultInput<MapStyleApplyResult>,
-  parsed: ParseResult<string>,
-): void => {
-  if (envelope.success) {
-    // @ts-expect-error successful AI envelopes have no error member.
-    void envelope.error;
-    const result = envelope.data;
-    if (result !== undefined && result.styleAuthority === 'current') {
-      consumeCurrent(result);
-      if (result.ok) {
-        // @ts-expect-error successful Map results have no error member.
-        void result.error;
-      } else {
-        requireError(result.error);
-      }
-    }
-  } else {
-    void envelope.error.code;
-  }
-
-  if (parsed.ok) {
-    // @ts-expect-error successful parse results have no error member.
-    void parsed.error;
-  } else {
-    void parsed.error.code;
-  }
-};
-
-void createMapLibreStyleTools;
-void createCompactMapLibreStyleTools;
-void createFullFromAi;
-void createCompactFromAi;
-void inspectAiEnvelope;
-void rootOptions;
-void rootNodeAmbient;
-void legacy;
+declare const options: CreateMapLibreStyleToolsOptions;
+declare const tools: MapLibreStyleTools;
+declare const result: AiStyleToolResult<unknown>;
+declare const inspect: InspectStyleInput;
+void [
+  createMapLibreStyleTools, rootFactory, createCompactMapLibreStyleTools,
+  FULL_LEGACY_TOOL_NAMES, options, tools, result, inspect,
+];
 `;
 
 const mcpConsumer = `import {
@@ -945,10 +916,6 @@ const mcpConfig = `{
 
 const runtimeSmoke = `import assert from 'node:assert/strict';
 import {
-  createCompactMapLibreStyleTools,
-  createMapLibreStyleTools,
-} from 'maplibre-style-tools';
-import {
   finalizeStyleReplacement,
   inlineGeoJsonSchema,
 } from 'maplibre-style-tools/core';
@@ -957,10 +924,7 @@ import {
   runtimeGeoJsonSourceDiffSchema,
   sanitizeRuntimeGeoJsonSourceDiff,
 } from 'maplibre-style-tools/maplibre';
-import {
-  createCompactMapLibreStyleTools as createCompactFromAi,
-  createMapLibreStyleTools as createFullFromAi,
-} from 'maplibre-style-tools/ai';
+import { createMapLibreStyleTools } from 'maplibre-style-tools/ai';
 import {
   buildLiveMapMetadataUri,
   buildLiveMapStyleUri,
@@ -977,9 +941,6 @@ import {
 } from 'maplibre-style-tools/bridge';
 
 assert.equal(typeof createMapLibreStyleTools, 'function');
-assert.equal(typeof createCompactMapLibreStyleTools, 'function');
-assert.equal(createMapLibreStyleTools, createFullFromAi);
-assert.equal(createCompactMapLibreStyleTools, createCompactFromAi);
 assert.equal(typeof finalizeStyleReplacement, 'function');
 assert.equal(typeof inlineGeoJsonSchema.safeParse, 'function');
 assert.equal(typeof applyTransactionToMap, 'function');
@@ -1007,8 +968,8 @@ const packDirectory = mkdtempSync(join(tmpdir(), 'maplibre-style-tools-package-'
 const consumer = mkdtempSync(join(tmpdir(), 'maplibre-style-tools-consumer-'));
 try {
   const workspace = await import('maplibre-style-tools');
-  assertion(typeof workspace.createMapLibreStyleTools === 'function', 'root full factory is missing');
-  assertion(typeof workspace.createCompactMapLibreStyleTools === 'function', 'root compact factory is missing');
+  assertion(!('createMapLibreStyleTools' in workspace), 'root AI factory must be absent');
+  assertion(!('createCompactMapLibreStyleTools' in workspace), 'root compact AI factory must be absent');
 
   const core = await import('maplibre-style-tools/core');
   for (const name of ['applyStyleTransaction', 'finalizeStyleReplacement', 'validateStyleDocument', 'jsonUtf8ByteLength']) {
@@ -1033,8 +994,8 @@ try {
     'MapLibre runtime GeoJSON sanitizer is missing');
 
   const ai = await import('maplibre-style-tools/ai');
-  assertion(typeof ai.createMapLibreStyleTools === 'function', 'AI full factory is missing');
-  assertion(typeof ai.createCompactMapLibreStyleTools === 'function', 'AI compact factory is missing');
+  assertion(typeof ai.createMapLibreStyleTools === 'function', 'AI unified factory is missing');
+  assertion(!('createCompactMapLibreStyleTools' in ai), 'AI compact factory must be absent');
 
   const mcp = await import('maplibre-style-tools/mcp');
   assertion(typeof mcp.createMapLibreStyleMcpServer === 'function',
@@ -1144,7 +1105,6 @@ try {
       source(join(unpacked, file)),
     ));
   assert.deepEqual(nodeReferenceFiles, [
-    'dist/ai-sdk/full-tools.d.ts',
     'dist/ai-sdk/index.d.ts',
     'dist/index.d.ts',
     'dist/mcp/http.d.ts',

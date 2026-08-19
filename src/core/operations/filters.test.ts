@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Map } from 'maplibre-gl';
-import { createCompactMapLibreStyleTools } from '../../index.js';
 import { applyStyleOperations } from '../../engine/style-operations.js';
 import { replayStyleDiff } from '../diff.js';
 import { applyStyleTransaction } from '../transaction.js';
@@ -260,7 +258,7 @@ test('a later mixed-syntax composition rolls back an earlier valid source change
   assert.equal(result.error.code, 'INVALID_INPUT');
 });
 
-test('legacy history replays temporarily invalid transitions and compact applies the final style', async () => {
+test('legacy history replays temporarily invalid transitions', () => {
   const style = makeStyle() as unknown as LegacyStyleDocument;
   style.layers[0]!.paint!['line-width'] = 1;
   const operations: LegacyStyleOperation[] = [
@@ -296,32 +294,8 @@ test('legacy history replays temporarily invalid transitions and compact applies
       after: '#000',
     },
   ]);
-
-  let setStyleCalls = 0;
-  let appliedStyle: LegacyStyleDocument | undefined;
-  let currentStyle = structuredClone(style);
-  const map = {
-    getStyle: () => structuredClone(currentStyle),
-    setStyle: (nextStyle: LegacyStyleDocument) => {
-      setStyleCalls += 1;
-      appliedStyle = nextStyle;
-      currentStyle = structuredClone(nextStyle);
-    },
-  } as unknown as Map;
-  const compact = createCompactMapLibreStyleTools({ getMap: () => map });
-  const execute = (compact.applyStyleOperations as {
-    execute?: (input: Record<string, unknown>) => unknown;
-  }).execute;
-  assert.ok(execute);
-  const compactResult = await execute({
-    operationsJson: JSON.stringify(operations),
-    dryRun: false,
-    diff: true,
-  }) as { success: boolean };
-  assert.equal(compactResult.success, true);
-  assert.equal(setStyleCalls, 1);
-  assert.equal(appliedStyle?.layers[0]?.paint?.['line-width'], 2);
 });
+
 
 test('legacy batches allow 51 pure filter operations within the core operation limit', () => {
   const operations: LegacyStyleOperation[] = Array.from(
@@ -345,7 +319,7 @@ test('legacy batches allow 51 pure filter operations within the core operation l
   assert.doesNotMatch(result.message, /too many operations/i);
 });
 
-test('legacy batches count 51 combined paint and filter updates as public operations', async () => {
+test('legacy batches count 51 combined paint and filter updates as public operations', () => {
   const style = makeStyle() as unknown as LegacyStyleDocument;
   style.layers[0]!.paint!['line-width'] = 0;
   const operations: LegacyStyleOperation[] = Array.from(
@@ -388,33 +362,8 @@ test('legacy batches count 51 combined paint and filter updates as public operat
       after: ['==', ['get', 'rank'], 50],
     },
   ]);
-
-  let setStyleCalls = 0;
-  let appliedStyle: LegacyStyleDocument | undefined;
-  let currentStyle = structuredClone(style);
-  const map = {
-    getStyle: () => structuredClone(currentStyle),
-    setStyle: (nextStyle: LegacyStyleDocument) => {
-      setStyleCalls += 1;
-      appliedStyle = nextStyle;
-      currentStyle = structuredClone(nextStyle);
-    },
-  } as unknown as Map;
-  const compact = createCompactMapLibreStyleTools({ getMap: () => map });
-  const execute = (compact.applyStyleOperations as {
-    execute?: (input: Record<string, unknown>) => unknown;
-  }).execute;
-  assert.ok(execute);
-  const compactResult = await execute({
-    operationsJson: JSON.stringify(operations),
-    dryRun: false,
-    diff: true,
-  }) as { success: boolean };
-  assert.equal(compactResult.success, true);
-  assert.equal(setStyleCalls, 1);
-  assert.equal(appliedStyle?.layers[0]?.paint?.['line-width'], 51);
-  assert.deepEqual(appliedStyle?.layers[0]?.filter, ['==', ['get', 'rank'], 50]);
 });
+
 
 test('legacy operation limit accepts 100 public operations and rejects the 101st', () => {
   const operations: LegacyStyleOperation[] = Array.from(

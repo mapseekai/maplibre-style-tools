@@ -79,11 +79,7 @@ const createFreshPackedConsumer = async (
   };
 };
 
-const rootConsumer = `import {
-  createCompactMapLibreStyleTools,
-  createMapLibreStyleTools,
-} from 'maplibre-style-tools';
-void [createCompactMapLibreStyleTools, createMapLibreStyleTools];
+const rootConsumer = `export {};
 `;
 
 const coreConsumer = `import {

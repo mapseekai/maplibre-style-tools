@@ -43,6 +43,28 @@ import type {
   RuntimeGeoJsonSourceDiff,
 } from 'maplibre-style-tools/maplibre';
 import type { AiStyleToolResult } from 'maplibre-style-tools/ai';
+// @ts-expect-error root AI factory was removed.
+import type { createMapLibreStyleTools as RootFactory } from 'maplibre-style-tools';
+// @ts-expect-error root compact AI factory was removed.
+import type { createCompactMapLibreStyleTools as RootCompactFactory } from 'maplibre-style-tools';
+// @ts-expect-error root legacy AI options were removed.
+import type { CreateMapLibreStyleToolsOptions as RootOptions } from 'maplibre-style-tools';
+// @ts-expect-error root legacy style accessor was removed.
+import type { StyleAccessor } from 'maplibre-style-tools';
+// @ts-expect-error root legacy operation type was removed.
+import type { StyleOperation } from 'maplibre-style-tools';
+// @ts-expect-error root legacy operation result was removed.
+import type { StyleOperationResult } from 'maplibre-style-tools';
+// @ts-expect-error root legacy result wrapper was removed.
+import type { ToolCallResult } from 'maplibre-style-tools';
+// @ts-expect-error legacy compact AI factory was removed.
+import type { createCompactMapLibreStyleTools } from 'maplibre-style-tools/ai';
+// @ts-expect-error legacy tool names were removed.
+import type { FULL_LEGACY_TOOL_NAMES } from 'maplibre-style-tools/ai';
+// @ts-expect-error legacy parser export was removed.
+import type { parseStrictJson } from 'maplibre-style-tools/ai';
+// @ts-expect-error legacy result converter was removed.
+import type { toAiToolResult } from 'maplibre-style-tools/ai';
 
 type AssertTrue<Value extends true> = Value;
 type Equal<Left, Right> =

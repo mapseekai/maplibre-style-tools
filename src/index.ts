@@ -1,17 +1,6 @@
 /// <reference types="node" preserve="true" />
 /// <reference types="geojson" preserve="true" />
 
-export {
-  createMapLibreStyleTools,
-} from './ai-sdk/full-tools.js';
-export type {
-  CreateMapLibreStyleToolsOptions,
-  MapAccessor,
-  StyleAccessor,
-  ToolCallResult,
-} from './ai-sdk/full-tools.js';
-export { createCompactMapLibreStyleTools } from './ai-sdk/compact-tools.js';
-export { FULL_LEGACY_TOOL_NAMES } from './ai-sdk/tool-contracts.js';
 export type {
   LayerSearchQuery,
   LayerSearchResult,
@@ -21,8 +10,6 @@ export type {
   StyleDiffEntry,
   StyleDocument,
   StyleLayer,
-  StyleOperation,
-  StyleOperationResult,
 } from './types.js';
 export type {
   CoreExecutionLimits,
