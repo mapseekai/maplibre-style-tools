@@ -2,7 +2,7 @@
 
 AI SDK tools for inspecting and editing MapLibre GL styles.
 
-The package exposes a compact tool set for token-efficient workflows and a full tool set for broad style editing. It is currently maintained as a standalone local project and has not been published to npm.
+The package exposes one AI SDK tool set for inspecting and editing MapLibre styles. It is currently maintained as a standalone local project and has not been published to npm.
 
 ## Requirements
 
@@ -23,46 +23,46 @@ pnpm add ../maplibre-style-tools
 pnpm add maplibre-gl
 ```
 
-## Compact tools
+## AI tools
 
 ```ts
-import { createCompactMapLibreStyleTools } from 'maplibre-style-tools';
+import { createMapLibreStyleTools } from 'maplibre-style-tools/ai';
 
-const tools = createCompactMapLibreStyleTools({
-  getMap: () => map,
-  getContext: () => ({
-    activeSourceId: 'basemap',
-    selectedLayerId: 'road-primary',
-  }),
+const { applyStyleTransaction } = createMapLibreStyleTools({ getMap: () => map });
+const result = await applyStyleTransaction.execute({
+  transaction: {
+    operations: [{
+      op: 'setLayerProperties',
+      layerId: 'roads',
+      paint: { 'line-color': '#fff' },
+    }],
+  },
 });
 ```
 
-The compact factory provides style context, layer search and inspection, validated batch operations, and patch JSON validation.
+`createMapLibreStyleTools` returns exactly five AI SDK tools: `inspectStyle`,
+`applyStyleTransaction`, `applyStyleDocument`, `runMapCommand`, and
+`queryMapFeatures`. Pass the returned object to an AI SDK `tools` set, or call
+each tool's `.execute(input)` method directly.
 
-## Full tools
-
-```ts
-import { createMapLibreStyleTools } from 'maplibre-style-tools';
-
-const tools = createMapLibreStyleTools({
-  getMap: () => map,
-});
-```
-
-The full factory exposes detailed tools for layers, sources, paint and layout properties, filters, zoom ranges, metadata, camera, terrain, sprites, glyphs, images, and other MapLibre style features.
+This is a breaking `0.x` minor API change. The root package exports neither AI
+factory, and no legacy aliases, compatibility parsers, or string-encoded JSON
+inputs remain supported. See the complete
+[unified AI tools migration guide](docs/migrations/0.x-unified-ai-tools.md)
+for the import, capability, and input-field cutover.
 
 ## Entry points
 
 The package has six supported entry points:
 
-- `maplibre-style-tools` is the compatibility facade and exports both factories plus the legacy root types.
+- `maplibre-style-tools` contains the non-AI package exports.
 - `maplibre-style-tools/core` is the transport-neutral transaction, validation, GeoJSON, analysis, and discovery API. It requires neither DOM nor Node ambient types.
 - `maplibre-style-tools/maplibre` applies prepared transactions to MapLibre maps and exposes bounded live-map commands. It may use DOM types but does not load Node ambient types.
-- `maplibre-style-tools/ai` exports both AI SDK factories, their strict input schemas, compatibility parsers, and the common result envelope.
+- `maplibre-style-tools/ai` exports the unified AI SDK factory, its strict native-input schemas, and the discriminated result envelope.
 - `maplibre-style-tools/mcp` exports the bounded, in-memory MCP server factory, transport runners, schemas, URI helpers, and session types.
 - `maplibre-style-tools/bridge` is the browser-safe live MapLibre client, protocol, capability, hashing, and resource-policy API. It exports no Node WebSocket server state.
 
-The root, `/ai`, and `/mcp` declaration graphs intentionally load their required Node types. Import `/core`, `/maplibre`, or `/bridge` directly when that ambient dependency is undesirable.
+The `/ai` and `/mcp` declaration graphs intentionally load their required Node types. Import `/core`, `/maplibre`, or `/bridge` directly when that ambient dependency is undesirable.
 
 ## Pure core
 
@@ -84,12 +84,10 @@ const result = applyStyleTransaction(
 );
 ```
 
-The root `StyleOperation` API and compact `operationsJson` input remain
-legacy-compatible. The `/core` API requires an operation discriminator and
-returns RFC 6901 diffs. Its defaults are a 5 MiB Style, 1 MiB diff, and 100
-operations; `StyleTransactionOptions` can override those limits explicitly.
-Adapters should pass unknown transactions to this boundary rather than
-pre-parsing them.
+The `/core` API requires an operation discriminator and returns RFC 6901 diffs.
+Its defaults are a 5 MiB Style, 1 MiB diff, and 100 operations;
+`StyleTransactionOptions` can override those limits explicitly. Adapters should
+pass unknown transactions to this boundary rather than pre-parsing them.
 
 ### Structured transactions and filters
 
@@ -159,36 +157,30 @@ if (parsed.success) {
 
 Rendered/source feature queries are adapter-only and bounded by both feature count and serialized bytes. Returned feature objects are projected into JSON snapshots with an optional property allowlist; truncation is explicit rather than returning an unbounded MapLibre object graph.
 
-### AI result and compatibility contracts
+### AI result contract
 
-Structured and legacy tools return one discriminated envelope:
+Every `/ai` tool returns one discriminated envelope:
 
 ```ts
-type CommonResultInput<TData, TStyle> =
-  | { success: true; message: string; data?: TData; style?: TStyle }
-  | {
-      success: false;
-      message: string;
-      data?: TData;
-      style?: TStyle;
-      error: StyleToolError;
-    };
+type AiStyleToolResult<TData> =
+  | { success: true; message: string; data: TData }
+  | { success: false; message: string; error: StyleToolError };
 ```
 
-On failure, `error` is an authentic package-created `StyleToolError`; it is absent from success. The legacy outer `style` remains the application state returned by `getState`, while live authoritative Map Style data is reported under the structured `data` result.
+Successful results contain `data`; failures contain an authentic
+package-created `StyleToolError`. The unified AI surface does not accept
+`getState`, does not return arbitrary application state, and never returns a
+complete Style document or `data.style`. Read a complete document through
+`/core` or your MapLibre Map instance when it is needed.
 
-The six document source routes remain exact and non-overlapping:
+AI inputs are strict native JSON structures. Do not encode nested objects or
+arrays as strings: removed legacy fields are rejected as `INVALID_INPUT` before
+a handler or Map is invoked. The migration guide documents every replacement.
 
-- `addSource` → core `addSource`;
-- `removeSource` → core `removeSource`;
-- `updateGeoJsonSourceData` with `setData` → core `setGeoJsonData`;
-- `setGeoJsonClusterOptions` → core `patchSource`;
-- `patchSourceDefinition` → legacy recursive deep merge (where `null` is retained as a value);
-- `replaceSourceDefinition` → whole source replacement.
-
-`updateGeoJsonSourceData` with `updateData` and `setSourceTileLodParams` are runtime-only and never enter the document transaction dispatcher.
-
-String-encoded JSON fields such as `operationsJson`, `filterJson`, and `sourceJson` remain supported for compatibility but are deprecated. Prefer the structured transaction and structured tool inputs: they preserve types, avoid double encoding, and fail unknown keys at the outer schema before a handler or Map is invoked.
+For GeoJSON source updates, use `setGeoJsonData` in
+`applyStyleTransaction` for a native replacement (`setData`), and use
+`runMapCommand` with `action: 'updateGeoJsonData'` for a native incremental
+diff (`updateData`).
 
 ## Command-line interface
 
