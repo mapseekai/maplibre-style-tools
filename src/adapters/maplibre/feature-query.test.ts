@@ -110,11 +110,11 @@ function exactShapeFeature(onPrototypeCall: () => void): object {
 test('source and rendered queries forward only documented MapLibre arguments', () => {
   const map = new FakeMap();
   querySourceFeaturesBounded(map.asMap(), {
-    sourceId: 'roads', sourceLayer: 'transportation', filter: ['==', 'class', 'primary'],
+    sourceId: 'roads', sourceLayer: 'transportation', filter: ['==', ['get', 'class'], 'primary'],
     propertyAllowlist: ['name'], limit: 1, maxSerializedBytes: 100,
   });
   queryRenderedFeaturesBounded(map.asMap(), {
-    layerIds: ['road-layer'], filter: ['==', 'class', 'primary'],
+    layerIds: ['road-layer'], filter: ['==', ['get', 'class'], 'primary'],
   });
   queryRenderedFeaturesBounded(map.asMap(), {
     geometry: { kind: 'point', point: [10, 20] },
@@ -125,10 +125,10 @@ test('source and rendered queries forward only documented MapLibre arguments', (
 
   assert.deepEqual(map.calls, [
     { method: 'source', args: ['roads', {
-      sourceLayer: 'transportation', filter: ['==', 'class', 'primary'],
+      sourceLayer: 'transportation', filter: ['==', ['get', 'class'], 'primary'],
     }] },
     { method: 'rendered', args: [undefined, {
-      layers: ['road-layer'], filter: ['==', 'class', 'primary'],
+      layers: ['road-layer'], filter: ['==', ['get', 'class'], 'primary'],
     }] },
     { method: 'rendered', args: [[10, 20], {}] },
     { method: 'rendered', args: [[[1, 2], [3, 4]], {}] },
@@ -152,6 +152,22 @@ test('invalid configured limits and invalid requests fail before map access', ()
   assert.equal(invalidLimits.error?.code, 'INVALID_INPUT');
   assert.equal(aboveMaximum.ok, false);
   assert.equal(aboveMaximum.error?.code, 'INVALID_INPUT');
+  assert.deepEqual(map.calls, []);
+});
+
+test('rejects legacy filter syntax before any MapLibre call', () => {
+  const map = new FakeMap();
+  const source = querySourceFeaturesBounded(map.asMap(), {
+    sourceId: 'roads', sourceLayer: 'transportation', filter: ['==', 'class', 'primary'],
+  });
+  assert.equal(source.ok, false);
+  if (source.ok) assert.fail('expected legacy rejection');
+  assert.match(String(source.error?.message), /legacy.*expression/is);
+
+  const rendered = queryRenderedFeaturesBounded(map.asMap(), {
+    layerIds: ['road-layer'], filter: ['==', 'class', 'primary'],
+  });
+  assert.equal(rendered.ok, false);
   assert.deepEqual(map.calls, []);
 });
 

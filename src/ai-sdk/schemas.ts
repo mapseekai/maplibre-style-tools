@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  expressionFilterSchema,
   geoJsonAnalysisInputSchema,
   geoJsonAnalysisOptionsSchema,
   jsonValueSchema,
@@ -125,7 +126,7 @@ const featureGeometrySchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 const featureProjectionShape = {
-  filter: z.array(jsonValueSchema).optional(),
+  filter: expressionFilterSchema.optional(),
   propertyAllowlist: uniqueNonBlankStringArray.optional(),
   limit: limit100Schema.optional(),
   maxSerializedBytes: byteLimitSchema.optional(),

@@ -106,6 +106,12 @@ test('unified schemas accept every native action variant', () => {
     propertyAllowlist: ['kind'],
   }).success, true);
   assert.equal(queryMapFeaturesInputSchema.safeParse({
+    target: 'source', sourceId: 'roads', filter: ['==', 'kind', 'road'],
+  }).success, false);
+  assert.equal(queryMapFeaturesInputSchema.safeParse({
+    target: 'rendered', filter: ['in', 'kind', 'a', 'b'],
+  }).success, false);
+  assert.equal(queryMapFeaturesInputSchema.safeParse({
     target: 'rendered',
     geometry: { kind: 'bounds', bounds: [[0, 1], [2, 3]] },
     layerIds: ['roads'],

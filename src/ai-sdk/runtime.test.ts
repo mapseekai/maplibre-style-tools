@@ -128,12 +128,12 @@ describe('runtime AI tools', () => {
     const feature = { type: 'Feature', id: 1, geometry: { type: 'Point', coordinates: [0, 0] }, properties: { keep: true, secret: 'never-returned' } };
     map.sourceFeatures = Array.from({ length: 101 }, () => feature);
     const source = queryResult(await createQueryMapFeaturesTool({ getMap: () => map.asMap() }).execute({
-      target: 'source', sourceId: 'base', filter: ['==', 'kind', 'park'], propertyAllowlist: ['keep'], limit: 100,
+      target: 'source', sourceId: 'base', filter: ['==', ['get', 'kind'], 'park'], propertyAllowlist: ['keep'], limit: 100,
     }));
     assert.equal(source.returned, 100);
     assert.equal(source.truncated, true);
     assert.deepEqual(source.features[0]?.properties, { keep: true });
-    assert.deepEqual(map.calls[0], { method: 'querySourceFeatures', args: ['base', { filter: ['==', 'kind', 'park'] }] });
+    assert.deepEqual(map.calls[0], { method: 'querySourceFeatures', args: ['base', { filter: ['==', ['get', 'kind'], 'park'] }] });
 
     const geometries: NonNullable<Extract<QueryMapFeaturesInput, { target: 'rendered' }>['geometry']>[] = [
       { kind: 'viewport' },

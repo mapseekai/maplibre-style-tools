@@ -32,6 +32,7 @@ test('source feature query input rejects unsafe and projection-invalid values', 
     { sourceId: '' },
     { sourceId: 'roads', sourceLayer: '' },
     { sourceId: 'roads', filter: ['==', 'kind', () => 'road'] },
+    { sourceId: 'roads', filter: ['==', 'kind', 'road'] },
     { sourceId: 'roads', propertyAllowlist: ['name', 'name'] },
     { sourceId: 'roads', propertyAllowlist: [''] },
     { sourceId: 'roads', limit: 0 },
@@ -49,11 +50,11 @@ test('rendered feature query input is strict and defaults to the viewport', () =
   assert.deepEqual(renderedFeatureQueryInputSchema.parse({
     geometry: { kind: 'point', point: [5, -3] },
     layerIds: ['roads'],
-    filter: ['==', 'kind', 'road'],
+    filter: ['==', ['get', 'kind'], 'road'],
   }), {
     geometry: { kind: 'point', point: [5, -3] },
     layerIds: ['roads'],
-    filter: ['==', 'kind', 'road'],
+    filter: ['==', ['get', 'kind'], 'road'],
   });
 
   for (const value of [
@@ -66,6 +67,7 @@ test('rendered feature query input is strict and defaults to the viewport', () =
     { layerIds: ['roads', 'roads'] },
     { layerIds: [''] },
     { filter: ['==', 'kind', undefined] },
+    { filter: ['==', 'kind', 'road'] },
     { unknown: true },
   ]) {
     assert.equal(renderedFeatureQueryInputSchema.safeParse(value).success, false);

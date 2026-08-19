@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { jsonValueSchema } from '../../core/index.js';
+import { expressionFilterSchema, jsonValueSchema } from '../../core/index.js';
 import type { JsonObject, JsonValue } from '../../core/index.js';
 import type {
   AddImageDataInput,
@@ -242,7 +242,7 @@ function createSourceFeatureQueryInputSchema(
   return descriptorSanitized(z.object({
     sourceId: nonEmptyStringSchema,
     sourceLayer: nonEmptyStringSchema.optional(),
-    filter: z.array(jsonValueSchema).optional(),
+    filter: expressionFilterSchema.optional(),
     ...featureProjectionSchema(limits),
   }).strict());
 }
@@ -264,7 +264,7 @@ function createRenderedFeatureQueryInputSchema(
       (values) => new Set(values).size === values.length,
       'layerIds must not contain duplicate values.',
     ).optional(),
-    filter: z.array(jsonValueSchema).optional(),
+    filter: expressionFilterSchema.optional(),
     ...featureProjectionSchema(limits),
   }).strict());
 }
