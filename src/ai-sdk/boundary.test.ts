@@ -100,6 +100,24 @@ describe('bounded AI result boundary', () => {
     }
   });
 
+  it('retains adapter truncation warnings in a complete bounded query result', () => {
+    const warning = { code: 'FEATURE_QUERY_TRUNCATED', message: 'Adapter truncated.' };
+    const bounded = boundFeatureQueryProjection({
+      message: 'Feature query completed.',
+      target: 'source',
+      features: [],
+      warnings: [warning],
+      truncated: true,
+      maxSerializedBytes: 512,
+    });
+    assert.equal(bounded.success, true);
+    if (bounded.success) {
+      assert.deepEqual(bounded.data.warnings[0], warning);
+      assert.equal(bounded.data.truncated, true);
+      assert.ok(jsonUtf8ByteLength(bounded) <= 512);
+    }
+  });
+
   it('omits an oversized first list item atomically', () => {
     const bounded = boundMapCommandReceipt({
       message: 'ok', action: 'listImages', kind: 'list', applied: true,

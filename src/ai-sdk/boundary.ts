@@ -147,8 +147,8 @@ export const boundStyleMutationReceipt = (input: {
 };
 
 export const boundMapCommandReceipt = (input:
-  | { message: string; action: MapCommandReceipt['action']; kind: 'list'; applied: boolean; result: { items: JsonValue[]; total?: number }; warnings: readonly StyleWarning[] }
-  | { message: string; action: MapCommandReceipt['action']; kind: 'acknowledgement'; applied: boolean; result?: JsonValue; warnings: readonly StyleWarning[] }
+  | { message: string; action: MapCommandReceipt['action']; kind: 'list'; applied: boolean; result: { items: JsonValue[]; total?: number }; warnings: readonly StyleWarning[]; truncated?: boolean }
+  | { message: string; action: MapCommandReceipt['action']; kind: 'acknowledgement'; applied: boolean; result?: JsonValue; warnings: readonly StyleWarning[]; truncated?: boolean }
 ): AiStyleToolResult<MapCommandReceipt> => {
   const data: MapCommandReceipt = { action: input.action, kind: input.kind, applied: input.applied, warnings: [], truncated: false };
   if (input.kind === 'list') {
@@ -156,7 +156,7 @@ export const boundMapCommandReceipt = (input:
   }
   const { output, valid } = reserve(input.message, data, MAX_AI_OUTPUT_BYTES);
   if (!valid) throw new RangeError('AI result mandatory envelope exceeds output limit.');
-  let omitted = admitWarnings(output, input.warnings, MAX_AI_OUTPUT_BYTES);
+  let omitted = input.truncated === true || admitWarnings(output, input.warnings, MAX_AI_OUTPUT_BYTES);
   if (input.kind === 'list') {
     const result = data.result as Extract<MapCommandReceipt['result'], { items: JsonValue[] }>;
     if (input.result.total !== undefined) result.total = input.result.total;
@@ -165,7 +165,7 @@ export const boundMapCommandReceipt = (input:
       if (jsonUtf8ByteLength(output) > MAX_AI_OUTPUT_BYTES) { result.items.pop(); result.returned = result.items.length; omitted = true; break; }
     }
     omitted ||= result.items.length < input.result.items.length;
-    const listOmitted = result.items.length < input.result.items.length;
+    const listOmitted = input.truncated === true || result.items.length < input.result.items.length;
     result.truncated = listOmitted;
     if (!listOmitted) result.warnings.pop();
   } else if (input.result !== undefined) {
@@ -177,13 +177,20 @@ export const boundMapCommandReceipt = (input:
 
 export const boundFeatureQueryProjection = (input: {
   message: string; target: FeatureQueryProjection['target']; features: GeoJsonFeature[]; total?: number;
-  warnings: readonly StyleWarning[]; maxSerializedBytes?: number;
+  warnings: readonly StyleWarning[]; maxSerializedBytes?: number; truncated?: boolean;
 }): AiStyleToolResult<FeatureQueryProjection> => {
   const limit = boundedLimit(input.maxSerializedBytes);
   const data: FeatureQueryProjection = { target: input.target, features: [], returned: 0, ...(input.total === undefined ? {} : { total: input.total }), warnings: [], truncated: false };
   const { output, valid } = reserve(input.message, data, limit);
-  if (!valid) throw new RangeError('AI result mandatory envelope exceeds output limit.');
+  if (!valid) {
+    return toFailure(createStyleToolError(
+      'INVALID_INPUT',
+      'maxSerializedBytes is too small for the feature query result envelope.',
+      '/maxSerializedBytes',
+    ));
+  }
   let omitted = admitWarnings(output, input.warnings, limit);
+  omitted ||= input.truncated === true;
   for (const feature of input.features.slice(0, MAX_AI_OUTPUT_ITEMS)) {
     data.features.push(feature); data.returned = data.features.length;
     if (jsonUtf8ByteLength(output) > limit) { data.features.pop(); data.returned = data.features.length; omitted = true; break; }
@@ -210,16 +217,20 @@ export const toFailure = (error: StyleToolError): AiStyleToolResult<never> => {
 export const createAiTool = <Schema extends z.ZodType, TData>(
   schema: Schema,
   description: string,
-  execute: (input: z.output<Schema>) => Promise<AiStyleToolResult<TData>> | AiStyleToolResult<TData>,
+  execute: (
+    input: z.output<Schema>,
+    execution: { abortSignal?: AbortSignal },
+  ) => Promise<AiStyleToolResult<TData>> | AiStyleToolResult<TData>,
 ) => tool({
   description,
   inputSchema: schema,
-  execute: async (rawInput) => {
+  execute: async (rawInput, execution) => {
     const parsed = schema.safeParse(rawInput);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       return toFailure(createStyleToolError('INVALID_INPUT', issue?.message ?? 'Tool input is invalid.', issue ? pointer(issue.path) : undefined));
     }
-    return execute(parsed.data);
+    return execute(parsed.data, { ...(execution?.abortSignal === undefined
+      ? {} : { abortSignal: execution.abortSignal }) });
   },
 });
