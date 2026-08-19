@@ -27,76 +27,106 @@ class FakeMap {
   off(type: string, listener: (event: { type: string; error?: Error }) => void) { this.listeners.get(type)?.delete(listener); return this; }
   setStyle(style: StyleSpecification | string) { this.calls.push('setStyle'); if (typeof style !== 'string') this.style = structuredClone(style); queueMicrotask(() => this.listeners.get('style.load')?.forEach((listener) => listener({ type: 'style.load' }))); return this; }
   setSourceTileLodParams(...args: unknown[]) { this.calls.push('setSourceTileLodParams'); this.commandArguments.setSourceTileLodParams = args; } setFeatureState(...args: unknown[]) { this.calls.push('setFeatureState'); this.commandArguments.setFeatureState = args; } removeFeatureState(...args: unknown[]) { this.calls.push('removeFeatureState'); this.commandArguments.removeFeatureState = args; } setGlobalStateProperty(...args: unknown[]) { this.calls.push('setGlobalState'); this.commandArguments.setGlobalState = args; }
-  listImages() { this.calls.push('listImages'); return ['existing']; } hasImage(id: string) { return id === 'existing'; } addImage() { this.calls.push('addImage'); } updateImage() { this.calls.push('updateImage'); } removeImage() { this.calls.push('removeImage'); }
-  getSprite() { this.calls.push('listSprites'); return [{ id: 'sprite', url: 'https://example.test/sprite' }]; } addSprite() { this.calls.push('addSprite'); } removeSprite() { this.calls.push('removeSprite'); }
+  listImages() { this.calls.push('listImages'); return ['existing']; } hasImage(id: string) { return id === 'existing'; } addImage(...args: unknown[]) { this.calls.push('addImage'); this.commandArguments.addImage = args; } updateImage(...args: unknown[]) { this.calls.push('updateImage'); this.commandArguments.updateImage = args; } removeImage(...args: unknown[]) { this.calls.push('removeImage'); this.commandArguments.removeImage = args; }
+  getSprite() { this.calls.push('listSprites'); return [{ id: 'sprite', url: 'https://example.test/sprite' }]; } addSprite(...args: unknown[]) { this.calls.push('addSprite'); this.commandArguments.addSprite = args; } removeSprite(...args: unknown[]) { this.calls.push('removeSprite'); this.commandArguments.removeSprite = args; }
   querySourceFeatures() { this.calls.push('querySourceFeatures'); return [{ type: 'Feature', geometry: null, properties: {} }]; } queryRenderedFeatures() { this.calls.push('queryRenderedFeatures'); return [{ type: 'Feature', geometry: null, properties: {} }]; }
   asMap() { return this as unknown as MapLibreMap; }
 }
 const imageLoader: RuntimeImageLoader = { async load() { return { width: 1, height: 1, data: new Uint8Array(4) }; } };
-const inspection = (legacyName: string, action: Record<string, unknown>, predicate: (data: Record<string, unknown>) => boolean): MigrationRow => ({ legacyName, category: 'full', tool: 'inspectStyle', input: action, verify: (result) => assert.ok(result.data !== undefined && predicate(result.data)) });
-const transaction = (legacyName: string, operation: Record<string, unknown>, changed: 'layer' | 'source' | 'root' = 'layer'): MigrationRow => ({ legacyName, category: 'full', tool: 'applyStyleTransaction', input: { transaction: { operations: [operation] }, diff: true }, verify: (result, map) => { assert.equal(map.calls.includes('setStyle'), true, legacyName); const data = result.data!; assert.equal(data.applied, true, legacyName); if (changed === 'layer') assert.ok((data.changedLayers as string[]).length > 0, legacyName); if (changed === 'source') assert.ok((data.changedSources as string[]).length > 0, legacyName); if (changed === 'root') assert.equal(data.styleAuthority, 'current', legacyName); } });
-const command = (legacyName: string, input: Record<string, unknown>, call: string): MigrationRow => ({ legacyName, category: 'full', tool: 'runMapCommand', input, verify: (result, map) => { assert.equal(result.data?.action, input.action); assert.ok(map.calls.includes(call)); } });
+const projection = (result: Success): Record<string, unknown> => result.data!.projection as Record<string, unknown>;
+const inspection = (legacyName: string, action: Record<string, unknown>, verify: (value: Record<string, unknown>) => void): MigrationRow => ({
+  legacyName, category: 'full', tool: 'inspectStyle', input: action,
+  verify: (result) => verify(projection(result)),
+});
+const transaction = (
+  legacyName: string, operation: Record<string, unknown>,
+  changedLayers: string[], changedSources: string[],
+  verify: (map: FakeMap) => void,
+): MigrationRow => ({
+  legacyName, category: 'full', tool: 'applyStyleTransaction',
+  input: { transaction: { operations: [operation] }, diff: true },
+  verify: (result, map) => {
+    const data = result.data!;
+    assert.deepEqual(data.changedLayers, changedLayers, legacyName);
+    assert.deepEqual(data.changedSources, changedSources, legacyName);
+    assert.equal(data.applied, true, legacyName);
+    assert.equal(data.styleAuthority, 'current', legacyName);
+    assert.deepEqual(map.calls, ['setStyle'], legacyName);
+    verify(map);
+  },
+});
+const command = (
+  legacyName: string, input: Record<string, unknown>,
+  verify: (result: Success, map: FakeMap) => void,
+): MigrationRow => ({ legacyName, category: 'full', tool: 'runMapCommand', input, verify });
 
 const migrationRows: MigrationRow[] = [
-  inspection('listAllLayers', { action: 'listLayers' }, (data) => data.action === 'listLayers'),
-  inspection('listAllSources', { action: 'listSources' }, (data) => data.action === 'listSources'),
-  inspection('inspectLayerStyle', { action: 'getLayer', layerId: 'roads', fields: ['paint', 'layout', 'filter', 'zoom'] }, (data) => data.action === 'getLayer'),
-  inspection('inspectSource', { action: 'getSource', sourceId: 'points' }, (data) => data.action === 'getSource'),
-  transaction('setLayerPaintProperty', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }),
-  transaction('setLayerLayoutProperty', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }),
-  transaction('setLayerPaintPropertySmart', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#fff' } }),
-  transaction('setLayerLayoutPropertySmart', { op: 'setLayerProperties', layerId: 'roads', layout: { 'line-cap': 'round' } }),
-  transaction('batchSetLayerPaintPropertiesSmart', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2, 'line-opacity': 0.5 } }),
-  transaction('batchSetLayerLayoutPropertiesSmart', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none', 'line-cap': 'round' } }),
-  transaction('batchSetLayerPaintProperties', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#f00' } }),
-  transaction('batchSetLayerLayoutProperties', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }),
-  transaction('clearLayerPaintProperty', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': null } }),
-  transaction('clearLayerLayoutProperty', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: null } }),
-  transaction('setLayerFilter', { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] }),
-  transaction('setLayerZoomRange', { op: 'setLayerProperties', layerId: 'roads', minzoom: 1, maxzoom: 10 }),
-  transaction('setLayerVisibility', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }),
-  transaction('addLayer', { op: 'addLayerDefinition', layer: { id: 'added', type: 'line', source: 'base', 'source-layer': 'roads' } }),
-  transaction('moveLayer', { op: 'moveLayer', layerId: 'roads', afterId: 'labels' }),
-  transaction('removeLayer', { op: 'removeLayer', layerId: 'labels' }),
-  transaction('patchLayerDefinition', { op: 'deepMergeLayerDefinition', layerId: 'roads', patch: { paint: { 'line-width': 3 } } }),
-  transaction('replaceLayerDefinition', { op: 'replaceLayerDefinition', layerId: 'roads', layer: { id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads', paint: { 'line-width': 4 } } }),
-  transaction('addSource', { op: 'addSource', sourceId: 'added', source: { type: 'vector', tiles: ['https://example.test/{z}/{x}/{y}.pbf'] } }, 'source'),
-  transaction('removeSource', { op: 'removeSource', sourceId: 'points' }, 'source'),
-  { legacyName: 'updateGeoJsonSourceData', category: 'full', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setGeoJsonData', sourceId: 'points', data: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] } }] } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  transaction('setGeoJsonClusterOptions', { op: 'patchSource', sourceId: 'points', patch: { clusterRadius: 50 } }, 'source'),
-  command('setSourceTileLodParams', { action: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 1, tileCountMaxMinRatio: 1 }, 'setSourceTileLodParams'),
-  transaction('patchSourceDefinition', { op: 'deepMergeSourceDefinition', sourceId: 'points', patch: { clusterRadius: 25 } }, 'source'),
-  transaction('replaceSourceDefinition', { op: 'replaceSourceDefinition', sourceId: 'points', source: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } }, 'source'),
-  { legacyName: 'setStyleJsonOrUrl', category: 'full', tool: 'applyStyleDocument', input: { source: { kind: 'style', style: { ...baseStyle(), name: 'document' } } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  inspection('inspectRootStyle', { action: 'getRoot' }, (data) => data.action === 'getRoot'),
-  transaction('setStyleName', { op: 'setStyleRootProperties', properties: { name: 'changed' } }, 'root'),
-  transaction('setStyleMetadata', { op: 'setStyleRootProperties', properties: { metadata: { revision: 1 } } }, 'root'),
-  transaction('setStyleTransition', { op: 'setStyleRootProperties', properties: { transition: { duration: 100 } } }, 'root'),
-  transaction('setStyleCameraDefaults', { op: 'setStyleRootProperties', properties: { center: [0, 0], zoom: 2 } }, 'root'),
-  inspection('validateStyleJson', { action: 'validateDocument', style: baseStyle() }, (data) => data.action === 'validateDocument'),
-  inspection('validateCurrentMapStyle', { action: 'validateCurrentMap' }, (data) => data.action === 'validateCurrentMap'),
-  transaction('setMapLight', { op: 'shallowPatchRootProperty', property: 'light', patch: { intensity: 0.5 } }, 'root'),
-  transaction('setMapSky', { op: 'replaceRootProperty', property: 'sky', value: {} }, 'root'),
-  transaction('setMapProjection', { op: 'replaceRootProperty', property: 'projection', value: { type: 'globe' } }, 'root'),
-  transaction('setMapTerrain', { op: 'replaceRootProperty', property: 'terrain', value: { source: 'dem', exaggeration: 2 } }, 'root'),
-  transaction('setMapGlyphs', { op: 'setStyleRootProperties', properties: { glyphs: 'https://example.test/{fontstack}/{range}.pbf' } }, 'root'),
-  transaction('setMapSprite', { op: 'setStyleRootProperties', properties: { sprite: 'https://example.test/sprite' } }, 'root'),
-  command('listSprites', { action: 'listSprites' }, 'listSprites'), command('addSprite', { action: 'addSprite', spriteId: 'new', url: 'https://example.test/new' }, 'addSprite'), command('removeSprite', { action: 'removeSprite', spriteId: 'sprite' }, 'removeSprite'),
-  command('setFeatureState', { action: 'setFeatureState', target: { source: 'base', id: 1 }, state: { selected: true } }, 'setFeatureState'), command('removeFeatureState', { action: 'removeFeatureState', target: { source: 'base', id: 1 }, key: 'selected' }, 'removeFeatureState'), command('setGlobalStateProperty', { action: 'setGlobalState', propertyName: 'theme', value: 'dark' }, 'setGlobalState'),
-  command('listImages', { action: 'listImages' }, 'listImages'), command('addImageFromUrl', { action: 'addImageFromUrl', imageId: 'new', url: 'https://example.test/new.png' }, 'addImage'), command('removeImage', { action: 'removeImage', imageId: 'existing' }, 'removeImage'), inspection('getLayerCount', { action: 'getLayerCount' }, (data) => data.action === 'getLayerCount'),
-  { legacyName: 'getStyleContext', category: 'compact', tool: 'inspectStyle', input: { action: 'getContext' }, verify: (result) => assert.equal(result.data?.action, 'getContext') },
-  { legacyName: 'searchLayers', category: 'compact', tool: 'inspectStyle', input: { action: 'listLayers', query: 'road' }, verify: (result) => assert.equal(result.data?.action, 'listLayers') },
-  { legacyName: 'inspectLayersCompact', category: 'compact', tool: 'inspectStyle', input: { action: 'inspectLayers', layerIds: ['roads'] }, verify: (result) => assert.equal(result.data?.action, 'inspectLayers') },
-  { legacyName: 'applyStyleOperations', category: 'compact', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] }] } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  { legacyName: 'validateStylePatchJson', category: 'compact', tool: 'inspectStyle', input: { action: 'validateTransaction', transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' }] } }, verify: (result) => assert.equal(result.data?.action, 'validateTransaction') },
-  { legacyName: 'analyzeGeoJson', category: 'retained', tool: 'inspectStyle', input: { action: 'analyzeGeoJson', data: { type: 'FeatureCollection', features: [] } }, verify: (result) => assert.equal(result.data?.action, 'analyzeGeoJson') },
-  { legacyName: 'listSourceLayers', category: 'retained', tool: 'inspectStyle', input: { action: 'listSourceLayers', sourceId: 'base' }, verify: (result) => assert.equal(result.data?.action, 'listSourceLayers') },
-  { legacyName: 'duplicateLayer', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'duplicateLayer', layerId: 'roads', newLayerId: 'roads-copy' }] } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  { legacyName: 'addLayerFromSource', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'addLayerFromSource', layerId: 'from-source', sourceId: 'base', sourceLayer: 'roads', type: 'line' }] } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  { legacyName: 'addGeoJsonLayer', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'addGeoJsonLayer', sourceId: 'geo', layerId: 'geo-layer', data: { type: 'FeatureCollection', features: [] }, type: 'circle' }] } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  { legacyName: 'applyStyleTransaction', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 5 } }] } }, verify: (result, map) => { assert.equal(result.data?.applied, true); assert.ok(map.calls.includes('setStyle')); } },
-  { legacyName: 'querySourceFeatures', category: 'retained', tool: 'queryMapFeatures', input: { target: 'source', sourceId: 'base' }, verify: (result, map) => { assert.equal(result.data?.target, 'source'); assert.ok(map.calls.includes('querySourceFeatures')); } },
-  { legacyName: 'queryRenderedFeatures', category: 'retained', tool: 'queryMapFeatures', input: { target: 'rendered' }, verify: (result, map) => { assert.equal(result.data?.target, 'rendered'); assert.ok(map.calls.includes('queryRenderedFeatures')); } },
+  inspection('listAllLayers', { action: 'listLayers' }, (p) => assert.deepEqual(p, { items: [{ id: 'roads', type: 'line', source: 'base', sourceLayer: 'roads', visibility: 'visible' }, { id: 'labels', type: 'symbol', source: 'base', sourceLayer: 'labels' }], returned: 2, total: 2, truncated: false, warnings: [] })),
+  inspection('listAllSources', { action: 'listSources' }, (p) => assert.deepEqual(p, { items: [{ id: 'base', source: baseStyle().sources.base }, { id: 'points', source: baseStyle().sources.points }], returned: 2, total: 2, truncated: false, warnings: [] })),
+  inspection('inspectLayerStyle', { action: 'getLayer', layerId: 'roads', fields: ['paint', 'layout', 'filter', 'zoom'] }, (p) => assert.deepEqual(p.value, { id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads', minzoom: null, maxzoom: null, paint: { 'line-width': 1 }, layout: { visibility: 'visible' }, filter: null })),
+  inspection('inspectSource', { action: 'getSource', sourceId: 'points' }, (p) => assert.deepEqual(p.value, { id: 'points', source: baseStyle().sources.points })),
+  transaction('setLayerPaintProperty', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }, ['roads'], [], (m) => assert.equal((m.style.layers![0] as any).paint['line-width'], 2)),
+  transaction('setLayerLayoutProperty', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }, ['roads'], [], (m) => assert.equal((m.style.layers![0] as any).layout.visibility, 'none')),
+  transaction('setLayerPaintPropertySmart', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#fff' } }, ['roads'], [], (m) => assert.equal((m.style.layers![0] as any).paint['line-color'], '#fff')),
+  transaction('setLayerLayoutPropertySmart', { op: 'setLayerProperties', layerId: 'roads', layout: { 'line-cap': 'round' } }, ['roads'], [], (m) => assert.equal((m.style.layers![0] as any).layout['line-cap'], 'round')),
+  transaction('batchSetLayerPaintPropertiesSmart', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2, 'line-opacity': 0.5 } }, ['roads'], [], (m) => assert.deepEqual((m.style.layers![0] as any).paint, { 'line-width': 2, 'line-opacity': 0.5 })),
+  transaction('batchSetLayerLayoutPropertiesSmart', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none', 'line-cap': 'round' } }, ['roads'], [], (m) => assert.deepEqual((m.style.layers![0] as any).layout, { visibility: 'none', 'line-cap': 'round' })),
+  transaction('batchSetLayerPaintProperties', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#f00' } }, ['roads'], [], (m) => assert.deepEqual((m.style.layers![0] as any).paint, { 'line-width': 1, 'line-color': '#f00' })),
+  transaction('batchSetLayerLayoutProperties', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }, ['roads'], [], (m) => assert.deepEqual((m.style.layers![0] as any).layout, { visibility: 'none' })),
+  transaction('clearLayerPaintProperty', { op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': null } }, ['roads'], [], (m) => assert.equal(Object.hasOwn((m.style.layers![0] as Record<string, unknown>), 'paint'), false)),
+  transaction('clearLayerLayoutProperty', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: null } }, ['roads'], [], (m) => assert.equal(Object.hasOwn((m.style.layers![0] as Record<string, unknown>), 'layout'), false)),
+  transaction('setLayerFilter', { op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] }, ['roads'], [], (m) => assert.deepEqual((m.style.layers![0] as any).filter, ['==', 'kind', 'road'])),
+  transaction('setLayerZoomRange', { op: 'setLayerProperties', layerId: 'roads', minzoom: 1, maxzoom: 10 }, ['roads'], [], (m) => assert.deepEqual([(m.style.layers![0] as any).minzoom, (m.style.layers![0] as any).maxzoom], [1, 10])),
+  transaction('setLayerVisibility', { op: 'setLayerProperties', layerId: 'roads', layout: { visibility: 'none' } }, ['roads'], [], (m) => assert.equal((m.style.layers![0] as any).layout.visibility, 'none')),
+  transaction('addLayer', { op: 'addLayerDefinition', layer: { id: 'added', type: 'line', source: 'base', 'source-layer': 'roads' } }, ['added'], [], (m) => assert.equal(m.style.layers![2]!.id, 'added')),
+  transaction('moveLayer', { op: 'moveLayer', layerId: 'roads', afterId: 'labels' }, ['roads'], [], (m) => assert.deepEqual(m.style.layers!.map((l) => l.id), ['labels', 'roads'])),
+  transaction('removeLayer', { op: 'removeLayer', layerId: 'labels' }, ['labels'], [], (m) => assert.deepEqual(m.style.layers!.map((l) => l.id), ['roads'])),
+  transaction('patchLayerDefinition', { op: 'deepMergeLayerDefinition', layerId: 'roads', patch: { paint: { 'line-width': 3 } } }, ['roads'], [], (m) => assert.equal((m.style.layers![0] as any).paint['line-width'], 3)),
+  transaction('replaceLayerDefinition', { op: 'replaceLayerDefinition', layerId: 'roads', layer: { id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads', paint: { 'line-width': 4 } } }, ['roads'], [], (m) => assert.deepEqual((m.style.layers![0] as any).paint, { 'line-width': 4 })),
+  transaction('addSource', { op: 'addSource', sourceId: 'added', source: { type: 'vector', tiles: ['https://example.test/{z}/{x}/{y}.pbf'] } }, [], ['added'], (m) => assert.deepEqual(m.style.sources.added, { type: 'vector', tiles: ['https://example.test/{z}/{x}/{y}.pbf'] })),
+  transaction('removeSource', { op: 'removeSource', sourceId: 'points' }, [], ['points'], (m) => assert.equal(Object.hasOwn(m.style.sources, 'points'), false)),
+  transaction('updateGeoJsonSourceData', { op: 'setGeoJsonData', sourceId: 'points', data: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] } }, [], ['points'], (m) => assert.deepEqual((m.style.sources.points as any).data.features[0].geometry.coordinates, [0, 0])),
+  transaction('setGeoJsonClusterOptions', { op: 'patchSource', sourceId: 'points', patch: { clusterRadius: 50 } }, [], ['points'], (m) => assert.equal((m.style.sources.points as any).clusterRadius, 50)),
+  command('setSourceTileLodParams', { action: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 1, tileCountMaxMinRatio: 1 }, (r, m) => { assert.equal(r.data?.applied, true); assert.deepEqual(m.commandArguments.setSourceTileLodParams, [1, 1, undefined]); }),
+  transaction('patchSourceDefinition', { op: 'deepMergeSourceDefinition', sourceId: 'points', patch: { clusterRadius: 25 } }, [], ['points'], (m) => assert.equal((m.style.sources.points as any).clusterRadius, 25)),
+  transaction('replaceSourceDefinition', { op: 'replaceSourceDefinition', sourceId: 'points', source: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } }, [], ['points'], (m) => assert.deepEqual(m.style.sources.points, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })),
+  { legacyName: 'setStyleJsonOrUrl', category: 'full', tool: 'applyStyleDocument', input: { source: { kind: 'style', style: { ...baseStyle(), name: 'document' } } }, verify: (r, m) => { assert.equal(r.data?.applied, true); assert.equal(m.style.name, 'document'); assert.deepEqual(m.calls, ['setStyle']); } },
+  inspection('inspectRootStyle', { action: 'getRoot' }, (p) => assert.deepEqual(p.value, { version: 8, name: 'base' })),
+  transaction('setStyleName', { op: 'setStyleRootProperties', properties: { name: 'changed' } }, [], [], (m) => assert.equal(m.style.name, 'changed')),
+  transaction('setStyleMetadata', { op: 'setStyleRootProperties', properties: { metadata: { revision: 1 } } }, [], [], (m) => assert.deepEqual(m.style.metadata, { revision: 1 })),
+  transaction('setStyleTransition', { op: 'setStyleRootProperties', properties: { transition: { duration: 100 } } }, [], [], (m) => assert.deepEqual(m.style.transition, { duration: 100 })),
+  transaction('setStyleCameraDefaults', { op: 'setStyleRootProperties', properties: { center: [0, 0], zoom: 2 } }, [], [], (m) => assert.deepEqual([m.style.center, m.style.zoom], [[0, 0], 2])),
+  inspection('validateStyleJson', { action: 'validateDocument', style: baseStyle() }, (p) => assert.deepEqual(p.value, { valid: true })),
+  inspection('validateCurrentMapStyle', { action: 'validateCurrentMap' }, (p) => assert.deepEqual(p.value, { valid: true })),
+  transaction('setMapLight', { op: 'shallowPatchRootProperty', property: 'light', patch: { intensity: 0.5 } }, [], [], (m) => assert.deepEqual(m.style.light, { intensity: 0.5 })),
+  transaction('setMapSky', { op: 'replaceRootProperty', property: 'sky', value: {} }, [], [], (m) => assert.deepEqual(m.style.sky, {})),
+  transaction('setMapProjection', { op: 'replaceRootProperty', property: 'projection', value: { type: 'globe' } }, [], [], (m) => assert.deepEqual(m.style.projection, { type: 'globe' })),
+  transaction('setMapTerrain', { op: 'replaceRootProperty', property: 'terrain', value: { source: 'dem', exaggeration: 2 } }, [], [], (m) => assert.deepEqual(m.style.terrain, { source: 'dem', exaggeration: 2 })),
+  transaction('setMapGlyphs', { op: 'setStyleRootProperties', properties: { glyphs: 'https://example.test/{fontstack}/{range}.pbf' } }, [], [], (m) => assert.equal(m.style.glyphs, 'https://example.test/{fontstack}/{range}.pbf')),
+  transaction('setMapSprite', { op: 'setStyleRootProperties', properties: { sprite: 'https://example.test/sprite' } }, [], [], (m) => assert.equal(m.style.sprite, 'https://example.test/sprite')),
+  command('listSprites', { action: 'listSprites' }, (r) => assert.deepEqual((r.data?.result as any).items, [{ id: 'sprite', url: 'https://example.test/sprite' }])),
+  command('addSprite', { action: 'addSprite', spriteId: 'new', url: 'https://example.test/new' }, (_r, m) => assert.deepEqual(m.commandArguments.addSprite, ['new', 'https://example.test/new'])),
+  command('removeSprite', { action: 'removeSprite', spriteId: 'sprite' }, (_r, m) => assert.deepEqual(m.commandArguments.removeSprite, ['sprite'])),
+  command('setFeatureState', { action: 'setFeatureState', target: { source: 'base', id: 1 }, state: { selected: true } }, (_r, m) => assert.deepEqual(m.commandArguments.setFeatureState, [{ source: 'base', id: 1 }, { selected: true }])),
+  command('removeFeatureState', { action: 'removeFeatureState', target: { source: 'base', id: 1 }, key: 'selected' }, (_r, m) => assert.deepEqual(m.commandArguments.removeFeatureState, [{ source: 'base', id: 1 }, 'selected'])),
+  command('setGlobalStateProperty', { action: 'setGlobalState', propertyName: 'theme', value: 'dark' }, (_r, m) => assert.deepEqual(m.commandArguments.setGlobalState, ['theme', 'dark'])),
+  command('listImages', { action: 'listImages' }, (r) => assert.deepEqual((r.data?.result as any).items, ['existing'])),
+  command('addImageFromUrl', { action: 'addImageFromUrl', imageId: 'new', url: 'https://example.test/new.png' }, (_r, m) => assert.deepEqual(m.commandArguments.addImage?.slice(0, 1), ['new'])),
+  command('removeImage', { action: 'removeImage', imageId: 'existing' }, (_r, m) => assert.deepEqual(m.commandArguments.removeImage, ['existing'])),
+  inspection('getLayerCount', { action: 'getLayerCount' }, (p) => assert.deepEqual(p.value, { layerCount: 2 })),
+  { legacyName: 'getStyleContext', category: 'compact', tool: 'inspectStyle', input: { action: 'getContext' }, verify: (r) => assert.deepEqual((projection(r).value as any).layerCount, 2) },
+  { legacyName: 'searchLayers', category: 'compact', tool: 'inspectStyle', input: { action: 'listLayers', query: 'road' }, verify: (r) => assert.deepEqual((projection(r).items as any[]).map((v) => v.id), ['roads']) },
+  { legacyName: 'inspectLayersCompact', category: 'compact', tool: 'inspectStyle', input: { action: 'inspectLayers', layerIds: ['roads'] }, verify: (r) => assert.deepEqual((projection(r).items as any[])[0], { id: 'roads', type: 'line', source: 'base', 'source-layer': 'roads', paint: { 'line-width': 1 }, layout: { visibility: 'visible' } }) },
+  { legacyName: 'applyStyleOperations', category: 'compact', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'replace', filter: ['==', 'kind', 'road'] }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedLayers, ['roads']); assert.deepEqual((m.style.layers![0] as any).filter, ['==', 'kind', 'road']); } },
+  { legacyName: 'validateStylePatchJson', category: 'compact', tool: 'inspectStyle', input: { action: 'validateTransaction', transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' }] } }, verify: (r) => assert.deepEqual(projection(r).value, { valid: true }) },
+  { legacyName: 'analyzeGeoJson', category: 'retained', tool: 'inspectStyle', input: { action: 'analyzeGeoJson', data: { type: 'FeatureCollection', features: [] } }, verify: (r) => assert.deepEqual(projection(r).value, { available: true, featureCount: 0, geometryTypes: {}, properties: { items: [], returned: 0, total: 0, truncated: false, warnings: [] } }) },
+  { legacyName: 'listSourceLayers', category: 'retained', tool: 'inspectStyle', input: { action: 'listSourceLayers', sourceId: 'base' }, verify: (r) => assert.deepEqual((projection(r).items as any[]).map((v) => [v.sourceId, v.sourceLayer, v.layers.items.map((l: any) => l.id)]), [['base', 'labels', ['labels']], ['base', 'roads', ['roads']]]) },
+  { legacyName: 'duplicateLayer', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'duplicateLayer', layerId: 'roads', newLayerId: 'roads-copy' }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedLayers, ['roads-copy']); assert.equal(m.style.layers![1]!.id, 'roads-copy'); } },
+  { legacyName: 'addLayerFromSource', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'addLayerFromSource', layerId: 'from-source', sourceId: 'base', sourceLayer: 'roads', type: 'line' }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedLayers, ['from-source']); assert.deepEqual(m.style.layers![2], { id: 'from-source', source: 'base', 'source-layer': 'roads', type: 'line' }); } },
+  { legacyName: 'addGeoJsonLayer', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'addGeoJsonLayer', sourceId: 'geo', layerId: 'geo-layer', data: { type: 'FeatureCollection', features: [] }, type: 'circle' }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedSources, ['geo']); assert.deepEqual(m.style.sources.geo, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } }); } },
+  { legacyName: 'applyStyleTransaction', category: 'retained', tool: 'applyStyleTransaction', input: { transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 5 } }] } }, verify: (r, m) => { assert.deepEqual(r.data?.changedLayers, ['roads']); assert.equal((m.style.layers![0] as any).paint['line-width'], 5); } },
+  { legacyName: 'querySourceFeatures', category: 'retained', tool: 'queryMapFeatures', input: { target: 'source', sourceId: 'base' }, verify: (r) => assert.deepEqual(r.data, { target: 'source', features: [{ type: 'Feature', geometry: null, properties: {} }], returned: 1, truncated: false, warnings: [] }) },
+  { legacyName: 'queryRenderedFeatures', category: 'retained', tool: 'queryMapFeatures', input: { target: 'rendered' }, verify: (r) => assert.deepEqual(r.data, { target: 'rendered', features: [{ type: 'Feature', geometry: null, properties: {} }], returned: 1, truncated: false, warnings: [] }) },
 ];
 
 test('composes five Promise tools and executes each migration replacement behavior', async () => {
