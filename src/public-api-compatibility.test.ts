@@ -15,7 +15,7 @@ import {
   compactInspectLayersCompactInputSchema,
   compactSearchLayersInputSchema,
   compactValidateStylePatchJsonInputSchema,
-} from './ai-sdk/index.js';
+} from './ai-sdk/schemas.js';
 import type { StyleDocument } from './types.js';
 
 type ToolResult = {

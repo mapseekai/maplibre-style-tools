@@ -42,10 +42,7 @@ import type {
   RuntimeGeoJsonPropertyPatch,
   RuntimeGeoJsonSourceDiff,
 } from 'maplibre-style-tools/maplibre';
-import type {
-  CommonResultInput,
-  ParseResult,
-} from 'maplibre-style-tools/ai';
+import type { AiStyleToolResult } from 'maplibre-style-tools/ai';
 
 type AssertTrue<Value extends true> = Value;
 type Equal<Left, Right> =
@@ -277,26 +274,19 @@ function inspectMapResult(result: MapStyleApplyResult): StyleDocument | undefine
 }
 
 function inspectAiContracts(
-  parsed: ParseResult<string>,
-  common: CommonResultInput<{ count: number }, StyleDocument>,
+  result: AiStyleToolResult<{ count: number }>,
   error: StyleToolError,
 ): void {
-  const parseSuccess: ParseResult<string> = { ok: true, value: 'value' };
-  const parseFailure: ParseResult<string> = { ok: false, error };
-  if (parsed.ok) {
-    // @ts-expect-error successful parse results have no error member.
-    void parsed.error;
+  if (result.success) {
+    if (result.data !== undefined) {
+      const count: number = result.data.count;
+      void count;
+    }
+    // @ts-expect-error successful AI results have no error member.
+    void result.error;
   } else {
-    requireAuthenticError(parsed.error);
+    requireAuthenticError(result.error);
   }
-  if (common.success) {
-    // @ts-expect-error successful common results have no error member.
-    void common.error;
-  } else {
-    requireAuthenticError(common.error);
-  }
-  void parseSuccess;
-  void parseFailure;
 }
 
 void [
@@ -334,12 +324,11 @@ test('loads transport-neutral core without MapLibre or AI SDK side effects', asy
   assert.equal(typeof core.geoJsonAnalysisInputSchema?.safeParse, 'function');
   assert.equal(typeof core.listSourceLayers, 'function');
 });
-
-test('loads explicit AI and MapLibre entry points', async () => {
-  const ai = await import('maplibre-style-tools/ai');
-  const maplibre = await import('maplibre-style-tools/maplibre');
-  assert.equal(typeof ai.createMapLibreStyleTools, 'function');
-  assert.equal(typeof ai.createCompactMapLibreStyleTools, 'function');
+test('loads the exact unified AI and MapLibre entry points', async () => {
+  // Load compiled entry points directly so this source test does not depend on a stale package build.
+  const ai = await import('./ai-sdk/index.js');
+  const maplibre = await import('./adapters/maplibre/index.js');
+  assert.deepEqual(Object.keys(ai), ['createMapLibreStyleTools']);
   assert.equal(typeof maplibre.applyTransactionToMap, 'function');
   assert.equal(typeof maplibre.runtimeGeoJsonSourceDiffSchema?.safeParse, 'function');
   assert.equal(typeof maplibre.sanitizeRuntimeGeoJsonSourceDiff, 'function');
