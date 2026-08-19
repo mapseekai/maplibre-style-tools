@@ -413,7 +413,11 @@ const nonBlankStringArray = z.array(nonBlankString);
 const inspectionFieldSchema = z.enum(['paint', 'layout', 'filter', 'zoom']);
 const nonEmptyTransactionSchema = styleTransactionSchema;
 
-const transactionEnvelopeSchema = z.object({
+const emptyTransactionSchema = z.object({
+  operations: z.tuple([]),
+  validate: z.boolean().optional(),
+}).strict();
+const transactionToolEnvelopeSchema = z.object({
   operations: z.array(jsonValueSchema),
   validate: z.boolean().optional(),
 }).strict();
@@ -435,9 +439,16 @@ export const inspectStyleInputSchema: z.ZodType<InspectStyleInput> =
     z.object({ action: z.literal('listSourceLayers'), sourceId: nonBlankString.optional() }).strict(),
   ])) as z.ZodType<InspectStyleInput>;
 
+export const applyStyleTransactionToolInputSchema: z.ZodType<ApplyStyleTransactionInput> =
+  descriptorSafeInputSchema(z.object({
+    transaction: transactionToolEnvelopeSchema,
+    dryRun: z.boolean().optional(),
+    diff: z.boolean().optional(),
+  }).strict()) as z.ZodType<ApplyStyleTransactionInput>;
+
 export const applyStyleTransactionInputSchema: z.ZodType<ApplyStyleTransactionInput> =
   descriptorSafeInputSchema(z.object({
-    transaction: transactionEnvelopeSchema,
+    transaction: z.union([emptyTransactionSchema, nonEmptyTransactionSchema]),
     dryRun: z.boolean().optional(),
     diff: z.boolean().optional(),
   }).strict()) as z.ZodType<ApplyStyleTransactionInput>;

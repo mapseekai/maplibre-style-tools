@@ -10,7 +10,7 @@ import type {
   MapLibreAiTool,
   StyleMutationReceipt,
 } from './contracts.js';
-import { applyStyleDocumentInputSchema, applyStyleTransactionInputSchema } from './schemas.js';
+import { applyStyleDocumentInputSchema, applyStyleTransactionToolInputSchema } from './schemas.js';
 import { getAvailableMap, readValidatedMapStyle } from './shared.js';
 
 const EMPTY_TRANSACTION_MESSAGE = 'Style transaction completed without changes.';
@@ -70,7 +70,7 @@ const failure = (result: Extract<MapStyleApplyResult, { ok: false }>) => {
 export const createApplyStyleTransactionTool = (
   options: Pick<CreateMapLibreStyleToolsOptions, 'getMap' | 'getContext'>,
 ): MapLibreAiTool<ApplyStyleTransactionInput, StyleMutationReceipt> => createAiTool(
-  applyStyleTransactionInputSchema,
+  applyStyleTransactionToolInputSchema,
   'Apply a strict MapLibre style transaction to the current map.',
   async (input) => {
     const includeDiff = input.diff ?? true;
