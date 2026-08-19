@@ -65,6 +65,23 @@ import type { FULL_LEGACY_TOOL_NAMES } from 'maplibre-style-tools/ai';
 import type { parseStrictJson } from 'maplibre-style-tools/ai';
 // @ts-expect-error legacy result converter was removed.
 import type { toAiToolResult } from 'maplibre-style-tools/ai';
+// The imports above intentionally fail to verify removed public exports. The type-only
+// reference keeps their fixtures observable to ESLint without adding a compatibility surface.
+type RemovedPublicExports =
+  | RootFactory
+  | RootCompactFactory
+  | RootOptions
+  | StyleAccessor
+  | StyleOperation
+  | StyleOperationResult
+  | ToolCallResult
+  | createCompactMapLibreStyleTools
+  | FULL_LEGACY_TOOL_NAMES
+  | parseStrictJson
+  | toAiToolResult;
+
+void (null as unknown as RemovedPublicExports);
+
 
 type AssertTrue<Value extends true> = Value;
 type Equal<Left, Right> =
@@ -297,7 +314,6 @@ function inspectMapResult(result: MapStyleApplyResult): StyleDocument | undefine
 
 function inspectAiContracts(
   result: AiStyleToolResult<{ count: number }>,
-  error: StyleToolError,
 ): void {
   if (result.success) {
     if (result.data !== undefined) {

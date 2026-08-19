@@ -4,14 +4,9 @@ import {
   geoJsonAnalysisOptionsSchema,
   jsonValueSchema,
   styleDocumentSchema,
-  styleOperationSchema,
   styleTransactionSchema,
 } from '../core/index.js';
-import {
-  renderedFeatureQueryInputSchema,
-  runtimeGeoJsonSourceDiffSchema,
-  sourceFeatureQueryInputSchema,
-} from '../adapters/maplibre/index.js';
+import { runtimeGeoJsonSourceDiffSchema } from '../adapters/maplibre/index.js';
 import type {
   ApplyStyleDocumentInput,
   ApplyStyleTransactionInput,
@@ -20,10 +15,6 @@ import type {
   RunMapCommandInput,
 } from './contracts.js';
 
-const nonEmptyStringSchema = z.string().refine(
-  (value) => value.trim().length > 0,
-  { message: 'Expected a non-empty string' },
-);
 const jsonObjectSchema = z.record(z.string(), jsonValueSchema);
 function descriptorSafeInputSchema<Schema extends z.ZodType>(
   schema: Schema,

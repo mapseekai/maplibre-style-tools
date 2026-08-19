@@ -38,6 +38,23 @@ import type { FULL_LEGACY_TOOL_NAMES } from './ai-sdk/index.js';
 import type { parseStrictJson } from './ai-sdk/compatibility.js';
 // @ts-expect-error legacy result converter was removed.
 import type { toAiToolResult } from './ai-sdk/result.js';
+// The imports above intentionally fail to verify removed public exports. The type-only
+// reference keeps their fixtures observable to ESLint without adding a compatibility surface.
+type RemovedPublicExports =
+  | RootFactory
+  | RootCompactFactory
+  | RootOptions
+  | StyleAccessor
+  | ToolCallResult
+  | StyleOperation
+  | StyleOperationResult
+  | createCompactMapLibreStyleTools
+  | FULL_LEGACY_TOOL_NAMES
+  | parseStrictJson
+  | toAiToolResult;
+
+void (null as unknown as RemovedPublicExports);
+
 
 type NewAiSurface =
   | AiStyleToolResult<unknown>
