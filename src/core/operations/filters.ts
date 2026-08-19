@@ -19,12 +19,14 @@ export const LEGACY_COMPOSE_MESSAGE =
 
 function classifyChildren(children: JsonValue[]): FilterSyntax {
   let sawLegacy = false;
+  let sawExpression = false;
   for (const child of children) {
     const classification = classifyFilter(child);
-    if (classification === 'expression') return 'expression';
     if (classification === 'legacy') sawLegacy = true;
+    if (classification === 'expression') sawExpression = true;
   }
-  return sawLegacy ? 'legacy' : 'neutral';
+  if (sawLegacy) return 'legacy';
+  return sawExpression ? 'expression' : 'neutral';
 }
 
 export function classifyFilter(filter: JsonValue): FilterSyntax {

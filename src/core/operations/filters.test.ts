@@ -136,6 +136,31 @@ test('composeFilter rejects legacy filters with actionable guidance', () => {
   assert.throws(() => composeFilter(legacy, legacy, 'and'), /not supported.*expression/);
 });
 
+test('composeFilter rejects nested legacy children in every position', () => {
+  const legacyChild: JsonValue[] = ['==', 'class', 'primary'];
+  const expressionChild: JsonValue[] = ['==', ['get', 'kind'], 'road'];
+  assert.throws(
+    () => composeFilter(classFilter, ['all', legacyChild, expressionChild], 'and'),
+    /not supported.*expression/s,
+  );
+  assert.throws(
+    () => composeFilter(classFilter, ['all', expressionChild, legacyChild], 'and'),
+    /not supported.*expression/s,
+  );
+  assert.throws(
+    () => composeFilter(classFilter, ['any', expressionChild, legacyChild], 'or'),
+    /not supported.*expression/s,
+  );
+  assert.throws(
+    () => composeFilter(
+      classFilter,
+      ['all', expressionChild, ['any', expressionChild, legacyChild]],
+      'and',
+    ),
+    /not supported.*expression/s,
+  );
+});
+
 test('composeFilter composes neutral operands with expressions', () => {
   assert.deepEqual(
     composeFilter(['has', 'name'], classFilter, 'and'),

@@ -1126,6 +1126,14 @@ test('rejects legacy filter syntax on every operation filter field', () => {
     { op: 'addLayerDefinition', layer: { id: 'roads', type: 'line', source: 'vector', filter: legacy } },
     { op: 'deepMergeLayerDefinition', layerId: 'roads', patch: { filter: legacy } },
     { op: 'replaceLayerDefinition', layerId: 'roads', layer: { id: 'roads', type: 'line', filter: legacy } },
+    {
+      op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
+      filter: ['all', expression, ['==', 'class', 'primary']],
+    },
+    {
+      op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
+      filter: ['all', ['==', 'class', 'primary'], expression],
+    },
   ];
   for (const operation of legacyOperations) {
     const result = styleTransactionSchema.safeParse({ operations: [operation] });
@@ -1144,6 +1152,10 @@ test('rejects legacy filter syntax on every operation filter field', () => {
     { op: 'setGeoJsonSourceFilter', sourceId: 'geo', mode: 'replace', filter: expression },
     { op: 'addLayerDefinition', layer: { id: 'roads', type: 'line', filter: expression } },
     { op: 'deepMergeLayerDefinition', layerId: 'roads', patch: { filter: ['has', 'name'] } },
+    {
+      op: 'setLayerFilter', layerId: 'roads', mode: 'replace',
+      filter: ['all', expression, ['has', 'name']],
+    },
   ];
   for (const operation of accepted) {
     assert.equal(
