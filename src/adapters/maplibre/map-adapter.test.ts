@@ -152,11 +152,18 @@ function assertEmptyCommit(result: MapStyleApplyResult): void {
   assert.deepEqual(result.diff, []);
 }
 
-async function flushUntil(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20 && !predicate(); attempt += 1) {
+async function waitForCondition(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const expiresAt = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= expiresAt) {
+      assert.fail(`Timed out after ${timeoutMs}ms waiting for ${description}.`);
+    }
     await new Promise<void>((resolve) => { setImmediate(resolve); });
   }
-  assert.equal(predicate(), true, 'expected asynchronous test state was not reached');
 }
 
 function styleColor(style: StyleDocument): JsonValue | undefined {
@@ -551,7 +558,7 @@ test('completion never exposes a Style snapshot that changed while its hash was 
         return hashStyle(style);
       },
     });
-    await flushUntil(() => blocked);
+    await waitForCondition(() => blocked, 'the pending style hash');
 
     let settled = false;
     void applyPromise.then(() => { settled = true; });
@@ -596,11 +603,12 @@ test('completion drains every pending generation before accepting the final Styl
       }
       return hashStyle(style);
     };
-    const deadlineMs = scenario === 'stable-unexpected' ? 40 : 500;
+    let now = 0;
+    const expiresAt = 10_000;
     const resultPromise = applyPreparedStyleToMap(fake.asMap(), prepared, {
-      deadline: { expiresAt: Date.now() + deadlineMs }, hashStyle: hash,
+      deadline: { expiresAt, now: () => now }, hashStyle: hash,
     });
-    await flushUntil(() => releases.length === 1);
+    await waitForCondition(() => releases.length === 1, 'the initial hash release');
 
     const generations = scenario === 'five-generations'
       ? ['#123', '#234', '#345', '#456']
@@ -610,10 +618,11 @@ test('completion drains every pending generation before accepting the final Styl
       releases.shift()!(await hashStyle(strictStyle(
         index === 0 ? '#fff' : generations[index - 1]!,
       )));
-      await flushUntil(() => releases.length === 1);
+      await waitForCondition(() => releases.length === 1, 'the next hash release');
     }
 
     if (scenario === 'stable-unexpected') {
+      now = expiresAt;
       releases.shift()!(await hashStyle(strictStyle('#123')));
       const result = await resultPromise;
       assert.equal(result.ok, false);
@@ -622,7 +631,7 @@ test('completion drains every pending generation before accepting the final Styl
     } else {
       fake.install(rawStyle('#fff'));
       releases.shift()!(await hashStyle(strictStyle(generations.at(-1)!)));
-      await flushUntil(() => releases.length === 1);
+      await waitForCondition(() => releases.length === 1, 'the final hash release');
       releases.shift()!(await hashStyle(strictStyle('#fff')));
       const result = await resultPromise;
       assert.equal(result.ok, true);
@@ -677,9 +686,11 @@ test('URL completion ignores pre-invocation loads and handles sync, no-event no-
 
   const pending = new FakeMap(rawStyle());
   pending.loaded = true;
+  const controller = new AbortController();
+  pending.onSetStyle = () => { controller.abort(); };
   const pendingResult = await applyStyleDocumentOrUrlToMap(
     pending.asMap(), 'https://example.test/pending.json', {
-      deadline: { expiresAt: Date.now() + 20 },
+      deadline: { expiresAt: Date.now() + 10_000, signal: controller.signal },
     },
   );
   assert.equal(pendingResult.ok, false);
