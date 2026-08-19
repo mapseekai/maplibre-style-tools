@@ -51,3 +51,6 @@ Verification: `rtk pnpm exec tsc -p tsconfig.test.json` and `rtk node --test .tm
 
 ## Fix round 4 — CodeGraph-only evidence
 CodeGraph traced `applyStyleDocumentOrUrlToMap` from its baseline read (`src/adapters/maplibre/map-adapter.ts:1118`) through the pre-invoke authority guard (`:1183`), confirming that `UnavailableDuringApplyMap(1)` makes the document route fail before `setStyle`. It also traced `guardBaselineBeforeInvoke` authority outcomes and `rollbackAfterFailure`, which records rollback failure after a mutation-started candidate failure. The unified matrix tests now assert direct transaction and document drift, unavailable-before-invoke, and candidate/rollback failure paths with deterministic read and `setStyle` event counts; failure results carry authentic rollback details and contain no success `data`.
+
+## Fix round 5 — CodeGraph-only evidence
+CodeGraph traced `buildStyleContext`'s complete `layerCount`, `sourceCount`, type-count, and layer-summary projection; the duplicate and GeoJSON-layer operations' source/layer effects; and the runtime image loader's URL parameter. The migration matrix now asserts those full effects, records the exact style URL supplied to `setStyle`, and records the exact image URL supplied to `RuntimeImageLoader.load`.
