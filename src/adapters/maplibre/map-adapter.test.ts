@@ -730,16 +730,17 @@ test('listener setup and promise settlement honor the deadline before mutation a
     const prepared = await prepareTransactionForMap(fake.asMap(), colorTransaction('#fff'));
     assert.equal('styleAuthority' in prepared, false);
     if ('styleAuthority' in prepared) assert.fail('expected prepared handle');
+    const deadline = 1_000_000;
     let now = 0;
     fake.onSetStyle = (input) => {
       assert.notEqual(typeof input, 'string');
       fake.install(input as StyleSpecification);
     };
     const result = await applyPreparedStyleToMap(fake.asMap(), prepared, {
-      deadline: { expiresAt: 10, now: () => now },
+      deadline: { expiresAt: deadline, now: () => now },
       hashStyle: async (style) => {
         if (fake.setStyleCalls.length === 1) {
-          now = 10;
+          now = deadline;
           if (settlement === 'reject') throw new Error('late hash rejection');
         }
         return hashStyle(style);
