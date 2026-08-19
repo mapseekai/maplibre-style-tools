@@ -32,6 +32,28 @@ class FakeMap {
   querySourceFeatures() { this.calls.push('querySourceFeatures'); return [{ type: 'Feature', geometry: null, properties: {} }]; } queryRenderedFeatures() { this.calls.push('queryRenderedFeatures'); return [{ type: 'Feature', geometry: null, properties: {} }]; }
   asMap() { return this as unknown as MapLibreMap; }
 }
+
+class AuthorityDriftMap extends FakeMap {
+  private reads = 0;
+
+  override getStyle() {
+    this.reads += 1;
+    if (this.reads === 2) this.style = { ...this.style, name: 'external-change' };
+    return super.getStyle();
+  }
+}
+
+class UnavailableDuringApplyMap extends FakeMap {
+  private reads = 0;
+
+  constructor(private readonly readableReads: number) { super(); }
+
+  override getStyle() {
+    this.reads += 1;
+    if (this.reads > this.readableReads) throw new Error('current style unavailable');
+    return super.getStyle();
+  }
+}
 const imageLoader: RuntimeImageLoader = { async load() { return { width: 1, height: 1, data: new Uint8Array(4) }; } };
 const projection = (result: Success): Record<string, unknown> => result.data!.projection as Record<string, unknown>;
 const inspection = (legacyName: string, action: Record<string, unknown>, verify: (value: Record<string, unknown>) => void): MigrationRow => ({
@@ -182,4 +204,31 @@ test('covers split document/update routes and authentic unavailable authority fa
   const update = await tools.runMapCommand.execute({ action: 'updateGeoJsonData', sourceId: 'points', diff: { remove: [1] } }); assert.equal(update.success, true); assert.ok(map.calls.includes('updateData'));
   const url = await tools.applyStyleDocument.execute({ source: { kind: 'url', url: 'https://example.test/style.json' } }); assert.equal(url.success, true); assert.ok(map.calls.includes('setStyle'));
   const unavailable = createMapLibreStyleTools({ getMap: () => null }).applyStyleTransaction.execute({ transaction: { operations: [{ op: 'setLayerFilter', layerId: 'roads', mode: 'clear' }] } }); const failed = await unavailable; assert.equal(failed.success, false); if (!failed.success) assert.equal(failed.error.code, 'MAP_NOT_READY');
+});
+
+test('retains native pre-operation drift authority failures without a success payload', async () => {
+  const drift = new AuthorityDriftMap();
+  const tools = createMapLibreStyleTools({ getMap: () => drift.asMap(), imageLoader });
+  const transaction = await tools.applyStyleTransaction.execute({
+    transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }] },
+  });
+  assert.equal(transaction.success, false);
+  if (!transaction.success) {
+    assert.equal(transaction.error.code, 'REVISION_CONFLICT');
+    assert.equal('data' in transaction, false);
+  }
+
+});
+
+test('retains native unavailable-during-apply failures without rollback success leakage', async () => {
+  const transaction = await createMapLibreStyleTools({
+    getMap: () => new UnavailableDuringApplyMap(1).asMap(), imageLoader,
+  }).applyStyleTransaction.execute({
+    transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 2 } }] },
+  });
+  assert.equal(transaction.success, false);
+  if (!transaction.success) {
+    assert.equal(transaction.error.code, 'INTERNAL');
+    assert.equal('data' in transaction, false);
+  }
 });
