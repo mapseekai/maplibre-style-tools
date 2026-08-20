@@ -621,10 +621,11 @@ test('bounds sprite lists by count and UTF-8 serialized bytes', async () => {
   );
 
   const byteBoundedMap = new FakeMap(rawStyle());
+  const unicodeSegment = 'é'.repeat(70);
   for (let index = 0; index < 500; index += 1) {
     byteBoundedMap.sprites.set(
       `sprite-${index}`,
-      `https://sprites.example/${'x'.repeat(160)}-${index}`,
+      `https://sprites.example/${unicodeSegment}-${index}`,
     );
   }
   const byteBounded = await (await createBrowserMapRuntime(
@@ -632,15 +633,18 @@ test('bounds sprite lists by count and UTF-8 serialized bytes', async () => {
   )).execute({ type: 'listSprites' });
   assert.equal(byteBounded.type, 'sprites');
   if (byteBounded.type !== 'sprites') assert.fail('expected sprites');
-  const measuredBytes = new TextEncoder().encode(JSON.stringify(byteBounded.items)).byteLength;
+  const serializedSprites = JSON.stringify(byteBounded.items);
+  const measuredBytes = new TextEncoder().encode(serializedSprites).byteLength;
   assert.ok(byteBounded.returned < 500);
   assert.equal(byteBounded.returned, byteBounded.items.length);
   assert.equal(byteBounded.truncated, true);
+  assert.ok(serializedSprites.length < 64 * 1024);
+  assert.ok(measuredBytes > serializedSprites.length);
   assert.ok(measuredBytes <= 64 * 1024);
   assert.equal(byteBounded.serializedBytes, measuredBytes);
   const omitted = {
     id: `sprite-${byteBounded.returned}`,
-    url: `https://sprites.example/${'x'.repeat(160)}-${byteBounded.returned}`,
+    url: `https://sprites.example/${unicodeSegment}-${byteBounded.returned}`,
   };
   assert.ok(new TextEncoder().encode(JSON.stringify([...byteBounded.items, omitted])).byteLength > 64 * 1024);
 });
