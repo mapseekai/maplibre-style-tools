@@ -52,8 +52,8 @@ const MAX_FEATURES = 100;
 const MAX_FEATURE_BYTES = 1024 * 1024;
 const MAX_STATE_BYTES = 64 * 1024;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-const MAX_IMAGE_IDS = 500;
-const MAX_IMAGE_LIST_BYTES = 64 * 1024;
+const MAX_RUNTIME_LIST_ITEMS = 500;
+const MAX_RUNTIME_LIST_BYTES = 64 * 1024;
 
 export interface BrowserMapState {
   revision: number;
@@ -870,9 +870,9 @@ export async function createBrowserMapRuntime(
         }));
         return { type: 'state', accepted: true } as BrowserRuntimeResult<C>;
       case 'listImages': {
-        const listed = mapRuntimeError(runtimeCommands.listImages({ limit: MAX_IMAGE_IDS }));
+        const listed = mapRuntimeError(runtimeCommands.listImages({ limit: MAX_RUNTIME_LIST_ITEMS }));
         let imageIds = listed.items;
-        while (jsonUtf8ByteLength(imageIds) > MAX_IMAGE_LIST_BYTES) imageIds = imageIds.slice(0, -1);
+        while (jsonUtf8ByteLength(imageIds) > MAX_RUNTIME_LIST_BYTES) imageIds = imageIds.slice(0, -1);
         return {
           type: 'images', imageIds,
           serializedBytes: jsonUtf8ByteLength(imageIds),
@@ -927,11 +927,40 @@ export async function createBrowserMapRuntime(
         mapRuntimeError(runtimeCommands.removeImage({ imageId: command.imageId }));
         return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
       case 'updateGeoJsonData':
+        mapRuntimeError(await runtimeCommands.updateGeoJsonDataRuntime({
+          sourceId: command.sourceId,
+          diff: command.diff,
+        }));
+        return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
       case 'setSourceTileLodParams':
-      case 'listSprites':
+        mapRuntimeError(runtimeCommands.setSourceTileLodParams({
+          maxZoomLevelsOnScreen: command.maxZoomLevelsOnScreen,
+          tileCountMaxMinRatio: command.tileCountMaxMinRatio,
+          ...(command.sourceId === undefined ? {} : { sourceId: command.sourceId }),
+        }));
+        return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
+      case 'listSprites': {
+        const listed = mapRuntimeError(runtimeCommands.listSprites({ limit: MAX_RUNTIME_LIST_ITEMS }));
+        let items = listed.items;
+        while (jsonUtf8ByteLength(items) > MAX_RUNTIME_LIST_BYTES) items = items.slice(0, -1);
+        return {
+          type: 'sprites',
+          items,
+          returned: items.length,
+          truncated: listed.truncated || items.length < listed.items.length,
+          serializedBytes: jsonUtf8ByteLength(items),
+        } as BrowserRuntimeResult<C>;
+      }
       case 'addSprite':
+        mapRuntimeError(runtimeCommands.addSprite({
+          spriteId: command.spriteId,
+          url: command.url,
+          ...(command.overwrite === undefined ? {} : { overwrite: command.overwrite }),
+        }));
+        return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
       case 'removeSprite':
-        throw createStyleToolError('CAPABILITY_DENIED', 'Bridge command is not supported by this runtime.');
+        mapRuntimeError(runtimeCommands.removeSprite({ spriteId: command.spriteId }));
+        return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
       default:
         throw createStyleToolError('CAPABILITY_DENIED', 'Bridge command is not supported by this runtime.');
     }

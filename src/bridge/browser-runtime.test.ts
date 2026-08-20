@@ -18,6 +18,7 @@ import {
 
 type EventName = 'style.load' | 'error';
 type Listener = (event: { type: EventName; error?: Error }) => void;
+type RuntimeCall = { method: string; args: unknown[] };
 
 class FakeMap {
   style: StyleSpecification;
@@ -27,10 +28,18 @@ class FakeMap {
   addImageCalls = 0;
   sourceFeatures: unknown[] = [];
   readonly images = new Map<string, unknown>();
+  readonly runtimeCalls: RuntimeCall[] = [];
+  readonly sprites = new Map<string, string>();
   readonly styleUrls = new Map<string, StyleSpecification>();
   readonly synchronousCalls = new Map<string, number>();
   beforeSynchronousCommand: (() => void) | undefined;
   private readonly listeners = new Map<EventName, Set<Listener>>();
+  private readonly geoJsonSource = {
+    type: 'geojson',
+    updateData: async (diff: unknown): Promise<void> => {
+      this.runtimeCalls.push({ method: 'updateData', args: [diff] });
+    },
+  };
 
   constructor(style: StyleSpecification) {
     this.style = structuredClone(style);
@@ -80,6 +89,41 @@ class FakeMap {
   private recordSynchronousCall(name: string): void {
     this.synchronousCalls.set(name, (this.synchronousCalls.get(name) ?? 0) + 1);
     this.beforeSynchronousCommand?.();
+  }
+
+  clearRuntimeCalls(): void {
+    this.runtimeCalls.length = 0;
+  }
+
+  getSource(sourceId: string): unknown {
+    this.runtimeCalls.push({ method: 'getSource', args: [sourceId] });
+    return sourceId === 'points' ? this.geoJsonSource : undefined;
+  }
+
+  setSourceTileLodParams(
+    maxZoomLevelsOnScreen: number,
+    tileCountMaxMinRatio: number,
+    sourceId?: string,
+  ): void {
+    this.runtimeCalls.push({
+      method: 'setSourceTileLodParams',
+      args: [maxZoomLevelsOnScreen, tileCountMaxMinRatio, sourceId],
+    });
+  }
+
+  getSprite(): Array<{ id: string; url: string }> {
+    this.runtimeCalls.push({ method: 'listSprites', args: [] });
+    return [...this.sprites.entries()].map(([id, url]) => ({ id, url }));
+  }
+
+  addSprite(spriteId: string, url: string): void {
+    this.runtimeCalls.push({ method: 'addSprite', args: [spriteId, url] });
+    this.sprites.set(spriteId, url);
+  }
+
+  removeSprite(spriteId: string): void {
+    this.runtimeCalls.push({ method: 'removeSprite', args: [spriteId] });
+    this.sprites.delete(spriteId);
   }
 
   querySourceFeatures(): unknown[] {
@@ -415,6 +459,82 @@ test('rejects invalid external authority and blocks commands until explicit reco
   await runtime.noteExternalStyle();
   assert.equal((await runtime.execute({ type: 'getStyle' })).type, 'style');
   assert.deepEqual(syncEvents, ['invalid-map-style']);
+});
+
+test('executes remaining SDK runtime actions with exact adapter arguments', async () => {
+  const map = new FakeMap(rawStyle());
+  map.sprites.set('base', 'https://sprites.example/base');
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const diff = { removeAll: true };
+  const cases: ReadonlyArray<{
+    command: BridgeCommand;
+    expectedCalls: RuntimeCall[];
+    expectedResult: { type: 'ack'; accepted: true } | {
+      type: 'sprites';
+      items: Array<{ id: string; url: string }>;
+      returned: number;
+      truncated: boolean;
+      serializedBytes: number;
+    };
+  }> = [
+    {
+      command: { type: 'updateGeoJsonData', sourceId: 'points', diff },
+      expectedCalls: [
+        { method: 'getSource', args: ['points'] },
+        { method: 'updateData', args: [diff] },
+      ],
+      expectedResult: { type: 'ack', accepted: true },
+    },
+    {
+      command: {
+        type: 'setSourceTileLodParams',
+        maxZoomLevelsOnScreen: 4,
+        tileCountMaxMinRatio: 2,
+      },
+      expectedCalls: [{
+        method: 'setSourceTileLodParams', args: [4, 2, undefined],
+      }],
+      expectedResult: { type: 'ack', accepted: true },
+    },
+    {
+      command: { type: 'listSprites' },
+      expectedCalls: [{ method: 'listSprites', args: [] }],
+      expectedResult: {
+        type: 'sprites',
+        items: [{ id: 'base', url: 'https://sprites.example/base' }],
+        returned: 1,
+        truncated: false,
+        serializedBytes: 52,
+      },
+    },
+    {
+      command: {
+        type: 'addSprite',
+        spriteId: 'added',
+        url: 'https://sprites.example/added',
+      },
+      expectedCalls: [
+        { method: 'listSprites', args: [] },
+        { method: 'addSprite', args: ['added', 'https://sprites.example/added'] },
+      ],
+      expectedResult: { type: 'ack', accepted: true },
+    },
+    {
+      command: { type: 'removeSprite', spriteId: 'added' },
+      expectedCalls: [
+        { method: 'listSprites', args: [] },
+        { method: 'removeSprite', args: ['added'] },
+      ],
+      expectedResult: { type: 'ack', accepted: true },
+    },
+  ];
+
+  for (const fixture of cases) {
+    map.clearRuntimeCalls();
+    const result = await runtime.execute(fixture.command);
+    assert.deepEqual(result, fixture.expectedResult);
+    assert.deepEqual(map.runtimeCalls, fixture.expectedCalls);
+  }
 });
 
 test('bounds feature/state/image paths before Map mutation', async () => {
