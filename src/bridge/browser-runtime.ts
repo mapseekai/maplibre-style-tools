@@ -742,6 +742,7 @@ export async function createBrowserMapRuntime(
             diff: command.diff,
             maxStyleBytes: limits.maxStyleBytes,
             maxDiffBytes: limits.maxDiffBytes,
+            expectedBaselineStyle: reconciled.style,
           });
           return await reconcileResult(
             applied, reconciled.styleHash, candidateHash, sharedDeadline,

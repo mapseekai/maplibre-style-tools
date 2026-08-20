@@ -1129,6 +1129,20 @@ test('whole-document application finalizes before setStyle, skips no-op, and pre
   assert.deepEqual(fake.setStyleCalls[0]?.options, { diff: false });
 });
 
+test('whole-document expected baseline rejects stale authority before setStyle', async () => {
+  const fake = new FakeMap(rawStyle('#00ff00'));
+  const result = await applyStyleDocumentOrUrlToMap(fake.asMap(), strictStyle('#ff0000'), {
+    expectedBaselineStyle: strictStyle(),
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) assert.fail('expected revision conflict');
+  assert.equal(result.error.code, 'REVISION_CONFLICT');
+  assert.equal(result.styleAuthority, 'current');
+  assert.deepEqual(result.style, strictStyle('#00ff00'));
+  assert.equal(fake.setStyleCalls.length, 0);
+});
+
 test('URL input is passed once, requires fresh completion, finalizes resolved Style, and rolls back', async () => {
   const success = new FakeMap(rawStyle());
   success.loaded = true;

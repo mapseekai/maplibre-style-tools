@@ -1058,6 +1058,37 @@ export async function applyStyleDocumentOrUrlToMap(
       baselineRead.warnings,
     );
   }
+  if (options?.expectedBaselineStyle !== undefined) {
+    const expected = validateStyleDocument(
+      options.expectedBaselineStyle,
+      maxStyleBytes === undefined ? {} : { maxStyleBytes },
+    );
+    if (!expected.ok) {
+      return currentFailure(
+        baseline,
+        expected.errors[0]
+          ?? createStyleToolError('INVALID_INPUT', 'Expected baseline Style is invalid.'),
+        baselineRead.warnings,
+      );
+    }
+    let expectedCanonical: string;
+    try {
+      expectedCanonical = canonicalizeJson(expected.style);
+    } catch {
+      return currentFailure(
+        baseline,
+        createStyleToolError('INVALID_INPUT', 'Expected baseline Style is invalid.'),
+        baselineRead.warnings,
+      );
+    }
+    if (baselineCanonical !== expectedCanonical) {
+      return currentFailure(
+        baseline,
+        createStyleToolError('REVISION_CONFLICT', 'Map style changed before live mutation.'),
+        baselineRead.warnings,
+      );
+    }
+  }
   const preflight = finalizeStyleReplacement(baseline, baseline, {
     maxStyleBytes,
     maxDiffBytes,

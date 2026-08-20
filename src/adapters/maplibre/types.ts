@@ -70,6 +70,7 @@ export interface WholeStyleApplyOptions extends StyleReplacementOptions {
   timeoutMs?: number;
   deadline?: MapOperationDeadline;
   hashStyle?: (style: StyleDocument) => Promise<string>;
+  expectedBaselineStyle?: StyleDocument;
 }
 
 export type PreparedStyleApplyOptions = Pick<
