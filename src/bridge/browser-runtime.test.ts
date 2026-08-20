@@ -97,7 +97,7 @@ class FakeMap {
 
   getSource(sourceId: string): unknown {
     this.runtimeCalls.push({ method: 'getSource', args: [sourceId] });
-    return sourceId === 'points' ? this.geoJsonSource : undefined;
+    return sourceId === 'points' || sourceId === 'terrain' ? this.geoJsonSource : undefined;
   }
 
   setSourceTileLodParams(
@@ -497,6 +497,19 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
       expectedResult: { type: 'ack', accepted: true },
     },
     {
+      command: {
+        type: 'setSourceTileLodParams',
+        maxZoomLevelsOnScreen: 4,
+        tileCountMaxMinRatio: 2,
+        sourceId: 'terrain',
+      },
+      expectedCalls: [
+        { method: 'getSource', args: ['terrain'] },
+        { method: 'setSourceTileLodParams', args: [4, 2, 'terrain'] },
+      ],
+      expectedResult: { type: 'ack', accepted: true },
+    },
+    {
       command: { type: 'listSprites' },
       expectedCalls: [{ method: 'listSprites', args: [] }],
       expectedResult: {
@@ -520,6 +533,20 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
       expectedResult: { type: 'ack', accepted: true },
     },
     {
+      command: {
+        type: 'addSprite',
+        spriteId: 'base',
+        url: 'https://sprites.example/replacement',
+        overwrite: true,
+      },
+      expectedCalls: [
+        { method: 'listSprites', args: [] },
+        { method: 'removeSprite', args: ['base'] },
+        { method: 'addSprite', args: ['base', 'https://sprites.example/replacement'] },
+      ],
+      expectedResult: { type: 'ack', accepted: true },
+    },
+    {
       command: { type: 'removeSprite', spriteId: 'added' },
       expectedCalls: [
         { method: 'listSprites', args: [] },
@@ -535,6 +562,87 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
     assert.deepEqual(result, fixture.expectedResult);
     assert.deepEqual(map.runtimeCalls, fixture.expectedCalls);
   }
+});
+
+test('denies every remaining SDK runtime action before adapter Map work', async () => {
+  const cases: ReadonlyArray<{
+    capability: BridgeCapability;
+    command: BridgeCommand;
+  }> = [
+    {
+      capability: 'style.write',
+      command: { type: 'updateGeoJsonData', sourceId: 'points', diff: { removeAll: true } },
+    },
+    {
+      capability: 'runtime.state',
+      command: {
+        type: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 4, tileCountMaxMinRatio: 2,
+      },
+    },
+    { capability: 'style.read', command: { type: 'listSprites' } },
+    {
+      capability: 'assets.write',
+      command: { type: 'addSprite', spriteId: 'added', url: 'https://sprites.example/added' },
+    },
+    {
+      capability: 'assets.write',
+      command: { type: 'removeSprite', spriteId: 'base' },
+    },
+  ];
+
+  for (const fixture of cases) {
+    const map = new FakeMap(rawStyle());
+    map.sprites.set('base', 'https://sprites.example/base');
+    const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+      capabilities: allCapabilities.filter((capability) => capability !== fixture.capability),
+    }));
+
+    await assert.rejects(runtime.execute(fixture.command), hasCode('CAPABILITY_DENIED'));
+    assert.deepEqual(map.runtimeCalls, []);
+  }
+});
+
+test('bounds sprite lists by count and UTF-8 serialized bytes', async () => {
+  const countBoundedMap = new FakeMap(rawStyle());
+  for (let index = 0; index < 501; index += 1) {
+    countBoundedMap.sprites.set(`sprite-${index}`, `https://sprites.example/${index}`);
+  }
+  const countBounded = await (await createBrowserMapRuntime(
+    countBoundedMap.asMap(), runtimeOptions(),
+  )).execute({ type: 'listSprites' });
+  assert.equal(countBounded.type, 'sprites');
+  if (countBounded.type !== 'sprites') assert.fail('expected sprites');
+  assert.equal(countBounded.returned, 500);
+  assert.equal(countBounded.items.length, 500);
+  assert.equal(countBounded.truncated, true);
+  assert.equal(
+    countBounded.serializedBytes,
+    new TextEncoder().encode(JSON.stringify(countBounded.items)).byteLength,
+  );
+
+  const byteBoundedMap = new FakeMap(rawStyle());
+  for (let index = 0; index < 500; index += 1) {
+    byteBoundedMap.sprites.set(
+      `sprite-${index}`,
+      `https://sprites.example/${'x'.repeat(160)}-${index}`,
+    );
+  }
+  const byteBounded = await (await createBrowserMapRuntime(
+    byteBoundedMap.asMap(), runtimeOptions(),
+  )).execute({ type: 'listSprites' });
+  assert.equal(byteBounded.type, 'sprites');
+  if (byteBounded.type !== 'sprites') assert.fail('expected sprites');
+  const measuredBytes = new TextEncoder().encode(JSON.stringify(byteBounded.items)).byteLength;
+  assert.ok(byteBounded.returned < 500);
+  assert.equal(byteBounded.returned, byteBounded.items.length);
+  assert.equal(byteBounded.truncated, true);
+  assert.ok(measuredBytes <= 64 * 1024);
+  assert.equal(byteBounded.serializedBytes, measuredBytes);
+  const omitted = {
+    id: `sprite-${byteBounded.returned}`,
+    url: `https://sprites.example/${'x'.repeat(160)}-${byteBounded.returned}`,
+  };
+  assert.ok(new TextEncoder().encode(JSON.stringify([...byteBounded.items, omitted])).byteLength > 64 * 1024);
 });
 
 test('bounds feature/state/image paths before Map mutation', async () => {
