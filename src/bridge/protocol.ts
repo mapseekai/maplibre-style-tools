@@ -6,7 +6,7 @@ import {
   STYLE_TOOL_ERROR_CODES,
   styleDocumentSchema,
 } from '../core/index.js';
-import { runtimeGeoJsonSourceDiffSchema } from '../adapters/maplibre/index.js';
+import { runtimeGeoJsonSourceDiffSchema } from '../adapters/maplibre/geojson-diff.js';
 import type { JsonObject } from '../core/index.js';
 
 export const BRIDGE_PROTOCOL_VERSION = 2 as const;

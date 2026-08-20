@@ -64,7 +64,10 @@ test('connection form exposes the stable E2E selector/default/submit contract', 
     mapId: 'demo-map',
     url: 'ws://127.0.0.1:7788',
     token: 't'.repeat(32),
-    capabilities: ['style.read', 'style.write', 'features.query', 'runtime.state'],
+    capabilities: [
+      'style.read', 'style.write', 'features.query', 'runtime.state',
+      'assets.write', 'network.load',
+    ],
     allowedResourceOrigins: [],
   });
   assert.equal(ui.getByTestId('bridge-token').value, '');

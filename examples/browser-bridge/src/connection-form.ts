@@ -65,7 +65,10 @@ export function renderExampleConnectionForm(
       mapId: mapId.value,
       url: url.value,
       token: token.value,
-      capabilities: ['style.read', 'style.write', 'features.query', 'runtime.state'],
+      capabilities: [
+        'style.read', 'style.write', 'features.query', 'runtime.state',
+        'assets.write', 'network.load',
+      ],
       allowedResourceOrigins: [],
     });
     token.value = '';

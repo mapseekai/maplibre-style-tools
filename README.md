@@ -313,12 +313,20 @@ const connection = connectMapLibreBridge(map, {
   mapId: 'demo-map',
   url: 'ws://127.0.0.1:7788',
   token: processSuppliedToken,
-  capabilities: ['style.read', 'style.write', 'features.query', 'runtime.state'],
+  capabilities: [
+    'style.read', 'style.write', 'features.query', 'runtime.state',
+    'assets.write', 'network.load',
+  ],
   allowedResourceOrigins: [],
 });
 
 await connection.whenReady();
 ```
+
+Full MCP live-map parity requires granting all six capabilities: `style.read`,
+`style.write`, `features.query`, `runtime.state`, `assets.write`, and
+`network.load`. These capabilities apply to connected live map targets; MCP
+session targets remain offline document workflows.
 
 The token is sent in the first WebSocket frame, never in the URL. The standalone
 example asks for it in an explicit password input and keeps it only for that

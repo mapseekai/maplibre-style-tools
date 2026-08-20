@@ -252,6 +252,9 @@ packageSmoke('packed manifest, NodeNext types, and binary all resolve from the e
 
 test('README documents the capability MCP tools and shared envelope', async () => {
   const readme = await readFile('README.md', 'utf8');
+  const liveBridgeSection = readme.match(
+    /## Live MapLibre browser bridge\n([\s\S]*?)(?=\n## )/u,
+  )?.[1];
   assert.match(readme, /inspectStyle[\s\S]*target[\s\S]*kind/u);
   assert.match(readme, /applyStyleTransaction[\s\S]*transaction[\s\S]*operations/u);
   assert.match(readme, /openStyleSession[\s\S]*closeStyleSession[\s\S]*exportStyleSession/u);
@@ -261,4 +264,11 @@ test('README documents the capability MCP tools and shared envelope', async () =
   assert.match(readme, /maxMessageBytes[\s\S]*responseTooLarge[\s\S]*inbound[\s\S]*outbound/u);
   assert.match(readme, /ResourceUriAdmission[\s\S]*scheme[\s\S]*authority[\s\S]*synchronous/u);
   assert.match(readme, /Streamable HTTP[\s\S]*SSE[\s\S]*batch/u);
+  assert.ok(liveBridgeSection, 'README must contain the live browser bridge section');
+  assert.match(
+    liveBridgeSection,
+    /style\.read[\s\S]*style\.write[\s\S]*features\.query[\s\S]*runtime\.state[\s\S]*assets\.write[\s\S]*network\.load/u,
+  );
+  assert.match(liveBridgeSection, /session targets remain offline document workflows/u);
+  assert.doesNotMatch(liveBridgeSection, /images\.write|protocolVersion:\s*1/u);
 });
