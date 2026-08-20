@@ -1,7 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
+import type { CapabilityResult } from '../capabilities/contracts.js';
 import type {
-  JsonObject,
   JsonValue,
   StyleDiffEntry,
   StyleDocument,
@@ -9,7 +9,6 @@ import type {
   StyleLayer,
   StyleSource,
   SourceLayerUsage,
-  StyleToolError,
   StyleWarning,
 } from '../core/types.js';
 
@@ -24,11 +23,7 @@ export const MAX_STYLE_SESSION_ID_BYTES = 512;
 
 export type McpJsonValue = JsonValue;
 
-export type McpToolMeta = JsonObject;
-
-export type McpToolEnvelope<T = JsonValue> =
-  | (Record<string, unknown> & { ok: true; data: T; meta?: McpToolMeta })
-  | (Record<string, unknown> & { ok: false; error: StyleToolError; meta?: McpToolMeta });
+export type McpToolEnvelope<T = JsonValue> = CapabilityResult<T>;
 
 export type McpTextToolResult<T = JsonValue> = Omit<
   CallToolResult,

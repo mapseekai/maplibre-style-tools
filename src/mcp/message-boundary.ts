@@ -19,13 +19,11 @@ import {
   MIN_MCP_MESSAGE_BYTES,
   type McpMessagePolicy,
   type McpTextToolResult,
-  type McpToolMeta,
   type ResourceUriAdmission,
 } from './types.js';
 import {
   parseStyleToolErrorShape,
   toolFailure,
-  toolSuccess,
 } from './output.js';
 
 type McpTransport = Parameters<McpServer['connect']>[0];
@@ -69,7 +67,7 @@ export const resolveMcpMessagePolicy = (
 
 export interface McpResponseBoundary {
   readonly policy: McpMessagePolicy;
-  requireToolSuccess<T>(data: T, meta?: McpToolMeta): McpTextToolResult<T>;
+  requireToolSuccess<T>(result: T): T;
   requireToolFailure(error: StyleToolError): McpTextToolResult<never>;
   requireResourceResult<T>(result: T): T;
   requireResourceFailure(error: StyleToolError): McpError;
@@ -95,8 +93,7 @@ export const createMcpResponseBoundary = (
     throw invalidInput('invalidMessageLimit', 'The message limit cannot fit fixed MCP errors.');
   }
 
-  const requireToolSuccess = <T>(data: T, meta?: McpToolMeta): McpTextToolResult<T> => {
-    const result = toolSuccess(data, meta);
+  const requireToolSuccess = <T>(result: T): T => {
     if (utf8JsonBytes(result) > policy.applicationResultBytes) throw responseTooLarge();
     return result;
   };

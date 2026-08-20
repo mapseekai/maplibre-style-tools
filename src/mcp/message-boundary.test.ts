@@ -31,7 +31,7 @@ const utf8JsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringi
 
 const parseFailure = (value: { structuredContent: unknown }) => {
   const envelope = parseMcpToolEnvelope(value.structuredContent);
-  if (envelope.ok) assert.fail('expected failure envelope');
+  if (envelope.success) assert.fail('expected failure envelope');
   return envelope;
 };
 

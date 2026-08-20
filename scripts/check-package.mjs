@@ -259,16 +259,19 @@ const packedModules = [
   'adapters/maplibre/schemas',
   'adapters/maplibre/style-hash',
   'adapters/maplibre/types',
-  'ai-sdk/boundary',
-  'ai-sdk/contracts',
-  'ai-sdk/index',
-  'ai-sdk/inspect',
-  'ai-sdk/mutate',
-  'ai-sdk/result',
-  'ai-sdk/runtime',
-  'ai-sdk/schemas',
-  'ai-sdk/shared',
-  'ai-sdk/tools',
+  'ai/index',
+  'ai/tools',
+  'capabilities/authority',
+  'capabilities/boundary',
+  'capabilities/contracts',
+  'capabilities/index',
+  'capabilities/inspect',
+  'capabilities/map-authority',
+  'capabilities/mutate',
+  'capabilities/registry',
+  'capabilities/runtime',
+  'capabilities/schemas',
+  'capabilities/shared',
   'bridge/browser-runtime',
   'bridge/capabilities',
   'bridge/client',
@@ -280,9 +283,9 @@ const packedModules = [
   'bridge/resource-policy',
   'bridge/server',
   'cli/args',
+  'cli/file-authority',
   'cli/file-output',
   'cli/input',
-  'cli/inspect',
   'cli/main',
   'cli/output',
   'cli/run',
@@ -307,28 +310,25 @@ const packedModules = [
   'core/types',
   'core/utf8',
   'core/validation',
-  'engine/style-context',
-  'engine/style-operations',
   'index',
+  'mcp/bridge-authority',
   'mcp/bridge-options',
   'mcp/core-adapters',
   'mcp/create-server',
-  'mcp/document-handlers',
   'mcp/http',
   'mcp/live-extension',
   'mcp/live-resources',
-  'mcp/live-tools',
   'mcp/main',
   'mcp/message-boundary',
   'mcp/output',
   'mcp/resources',
-  'mcp/schemas',
   'mcp/server-extension',
+  'mcp/session-authority',
   'mcp/session-store',
   'mcp/stdio',
+  'mcp/tool-handlers',
   'mcp/types',
   'mcp/version.generated',
-  'types',
 ];
 const packedModuleExtensions = ['.d.ts', '.d.ts.map', '.js', '.js.map'];
 const exactPackedFiles = [
@@ -721,16 +721,16 @@ void [
 const mcpConsumer = `import {
   MAX_MCP_MESSAGE_BYTES,
   MAX_STYLE_SESSION_ID_BYTES,
+  MCP_CAPABILITY_TOOL_NAMES,
+  BridgeMapAuthority,
+  SessionStyleAuthority,
   buildLiveMapMetadataUri,
   buildLiveMapStyleUri,
   createLiveMapMcpExtension,
   createMapLibreStyleMcpServer,
+  createMcpToolHandlers,
   createStyleSessionStore,
-  liveFeatureQueryDataSchema,
-  liveMapListDataSchema,
-  liveMapStyleDataSchema,
-  liveMutationReceiptDataSchema,
-  liveTransactionDataSchema,
+  openStyleSessionInputSchema,
   resolveMcpMessagePolicy,
   runStdioMcp,
   startStreamableHttpMcp,
@@ -773,35 +773,11 @@ const options: CreateMapLibreStyleMcpServerOptions = { store, extensions: [exten
 const stdio: RunStdioMcpOptions = { startupDiagnosticLine: null };
 const http: StartStreamableHttpMcpOptions = { bearerToken: 'secret' };
 const created = createMapLibreStyleMcpServer(options);
-const liveStyleHash = 'a'.repeat(64);
-const liveList = liveMapListDataSchema.parse({ maps: [] });
-const liveStyle = liveMapStyleDataSchema.parse({
-  type: 'style',
-  revision: 0,
-  styleHash: liveStyleHash,
+const sessionOpen = openStyleSessionInputSchema.parse({
   style: { version: 8, sources: {}, layers: [] },
 });
-const liveTransaction = liveTransactionDataSchema.parse({
-  type: 'transaction',
-  detail: 'receipt',
-  revision: 1,
-  styleHash: liveStyleHash,
-  applied: true,
-  noOp: false,
-});
-const liveMutation = liveMutationReceiptDataSchema.parse({
-  type: 'mutationReceipt',
-  command: 'setGlobalState',
-  accepted: true,
-});
-const liveFeatures = liveFeatureQueryDataSchema.parse({
-  type: 'features',
-  features: [],
-  returned: 0,
-  truncated: false,
-  serializedBytes: 2,
-  warnings: [],
-});
+const capabilityNames: readonly string[] = MCP_CAPABILITY_TOOL_NAMES;
+void [SessionStyleAuthority, BridgeMapAuthority, createMcpToolHandlers];
 if (buildLiveMapMetadataUri('consumer-map') !== 'maplibre-style://maps/~consumer-map') {
   throw new Error('unexpected live map metadata URI');
 }
@@ -833,11 +809,8 @@ void [
   http,
   forgedStore,
   asyncExtension,
-  liveList,
-  liveStyle,
-  liveTransaction,
-  liveMutation,
-  liveFeatures,
+  sessionOpen,
+  capabilityNames,
   createLiveMapMcpExtension,
   MAX_MCP_MESSAGE_BYTES,
   MAX_STYLE_SESSION_ID_BYTES,
@@ -930,7 +903,8 @@ import {
   buildLiveMapStyleUri,
   createMapLibreStyleMcpServer,
   createLiveMapMcpExtension,
-  liveMapListDataSchema,
+  createMcpToolHandlers,
+  MCP_CAPABILITY_TOOL_NAMES,
   resolveMcpMessagePolicy,
 } from 'maplibre-style-tools/mcp';
 import {
@@ -948,7 +922,8 @@ assert.equal(typeof runtimeGeoJsonSourceDiffSchema.safeParse, 'function');
 assert.equal(typeof sanitizeRuntimeGeoJsonSourceDiff, 'function');
 assert.equal(typeof createMapLibreStyleMcpServer, 'function');
 assert.equal(typeof createLiveMapMcpExtension, 'function');
-assert.equal(typeof liveMapListDataSchema.safeParse, 'function');
+assert.equal(typeof createMcpToolHandlers, 'function');
+assert.ok(MCP_CAPABILITY_TOOL_NAMES.includes('inspectStyle'));
 assert.equal(resolveMcpMessagePolicy().maxMessageBytes, 5 * 1024 * 1024);
 assert.equal(buildLiveMapMetadataUri('a.b'), 'maplibre-style://maps/~a.b');
 assert.equal(buildLiveMapStyleUri('a.b'), 'maplibre-style://maps/~a.b/style');
@@ -1048,8 +1023,10 @@ try {
     'dist/adapters/maplibre/index.js',
     'dist/adapters/maplibre/index.d.ts',
     'dist/adapters/maplibre/geojson-diff.d.ts',
-    'dist/ai-sdk/index.js',
-    'dist/ai-sdk/index.d.ts',
+    'dist/ai/index.js',
+    'dist/ai/index.d.ts',
+    'dist/capabilities/index.js',
+    'dist/capabilities/index.d.ts',
     'dist/cli/main.js',
     'dist/cli/main.d.ts',
     'dist/mcp/main.js',
@@ -1091,7 +1068,7 @@ try {
   const rootDeclaration = source(join(unpacked, 'dist/index.d.ts'));
   assertion(rootDeclaration.startsWith('/// <reference types="node" preserve="true" />\n/// <reference types="geojson" preserve="true" />'),
     'root declaration references must preserve node then geojson');
-  const aiDeclaration = source(join(unpacked, 'dist/ai-sdk/index.d.ts'));
+  const aiDeclaration = source(join(unpacked, 'dist/ai/index.d.ts'));
   assertion(aiDeclaration.startsWith('/// <reference types="node" preserve="true" />\n'),
     'AI declaration must preserve its own root-level node reference');
   assertion(source(join(unpacked, 'dist/core/types.d.ts')).startsWith('/// <reference types="geojson" preserve="true" />'),
@@ -1105,7 +1082,7 @@ try {
       source(join(unpacked, file)),
     ));
   assert.deepEqual(nodeReferenceFiles, [
-    'dist/ai-sdk/index.d.ts',
+    'dist/ai/index.d.ts',
     'dist/index.d.ts',
     'dist/mcp/http.d.ts',
     'dist/mcp/main.d.ts',
@@ -1153,9 +1130,14 @@ try {
       default: './dist/adapters/maplibre/index.js',
     },
     './ai': {
-      types: './dist/ai-sdk/index.d.ts',
-      import: './dist/ai-sdk/index.js',
-      default: './dist/ai-sdk/index.js',
+      types: './dist/ai/index.d.ts',
+      import: './dist/ai/index.js',
+      default: './dist/ai/index.js',
+    },
+    './capabilities': {
+      types: './dist/capabilities/index.d.ts',
+      import: './dist/capabilities/index.js',
+      default: './dist/capabilities/index.js',
     },
     './mcp': {
       types: './dist/mcp/main.d.ts',
@@ -1205,7 +1187,7 @@ try {
   const fixture = join(consumer, 'style.json');
   writeFileSync(fixture, '{"version":8,"sources":{},"layers":[]}');
   const validation = JSON.parse(runInstalledBinary(['validate', 'style.json']));
-  assert.equal(validation.ok, true);
+  assert.equal(validation.success, true);
   const installedMcpBinary = join(
     consumer, 'node_modules/.bin/maplibre-style-mcp',
   );
@@ -1277,7 +1259,7 @@ try {
     '--noEmit',
     '--listFiles',
   ], consumer);
-  const forbiddenMcpDeclaration = /node_modules\/maplibre-style-tools\/dist\/(?:index\.(?:d\.ts|js)|ai-sdk\/|adapters\/maplibre\/)[^\n]*/m
+  const forbiddenMcpDeclaration = /node_modules\/maplibre-style-tools\/dist\/(?:index\.(?:d\.ts|js)|ai\/|capabilities\/map-authority|adapters\/maplibre\/(?:map-adapter|runtime-commands|feature-query)\.)[^\n]*/m
     .exec(mcpListFiles)?.[0];
   assertion(forbiddenMcpDeclaration === undefined,
     `MCP declaration graph leaked ${forbiddenMcpDeclaration ?? 'a forbidden entry point'}`);

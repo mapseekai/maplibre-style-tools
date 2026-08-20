@@ -155,11 +155,13 @@ describe('compiled CLI process contract', () => {
       'apply', '-', '--operations', operationsPath, '--dry-run',
     ], styleBytes.toString('utf8'));
     assert.equal(stdinApply.code, 0);
-    assert.equal(
-      (JSON.parse(stdinApply.stdout) as { style: StyleDocument })
-        .style.layers[0]?.paint?.['background-color'],
-      '#ffffff',
-    );
+    const stdinApplyResult = JSON.parse(stdinApply.stdout) as {
+      success: boolean;
+      data: { applied: boolean; diff: Array<{ after?: unknown }> };
+    };
+    assert.equal(stdinApplyResult.success, true);
+    assert.equal(stdinApplyResult.data.applied, false);
+    assert.ok(stdinApplyResult.data.diff.some((entry) => entry.after === '#ffffff'));
 
     const dryRun = await spawnCli([
       'apply', stylePath, '--operations', operationsPath, '--dry-run',

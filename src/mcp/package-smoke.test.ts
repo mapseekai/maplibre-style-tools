@@ -250,13 +250,13 @@ packageSmoke('packed manifest, NodeNext types, and binary all resolve from the e
   assert.match(binary.stderr, /Usage:/u);
 });
 
-test('README documents the discoverable nested MCP inputs and error boundary', async () => {
+test('README documents the capability MCP tools and shared envelope', async () => {
   const readme = await readFile('README.md', 'utf8');
-  assert.match(readme, /style_validate[\s\S]*target[\s\S]*kind/u);
-  assert.match(readme, /style_inspect[\s\S]*selection[\s\S]*view/u);
-  assert.match(readme, /SDK schema rejection[\s\S]*business envelope/u);
+  assert.match(readme, /inspectStyle[\s\S]*target[\s\S]*kind/u);
+  assert.match(readme, /applyStyleTransaction[\s\S]*transaction[\s\S]*operations/u);
+  assert.match(readme, /openStyleSession[\s\S]*closeStyleSession[\s\S]*exportStyleSession/u);
+  assert.match(readme, /"success": true, "message"[\s\S]*structuredContent/u);
   assert.match(readme, /sessions\/~\{sessionId\}[\s\S]*raw semantic[\s\S]*RFC6570/u);
-  assert.match(readme, /style_apply_transaction[\s\S]*transaction[\s\S]*core validates/u);
   assert.match(readme, /startupDiagnosticLine[\s\S]*null[\s\S]*composite/u);
   assert.match(readme, /maxMessageBytes[\s\S]*responseTooLarge[\s\S]*inbound[\s\S]*outbound/u);
   assert.match(readme, /ResourceUriAdmission[\s\S]*scheme[\s\S]*authority[\s\S]*synchronous/u);

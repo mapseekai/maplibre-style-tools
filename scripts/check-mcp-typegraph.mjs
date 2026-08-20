@@ -88,9 +88,18 @@ const approvedBridgeFiles = Object.freeze([
   'server.ts',
 ]);
 
+const isMapLibreDeclaration = (normalized) =>
+  normalized.includes('/maplibre-gl/dist/') && normalized.endsWith('.d.ts');
 export const forbiddenProjectPathReason = (file) => {
   const normalized = `/${normalize(file)}`;
-  if (normalized.endsWith('/src/adapters/maplibre/style-hash.ts')) return undefined;
+  if (normalized.includes('/src/capabilities/map-authority.ts')) return '/src/capabilities/map-authority.ts';
+  if (normalized.includes('/src/capabilities/')) return undefined;
+  if ([
+    '/src/adapters/maplibre/types.ts',
+    '/src/adapters/maplibre/schemas.ts',
+    '/src/adapters/maplibre/geojson-diff.ts',
+    '/src/adapters/maplibre/style-hash.ts',
+  ].some((suffix) => normalized.endsWith(suffix))) return undefined;
   const bridgeMarker = '/src/bridge/';
   const bridgeIndex = normalized.lastIndexOf(bridgeMarker);
   if (bridgeIndex >= 0) {
@@ -100,14 +109,18 @@ export const forbiddenProjectPathReason = (file) => {
       : 'unapproved bridge module';
   }
   for (const fragment of [
+    '/src/ai/',
     '/src/ai-sdk/',
     '/src/tools/',
     '/src/engine/',
     '/examples/',
+    '/src/adapters/maplibre/map-adapter.ts',
+    '/src/adapters/maplibre/runtime-commands.ts',
+    '/src/adapters/maplibre/feature-query.ts',
     '/src/adapters/maplibre/',
     '/maplibre-gl/dist/',
   ]) {
-    if (normalized.includes(fragment)) return fragment;
+    if (normalized.includes(fragment) && !isMapLibreDeclaration(normalized)) return fragment;
   }
   if (/\/typescript\/lib\/lib\.dom(?:\.iterable)?\.d\.ts$/.test(normalized)) return 'DOM lib';
   return undefined;

@@ -13,7 +13,11 @@ import {
   DEFAULT_MAX_OPERATIONS,
   DEFAULT_MAX_STYLE_BYTES,
 } from '../core/utf8.js';
-import { applyStyleTransaction, validateStyleDocument } from './core-adapters.js';
+import {
+  applyStyleTransaction,
+  finalizeStyleReplacement,
+  validateStyleDocument,
+} from './core-adapters.js';
 import { MAX_STYLE_SESSION_ID_BYTES } from './types.js';
 import type {
   ApplySessionTransactionResult,
@@ -72,6 +76,11 @@ export interface StyleSessionStore {
   apply(
     sessionId: string,
     request: ApplyStyleSessionRequest,
+  ): Promise<ApplySessionTransactionResult>;
+  replace(
+    sessionId: string,
+    expectedRevision: number,
+    style: unknown,
   ): Promise<ApplySessionTransactionResult>;
   export(sessionId: string, revision?: number): Promise<ExportStyleSessionResult>;
   dispose(): void;
@@ -656,6 +665,51 @@ export function createStyleSessionStoreWithDependencies(
     (result) => result,
   );
 
+
+  const replace = async (
+    sessionId: string,
+    expectedRevision: number,
+    style: unknown,
+  ): Promise<ApplySessionTransactionResult> => {
+    const session = captureSession(sessionId);
+    return enqueue(session, 'apply', () => {
+      const now = clock.now();
+      assertRunnable(session, now);
+      if (expectedRevision !== session.current.revision) {
+        throw sessionError(
+          'REVISION_CONFLICT',
+          'Style session revision does not match the expected revision.',
+          'expectedRevision',
+          { expectedRevision, actualRevision: session.current.revision },
+        );
+      }
+      const result = finalizeStyleReplacement(session.current.style, style, {
+        maxStyleBytes: limits.maxStyleBytes,
+        maxDiffBytes: limits.maxDiffBytes,
+      });
+      if (!result.ok) throw result.error;
+      const nextRevision = session.current.revision + 1;
+      const nextStyle = cloneKnownJson(result.style);
+      const nextDiff = cloneKnownJson(result.diff);
+      session.history.push(session.current);
+      while (session.history.length > limits.maxHistory) session.history.shift();
+      session.current = Object.freeze({
+        revision: nextRevision,
+        style: nextStyle,
+        incomingDiff: nextDiff,
+        committedAt: now,
+      });
+      touch(session, clock.now());
+      return cloneKnownJson({
+        revision: nextRevision,
+        dryRun: false,
+        diff: nextDiff,
+        changedLayers: result.changedLayers,
+        changedSources: result.changedSources,
+        warnings: result.warnings,
+      });
+    });
+  };
   const close = async (sessionId: string): Promise<CloseStyleSessionResult> => {
     const session = captureSession(sessionId);
     session.closing = true;
@@ -681,6 +735,7 @@ export function createStyleSessionStoreWithDependencies(
     read,
     readRevision,
     apply,
+    replace,
     export: exportStyle,
     dispose,
   } as StyleSessionStore;

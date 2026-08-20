@@ -7,10 +7,10 @@ import { z } from 'zod';
 import { STYLE_TOOL_ERROR_CODES } from '../core/errors.js';
 import { jsonValueSchema } from '../core/schemas.js';
 import type { JsonObject, JsonValue, StyleToolError } from '../core/types.js';
+import type { CapabilityResult } from '../capabilities/contracts.js';
 import type {
   McpTextToolResult,
   McpToolEnvelope,
-  McpToolMeta,
 } from './types.js';
 
 const jsonObjectWireSchema = jsonValueSchema.refine(
@@ -27,20 +27,18 @@ export const styleToolErrorWireSchema = z.strictObject({
   details: jsonObjectWireSchema.optional(),
 });
 
-const mcpToolMetaSchema = jsonObjectWireSchema;
-
 export const createMcpToolEnvelopeSchema = <DataSchema extends z.ZodTypeAny>(
   dataSchema: DataSchema,
-) => z.discriminatedUnion('ok', [
+) => z.discriminatedUnion('success', [
   z.strictObject({
-    ok: z.literal(true),
+    success: z.literal(true),
+    message: z.string(),
     data: dataSchema,
-    meta: mcpToolMetaSchema.optional(),
   }),
   z.strictObject({
-    ok: z.literal(false),
+    success: z.literal(false),
+    message: z.string(),
     error: styleToolErrorWireSchema,
-    meta: mcpToolMetaSchema.optional(),
   }),
 ]);
 
@@ -64,13 +62,21 @@ const toMcpResult = <T>(
   };
 };
 
-export const toolSuccess = <T>(data: T, meta?: McpToolMeta): McpTextToolResult<T> =>
-  toMcpResult<T>({ ok: true, data, ...(meta === undefined ? {} : { meta }) });
+export const toolSuccess = <T>(message: string, data: T): McpTextToolResult<T> =>
+  toMcpResult<T>({ success: true, message, data });
 
 export const toolFailure = (error: StyleToolError): McpTextToolResult<never> => {
   const sanitizedError = styleToolErrorWireSchema.parse(error);
-  return toMcpResult<never>({ ok: false, error: sanitizedError }, true);
+  return toMcpResult<never>({ success: false, message: sanitizedError.message, error: sanitizedError }, true);
 };
+
+export const capabilityToolResult = <Data extends JsonValue>(
+  result: CapabilityResult<Data>,
+): McpTextToolResult<Data> => ({
+  content: [{ type: 'text', text: JSON.stringify(result) }],
+  structuredContent: result,
+  ...(result.success ? {} : { isError: true }),
+});
 
 const compatibilityWrapperError = (): TypeError =>
   new TypeError('MCP compatibility wrapper is not an official call tool result.');

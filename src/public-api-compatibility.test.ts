@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createMapLibreStyleTools } from './ai-sdk/index.js';
+import { createMapLibreStyleTools } from './ai/index.js';
 import type {
   AiStyleToolResult,
   ApplyStyleDocumentInput,
@@ -14,7 +14,7 @@ import type {
   QueryMapFeaturesInput,
   RunMapCommandInput,
   StyleMutationReceipt,
-} from './ai-sdk/index.js';
+} from './ai/index.js';
 
 // @ts-expect-error root AI factory was removed.
 import type { createMapLibreStyleTools as RootFactory } from './index.js';
@@ -31,11 +31,11 @@ import type { StyleOperation } from './index.js';
 // @ts-expect-error root legacy operation result was removed.
 import type { StyleOperationResult } from './index.js';
 // @ts-expect-error compact AI factory was removed from /ai.
-import type { createCompactMapLibreStyleTools } from './ai-sdk/index.js';
+import type { createCompactMapLibreStyleTools } from './ai/index.js';
 // @ts-expect-error legacy AI name arrays were removed.
-import type { FULL_LEGACY_TOOL_NAMES } from './ai-sdk/index.js';
+import type { FULL_LEGACY_TOOL_NAMES } from './ai/index.js';
 // @ts-expect-error legacy parser module was removed.
-import type { parseStrictJson } from './ai-sdk/compatibility.js';
+import type { parseStrictJson } from  './ai/compatibility.js';
 // @ts-expect-error legacy result converter was removed.
 import type { toAiToolResult } from './ai-sdk/result.js';
 // The imports above intentionally fail to verify removed public exports. The type-only
@@ -75,7 +75,7 @@ void (null as unknown as NewAiSurface);
 
 test('removes legacy AI factories from root and exposes only the unified /ai factory', async () => {
   const root = await import('./index.js');
-  const ai = await import('./ai-sdk/index.js');
+  const ai = await import('./ai/index.js');
   assert.equal('createMapLibreStyleTools' in root, false);
   assert.equal('createCompactMapLibreStyleTools' in root, false);
   assert.deepEqual(Object.keys(ai), ['createMapLibreStyleTools']);

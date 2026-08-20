@@ -43,7 +43,6 @@ export type {
   McpResourceResult,
   McpTextToolResult,
   McpToolEnvelope,
-  McpToolMeta,
   ResourceUriAdmission,
   RevisionSnapshot,
   SessionRevisionMetadata,
@@ -70,30 +69,15 @@ export {
 } from './session-store.js';
 export type { StyleSessionStore } from './session-store.js';
 export {
-  DOCUMENT_TOOL_NAMES,
-  documentToolInputSchemas,
-  documentToolResponseDataSchemas,
-  parseDocumentToolSuccessData,
-  styleAnalyzeGeoJsonDataSchema,
-  styleAnalyzeGeoJsonInputSchema,
-  styleApplyTransactionDataSchema,
-  styleApplyTransactionInputSchema,
-  styleExportDataSchema,
-  styleExportInputSchema,
-  styleInspectDataSchema,
-  styleInspectInputSchema,
-  styleSearchLayersDataSchema,
-  styleSearchLayersInputSchema,
-  styleSessionCloseDataSchema,
-  styleSessionCloseInputSchema,
-  styleSessionOpenDataSchema,
-  styleSessionOpenInputSchema,
-  styleValidateDataSchema,
-  styleValidateInputSchema,
-} from './schemas.js';
-export type { DocumentToolName } from './schemas.js';
-export { createDocumentToolHandlers } from './document-handlers.js';
-export type { DocumentToolHandlers } from './document-handlers.js';
+  MCP_CAPABILITY_TOOL_NAMES,
+  createMcpToolHandlers,
+  openStyleSessionInputSchema,
+  closeStyleSessionInputSchema,
+  exportStyleSessionInputSchema,
+} from './tool-handlers.js';
+export type { McpCapabilityToolName, McpToolHandlers } from './tool-handlers.js';
+export { SessionStyleAuthority } from './session-authority.js';
+export { BridgeMapAuthority } from './bridge-authority.js';
 export {
   createResourceResolver,
   documentResourceUriAdmission,
@@ -119,13 +103,6 @@ export type {
   CreateMapLibreStyleMcpServerOptions,
 } from './create-server.js';
 export { createLiveMapMcpExtension } from './live-extension.js';
-export {
-  liveFeatureQueryDataSchema,
-  liveMapListDataSchema,
-  liveMapStyleDataSchema,
-  liveMutationReceiptDataSchema,
-  liveTransactionDataSchema,
-} from './live-tools.js';
 export {
   buildLiveMapMetadataUri,
   buildLiveMapStyleUri,

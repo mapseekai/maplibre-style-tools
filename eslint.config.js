@@ -7,6 +7,7 @@ export default defineConfig([
     'dist',
     '.tmp',
     'node_modules',
+    '.worktrees',
     'examples/browser-bridge/dist',
     'playwright-report',
     'test-results',

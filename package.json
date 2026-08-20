@@ -24,9 +24,9 @@
       "default": "./dist/adapters/maplibre/index.js"
     },
     "./ai": {
-      "types": "./dist/ai-sdk/index.d.ts",
-      "import": "./dist/ai-sdk/index.js",
-      "default": "./dist/ai-sdk/index.js"
+      "types": "./dist/ai/index.d.ts",
+      "import": "./dist/ai/index.js",
+      "default": "./dist/ai/index.js"
     },
     "./mcp": {
       "types": "./dist/mcp/main.d.ts",
@@ -37,6 +37,11 @@
       "types": "./dist/bridge/index.d.ts",
       "import": "./dist/bridge/index.js",
       "default": "./dist/bridge/index.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities/index.d.ts",
+      "import": "./dist/capabilities/index.js",
+      "default": "./dist/capabilities/index.js"
     }
   },
   "bin": {

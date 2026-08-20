@@ -2,6 +2,8 @@
 /// <reference types="geojson" preserve="true" />
 
 export type {
+  CoreExecutionLimits,
+  JsonObject,
   LayerSearchQuery,
   LayerSearchResult,
   LayerSummary,
@@ -10,9 +12,6 @@ export type {
   StyleDiffEntry,
   StyleDocument,
   StyleLayer,
-} from './types.js';
-export type {
-  CoreExecutionLimits,
   StyleOperation as CoreStyleOperation,
   StyleDiffEntry as CoreStyleDiffEntry,
   StyleReplacementOptions,

@@ -1,8 +1,16 @@
 # maplibre-style-tools
 
-AI SDK tools for inspecting and editing MapLibre GL styles.
+AI-driven tools for inspecting and editing MapLibre GL styles.
 
-The package exposes one AI SDK tool set for inspecting and editing MapLibre styles. It is currently maintained as a standalone local project and has not been published to npm.
+One transport-neutral capability layer (`/capabilities`) defines the five style
+capabilities — `inspectStyle`, `applyStyleTransaction`, `applyStyleDocument`,
+`runMapCommand`, `queryMapFeatures` — including their strict input schemas,
+descriptions, and bounded result envelopes. Three thin interfaces expose the
+same capabilities: an AI SDK tool factory (`/ai`), an MCP server (`/mcp`), and
+the `maplibre-style` CLI. Each interface supplies its own style authority
+(in-process map, bounded document session, bridged live map, or style file);
+capability semantics are defined once in the core. It is currently maintained
+as a standalone local project and has not been published to npm.
 
 ## Requirements
 
@@ -53,16 +61,17 @@ for the import, capability, and input-field cutover.
 
 ## Entry points
 
-The package has six supported entry points:
+The package has seven supported entry points:
 
 - `maplibre-style-tools` contains the non-AI package exports.
 - `maplibre-style-tools/core` is the transport-neutral transaction, validation, GeoJSON, analysis, and discovery API. It requires neither DOM nor Node ambient types.
 - `maplibre-style-tools/maplibre` applies prepared transactions to MapLibre maps and exposes bounded live-map commands. It may use DOM types but does not load Node ambient types.
-- `maplibre-style-tools/ai` exports the unified AI SDK factory, its strict native-input schemas, and the discriminated result envelope.
-- `maplibre-style-tools/mcp` exports the bounded, in-memory MCP server factory, transport runners, schemas, URI helpers, and session types.
+- `maplibre-style-tools/capabilities` is the transport-neutral capability layer: the five capability executors, their strict input schemas, the capability registry, the result envelope, and the `StyleAuthority`/`RuntimeAuthority` interfaces each interface implements.
+- `maplibre-style-tools/ai` is the AI SDK interface: `createMapLibreStyleTools` wraps the capability registry as five AI SDK tools over an in-process map.
+- `maplibre-style-tools/mcp` is the MCP interface: the bounded server factory, transport runners, session store, live-bridge extension, and URI helpers. It exposes the same five capabilities plus session-management tools.
 - `maplibre-style-tools/bridge` is the browser-safe live MapLibre client, protocol, capability, hashing, and resource-policy API. It exports no Node WebSocket server state.
 
-The `/ai` and `/mcp` declaration graphs intentionally load their required Node types. Import `/core`, `/maplibre`, or `/bridge` directly when that ambient dependency is undesirable.
+The `/ai` and `/mcp` declaration graphs intentionally load their required Node types. Import `/core`, `/maplibre`, `/capabilities`, or `/bridge` directly when that ambient dependency is undesirable.
 
 ## Pure core
 
@@ -157,15 +166,18 @@ if (parsed.success) {
 
 Rendered/source feature queries are adapter-only and bounded by both feature count and serialized bytes. Returned feature objects are projected into JSON snapshots with an optional property allowlist; truncation is explicit rather than returning an unbounded MapLibre object graph.
 
-### AI result contract
+### Capability result contract
 
-Every `/ai` tool returns one discriminated envelope:
+Every capability returns one discriminated envelope, identical across the AI
+SDK, MCP, and CLI interfaces:
 
 ```ts
-type AiStyleToolResult<TData> =
+type CapabilityResult<TData> =
   | { success: true; message: string; data: TData }
   | { success: false; message: string; error: StyleToolError };
 ```
+
+(`/ai` exports this shape under the `AiStyleToolResult` alias.)
 
 Successful results contain `data`; failures contain an authentic
 package-created `StyleToolError`. The unified AI surface does not accept
@@ -205,7 +217,9 @@ maplibre-style apply style.json --operations operations.json --in-place --backup
 Use `-` in place of either the Style path or the operations path to read that
 input from stdin. A single invocation cannot read both inputs from stdin.
 Stdout contains exactly one JSON value while the stream remains writable,
-including the `--help` envelope; diagnostics go to stderr. Exit codes are `0`
+including the `--help` envelope; diagnostics go to stderr. Command results are
+the shared capability envelope (`{ "success", "message", "data" | "error" }`).
+Exit codes are `0`
 for success, `1` for a valid request rejected by Style or transaction
 semantics, `2` for arguments/input/JSON errors, and `3` for output or internal
 failures.
@@ -336,16 +350,20 @@ the actual bound `mcpUrl`, which clients must use for endpoint discovery. A
 caller-supplied bridge token is intentionally omitted from stderr; a generated
 token is reported once so the browser can connect.
 
-Live mutations use both pieces of current optimistic-concurrency authority:
+Live mutations target a connected map through the capability envelope. The
+bridge authority reads the map's current revision and style hash immediately
+before committing, so callers do not supply optimistic-concurrency state:
 
 ```json
-{"name":"map_apply_transaction","arguments":{"mapId":"demo-map","expectedRevision":4,"expectedStyleHash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","transaction":{"operations":[{"op":"setLayerProperties","layerId":"roads","paint":{"line-color":"#4c78a8"}}]}}}
+{"name":"applyStyleTransaction","arguments":{"target":{"kind":"map","mapId":"demo-map"},"input":{"transaction":{"operations":[{"op":"setLayerProperties","layerId":"roads","paint":{"line-color":"#4c78a8"}}]}}}}
 ```
 
-A caller receiving `REVISION_CONFLICT` must read the current map state, resync
-its intent, and deliberately submit a new request; neither MCP nor the browser
-client retries mutations. Other stable live errors include
-`BRIDGE_DISCONNECTED`, `CAPABILITY_DENIED`, `MAP_NOT_READY`, and `TIMEOUT`.
+If the map changed between that read and the commit, the bridge rejects the
+mutation and the caller receives a `REVISION_CONFLICT` failure; it must read
+the current map state, resync its intent, and deliberately submit a new
+request. Neither MCP nor the browser client retries mutations. Other stable
+live errors include `BRIDGE_DISCONNECTED`, `CAPABILITY_DENIED`, `MAP_NOT_READY`,
+and `TIMEOUT`.
 
 ### Live resources and canonical map IDs
 
@@ -436,58 +454,67 @@ never replayed on the replacement connection.
 
 ### Tools and lifecycle
 
-The server advertises exactly eight document tools:
+The server exposes the five shared capabilities plus three session-management
+tools. Capability tools take a strict `{ "target", "input" }` object: `input`
+is the capability's own strict input (identical to the `/ai` and CLI inputs),
+and `target` routes the style authority:
 
-| Tool | Title | Description |
-| --- | --- | --- |
-| `style_session_open` | Open style session | Open one bounded in-memory session from inline Style JSON. |
-| `style_session_close` | Close style session | Close one in-memory style session. |
-| `style_validate` | Validate style | Validate inline Style JSON or one open session snapshot. |
-| `style_inspect` | Inspect style | Read one context, layer, source, or source-layer view from a session. |
-| `style_search_layers` | Search style layers | Search layer summaries in one session without mutation. |
-| `style_analyze_geojson` | Analyze GeoJSON | Analyze inline GeoJSON or one session GeoJSON source. |
-| `style_apply_transaction` | Apply style transaction | Dry-run or commit one revision-checked transaction. Its `transaction` field is intentionally SDK-opaque; core validates the bounded `{ "operations": [...] }` shape. |
-| `style_export` | Export style snapshot | Export the current or one retained revision of a session. |
+- `{ "kind": "session", "sessionId": "...", "expectedRevision": 0 }` operates
+  on a bounded in-memory document session with revision-checked commits.
+- `{ "kind": "map", "mapId": "..." }` operates on a live browser map connected
+  through the bridge extension. `runMapCommand` and `queryMapFeatures` require
+  a map target.
+- `inspectStyle` actions `validateDocument`, `validateTransaction`, and
+  `analyzeGeoJson` are authority-free; `target` may be omitted for them.
+
+| Tool | Description |
+| --- | --- |
+| `inspectStyle` | Inspect a style, its validated structure, and GeoJSON inputs without mutation. |
+| `applyStyleTransaction` | Apply one strict style transaction to the target authority. |
+| `applyStyleDocument` | Apply a validated style document or absolute style URL. Session targets replace the session style with revision checks. Live bridge targets do not support whole-document application. |
+| `runMapCommand` | Run a bounded runtime command on a live map target. Commands without a bridge command (`updateGeoJsonData`, `setSourceTileLodParams`, sprites) fail with `CAPABILITY_DENIED`. |
+| `queryMapFeatures` | Query bounded source or rendered features from a live map target. |
+| `openStyleSession` | Open one bounded in-memory session from inline Style JSON. |
+| `closeStyleSession` | Close one in-memory style session. |
+| `exportStyleSession` | Export the current or one retained revision of a session. |
 
 Open a session, commit only against the expected revision, and export the same
 or a retained revision:
 
 ```json
-{"name":"style_session_open","arguments":{"style":{"version":8,"sources":{},"layers":[]}}}
+{"name":"openStyleSession","arguments":{"style":{"version":8,"sources":{},"layers":[]}}}
 ```
 
 ```json
-{"name":"style_apply_transaction","arguments":{"sessionId":"SESSION","expectedRevision":0,"dryRun":true,"transaction":{"operations":[{"op":"setStyleRootProperties","metadata":{"owner":"maps"}}]}}}
+{"name":"applyStyleTransaction","arguments":{"target":{"kind":"session","sessionId":"SESSION","expectedRevision":0},"input":{"dryRun":true,"transaction":{"operations":[{"op":"setStyleRootProperties","properties":{"metadata":{"owner":"maps"}}}]}}}}
 ```
 
 ```json
-{"name":"style_export","arguments":{"sessionId":"SESSION","revision":0}}
+{"name":"exportStyleSession","arguments":{"sessionId":"SESSION","revision":0}}
 ```
 
 A dry run returns the semantic diff but does not advance revision or history. A
 commit is atomic, requires the exact current revision, advances it once, and
-retains at most 20 history entries. Defaults are 32 sessions, a 5 MiB Style, 100
+retains at most 20 history entries. Successful session mutations include the
+new `revision` in `data`. Defaults are 32 sessions, a 5 MiB Style, 100
 operations, a 1 MiB diff, and a 30-minute idle TTL; generated session IDs are
 limited to 512 UTF-8 bytes.
 
-Nested discovery inputs are ordinary JSON objects. For example:
+Inspect a session layer or validate inline JSON without any authority:
 
 ```json
-{"name":"style_validate","arguments":{"target":{"kind":"inline","style":{"version":8,"sources":{},"layers":[]}}}}
+{"name":"inspectStyle","arguments":{"target":{"kind":"session","sessionId":"SESSION"},"input":{"action":"getLayer","layerId":"roads"}}}
 ```
 
 ```json
-{"name":"style_analyze_geojson","arguments":{"target":{"kind":"sessionSource","sessionId":"SESSION","sourceId":"points"}}}
+{"name":"inspectStyle","arguments":{"input":{"action":"validateDocument","style":{"version":8,"sources":{},"layers":[]}}}}
 ```
 
-```json
-{"name":"style_inspect","arguments":{"sessionId":"SESSION","selection":{"view":"layer","layerId":"roads"}}}
-```
-
-An SDK schema rejection happens before a handler enters and therefore uses the
-SDK error shape. After handler entry, validation and domain failures use the
-stable business envelope `{ "ok": false, "error": { ... } }`. Successful tool
-results keep their JSON text content equal to `structuredContent`.
+All tool results use the shared capability envelope
+`{ "success": true, "message": ..., "data": ... }` or
+`{ "success": false, "message": ..., "error": { ... } }`, identical across the
+MCP, AI SDK, and CLI interfaces. Successful tool results keep their JSON text
+content equal to `structuredContent`.
 
 ### Resources and canonical identifiers
 

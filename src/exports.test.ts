@@ -364,7 +364,7 @@ test('loads transport-neutral core without MapLibre or AI SDK side effects', asy
 });
 test('loads the exact unified AI and MapLibre entry points', async () => {
   // Load compiled entry points directly so this source test does not depend on a stale package build.
-  const ai = await import('./ai-sdk/index.js');
+  const ai = await import('./ai/index.js');
   const maplibre = await import('./adapters/maplibre/index.js');
   assert.deepEqual(Object.keys(ai), ['createMapLibreStyleTools']);
   assert.equal(typeof maplibre.applyTransactionToMap, 'function');

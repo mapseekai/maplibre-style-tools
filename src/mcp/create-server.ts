@@ -1,10 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
+import type { LiveMapRegistry } from '../bridge/registry.js';
 import {
   createStyleToolError,
   isStyleToolError,
 } from '../core/index.js';
-import { createDocumentToolHandlers } from './document-handlers.js';
+import { createMcpToolHandlers } from './tool-handlers.js';
 import {
   assertInboundMcpFraming,
   createBoundedMcpTransport,
@@ -61,7 +62,7 @@ export interface ServerCompositionDependencies {
   readonly responseBoundaryFactory: typeof createMcpResponseBoundary;
   readonly storeFactory: typeof createStyleSessionStore;
   readonly serverFactory: (info: { name: string; version: string }) => McpServer;
-  readonly handlerFactory: typeof createDocumentToolHandlers;
+  readonly handlerFactory: typeof createMcpToolHandlers;
   readonly resourceFactory: typeof createResourceResolver;
   readonly resourceAdmissionRegistryFactory: typeof createResourceUriAdmissionRegistry;
   readonly boundedTransportFactory: typeof createBoundedMcpTransport;
@@ -74,7 +75,7 @@ export const defaultServerCompositionDependencies: ServerCompositionDependencies
   responseBoundaryFactory: createMcpResponseBoundary,
   storeFactory: createStyleSessionStore,
   serverFactory: (info: { name: string; version: string }) => new McpServer(info),
-  handlerFactory: createDocumentToolHandlers,
+  handlerFactory: createMcpToolHandlers,
   resourceFactory: createResourceResolver,
   resourceAdmissionRegistryFactory: createResourceUriAdmissionRegistry,
   boundedTransportFactory: createBoundedMcpTransport,
@@ -279,23 +280,27 @@ const createExtensionContext = (
   messagePolicy: McpMessagePolicy,
   responseBoundary: McpResponseBoundary,
   register: ResourceUriAdmissionRegistry['register'],
-): McpServerExtensionContext => Object.freeze({
-  messagePolicy,
-  responseBoundary,
-  registerResourceUriAdmission: register,
-  guardResourceHandler: <Args extends unknown[], Result>(
-    handler: (...args: Args) => Result | Promise<Result>,
-  ) => async (...args: Args): Promise<Result> => {
-    try {
-      return responseBoundary.requireResourceResult(await handler(...args));
-    } catch (error: unknown) {
-      throw responseBoundary.requireResourceFailure(
-        isStyleToolError(error) ? error : internalResourceFailure(),
-      );
-    }
-  },
-});
-
+): McpServerExtensionContext => {
+  let liveMapRegistry: LiveMapRegistry | undefined;
+  return Object.freeze({
+    messagePolicy,
+    responseBoundary,
+    registerResourceUriAdmission: register,
+    setLiveMapRegistry: (registry: LiveMapRegistry) => { liveMapRegistry = registry; },
+    getLiveMapRegistry: () => liveMapRegistry,
+    guardResourceHandler: <Args extends unknown[], Result>(
+      handler: (...args: Args) => Result | Promise<Result>,
+    ) => async (...args: Args): Promise<Result> => {
+      try {
+        return responseBoundary.requireResourceResult(await handler(...args));
+      } catch (error: unknown) {
+        throw responseBoundary.requireResourceFailure(
+          isStyleToolError(error) ? error : internalResourceFailure(),
+        );
+      }
+    },
+  });
+};
 const rejectInvalidExtensionReturn = (returned: unknown): never => {
   if ((typeof returned === 'object' && returned !== null) || typeof returned === 'function') {
     try {
@@ -382,11 +387,10 @@ export const createMapLibreStyleMcpServerWithDependencies = (
   );
 
   try {
-    const handlers = dependencies.handlerFactory(store, responseBoundary);
     const resources = dependencies.resourceFactory(store, responseBoundary);
     const extensions = [
-      createMcpServerExtension({ handlers, resources }),
       ...(options.extensions ?? []),
+      createMcpServerExtension({ store, resources }),
     ];
     for (const extension of extensions) {
       const returned: unknown = extension(server, extensionContext);
