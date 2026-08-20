@@ -928,7 +928,7 @@ assert.equal(resolveMcpMessagePolicy().maxMessageBytes, 5 * 1024 * 1024);
 assert.equal(buildLiveMapMetadataUri('a.b'), 'maplibre-style://maps/~a.b');
 assert.equal(buildLiveMapStyleUri('a.b'), 'maplibre-style://maps/~a.b/style');
 assert.equal(typeof connectMapLibreBridge, 'function');
-assert.equal(BRIDGE_PROTOCOL_VERSION, 1);
+assert.equal(BRIDGE_PROTOCOL_VERSION, 2);
 assert.equal(typeof canonicalizeJson, 'function');
 assert.equal(typeof sha256CanonicalJson, 'function');
 const finalized = finalizeStyleReplacement(
@@ -981,7 +981,7 @@ try {
   const bridge = await import('maplibre-style-tools/bridge');
   assertion(typeof bridge.connectMapLibreBridge === 'function',
     'browser bridge client is missing');
-  assertion(bridge.BRIDGE_PROTOCOL_VERSION === 1,
+  assertion(bridge.BRIDGE_PROTOCOL_VERSION === 2,
     'browser bridge protocol version is incorrect');
   assertion(typeof bridge.canonicalizeJson === 'function',
     'browser canonical JSON export is missing');
