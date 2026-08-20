@@ -4,7 +4,7 @@ import { DEFAULT_MAX_OPERATIONS } from './utf8.js';
 import { classifyFilter, LEGACY_FILTER_MESSAGE } from './operations/filters.js';
 import type {
   AddGeoJsonLayerOperation, AddLayerFromSourceOperation, AddSourceOperation,
-  AddLayerDefinitionOperation, CompatibilityStyleOperation,
+  AddLayerDefinitionOperation, DefinitionStyleOperation,
   DeepMergeLayerDefinitionOperation, DeepMergeSourceDefinitionOperation,
   DuplicateLayerOperation, DuplicateSourceOperation,
   GeoJsonAnalysisInput, GeoJsonAnalysisOptions, GeoJsonLimits,
@@ -376,9 +376,9 @@ const REPLACE_ROOT_PROPERTIES = new Set([
   'metadata', 'transition', 'sky', 'projection', 'terrain',
 ]);
 
-function fallbackCompatibilityOperation(
+function fallbackDefinitionOperation(
   value: JsonValue,
-  expectedOperation?: CompatibilityStyleOperation['op'],
+  expectedOperation?: DefinitionStyleOperation['op'],
 ): JsonValue | undefined {
   if (!isJsonObject(value)) return undefined;
   const operation = ownValue(value, 'op');
@@ -1123,7 +1123,7 @@ function fallbackOperation(value: JsonValue): JsonValue | undefined {
     ?? fallbackFilterOperation(value, 'setGeoJsonSourceFilter')
     ?? fallbackSourceOperation(value)
     ?? fallbackLayerLifecycleOperation(value)
-    ?? fallbackCompatibilityOperation(value);
+    ?? fallbackDefinitionOperation(value);
 }
 
 function fallbackSetLayerOperationIssue(value: JsonValue): z.core.$ZodIssue | undefined {
@@ -2162,7 +2162,7 @@ const addLayerDefinitionOperationInnerSchema = z.object({
 export const addLayerDefinitionOperationSchema = sanitizeBefore(
   addLayerDefinitionOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'addLayerDefinition'),
+  (value) => fallbackDefinitionOperation(value, 'addLayerDefinition'),
 );
 
 const deepMergeLayerDefinitionOperationInnerSchema = z.object({
@@ -2176,7 +2176,7 @@ const deepMergeLayerDefinitionOperationInnerSchema = z.object({
 export const deepMergeLayerDefinitionOperationSchema = sanitizeBefore(
   deepMergeLayerDefinitionOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'deepMergeLayerDefinition'),
+  (value) => fallbackDefinitionOperation(value, 'deepMergeLayerDefinition'),
 );
 
 const replaceLayerDefinitionOperationInnerSchema = z.object({
@@ -2190,7 +2190,7 @@ const replaceLayerDefinitionOperationInnerSchema = z.object({
 export const replaceLayerDefinitionOperationSchema = sanitizeBefore(
   replaceLayerDefinitionOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'replaceLayerDefinition'),
+  (value) => fallbackDefinitionOperation(value, 'replaceLayerDefinition'),
 );
 
 const deepMergeSourceDefinitionOperationInnerSchema = z.object({
@@ -2202,7 +2202,7 @@ const deepMergeSourceDefinitionOperationInnerSchema = z.object({
 export const deepMergeSourceDefinitionOperationSchema = sanitizeBefore(
   deepMergeSourceDefinitionOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'deepMergeSourceDefinition'),
+  (value) => fallbackDefinitionOperation(value, 'deepMergeSourceDefinition'),
 );
 
 const replaceSourceDefinitionOperationInnerSchema = z.object({
@@ -2214,7 +2214,7 @@ const replaceSourceDefinitionOperationInnerSchema = z.object({
 export const replaceSourceDefinitionOperationSchema = sanitizeBefore(
   replaceSourceDefinitionOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'replaceSourceDefinition'),
+  (value) => fallbackDefinitionOperation(value, 'replaceSourceDefinition'),
 );
 
 const replaceRootPropertyOperationInnerSchema = z.object({
@@ -2226,7 +2226,7 @@ const replaceRootPropertyOperationInnerSchema = z.object({
 export const replaceRootPropertyOperationSchema = sanitizeBefore(
   replaceRootPropertyOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'replaceRootProperty'),
+  (value) => fallbackDefinitionOperation(value, 'replaceRootProperty'),
 );
 
 const shallowPatchRootPropertyOperationInnerSchema = z.object({
@@ -2238,7 +2238,7 @@ const shallowPatchRootPropertyOperationInnerSchema = z.object({
 export const shallowPatchRootPropertyOperationSchema = sanitizeBefore(
   shallowPatchRootPropertyOperationInnerSchema,
   undefined,
-  (value) => fallbackCompatibilityOperation(value, 'shallowPatchRootProperty'),
+  (value) => fallbackDefinitionOperation(value, 'shallowPatchRootProperty'),
 );
 
 const styleOperationInnerSchema = z.discriminatedUnion('op', [

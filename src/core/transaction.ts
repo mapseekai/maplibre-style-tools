@@ -12,7 +12,7 @@ import {
 import { applyRootOperation } from './operations/root.js';
 import { cloneStrictJsonValue } from './operations/shared.js';
 import { applySourceOperation } from './operations/sources.js';
-import { applyCompatibilityStyleOperation } from './operations/compatibility.js';
+import { applyDefinitionStyleOperation } from './operations/definitions.js';
 import { createStyleTransactionSchema } from './schemas.js';
 import type {
   CoreExecutionLimits,
@@ -385,7 +385,7 @@ function applyOperation(
       case 'replaceSourceDefinition':
       case 'replaceRootProperty':
       case 'shallowPatchRootProperty':
-        return applyCompatibilityStyleOperation(style, operation, context);
+        return applyDefinitionStyleOperation(style, operation, context);
       default:
         return assertNever(operation as UnhandledStyleOperation);
     }

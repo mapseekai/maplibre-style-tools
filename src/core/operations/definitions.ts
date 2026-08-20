@@ -1,8 +1,7 @@
 import { jsonValuesEqual } from '../diff.js';
 import { createStyleToolError } from '../errors.js';
-import { applyStyleTransaction } from '../transaction.js';
 import type {
-  CompatibilityStyleOperation,
+  DefinitionStyleOperation,
   JsonObject,
   JsonValue,
   OperationApplyResult,
@@ -10,8 +9,6 @@ import type {
   StyleDocument,
   StyleLayer,
   StyleSource,
-  StyleTransactionOptions,
-  StyleTransactionResult,
 } from '../types.js';
 import { cloneStrictJsonValue } from './shared.js';
 
@@ -28,7 +25,7 @@ function defineValue(target: JsonObject, key: string, value: JsonValue): void {
   });
 }
 
-/** Legacy deep merge: recurse through objects and retain null as a value. */
+/** Deep merge definitions while retaining explicit null values. */
 function deepMergeDefinition(base: JsonValue, patch: JsonObject): JsonObject {
   const result = isJsonObject(base) ? cloneStrictJsonValue(base) : {};
   const safePatch = cloneStrictJsonValue(patch);
@@ -99,7 +96,7 @@ function defineSource(
 
 function applyLayerDefinition(
   style: StyleDocument,
-  operation: Extract<CompatibilityStyleOperation, {
+  operation: Extract<DefinitionStyleOperation, {
     op: 'addLayerDefinition' | 'deepMergeLayerDefinition' | 'replaceLayerDefinition';
   }>,
   context: OperationContext,
@@ -143,9 +140,9 @@ function applyLayerDefinition(
   return { ok: true, changed: true };
 }
 
-export function applyCompatibilityStyleOperation(
+export function applyDefinitionStyleOperation(
   style: StyleDocument,
-  operation: CompatibilityStyleOperation,
+  operation: DefinitionStyleOperation,
   context: OperationContext,
 ): OperationApplyResult {
   switch (operation.op) {
@@ -206,12 +203,4 @@ export function applyCompatibilityStyleOperation(
       return { ok: true, changed: true };
     }
   }
-}
-
-export function applyValidatedCompatibilityEdit(
-  style: StyleDocument,
-  operation: CompatibilityStyleOperation,
-  options: StyleTransactionOptions = {},
-): StyleTransactionResult {
-  return applyStyleTransaction(style, { operations: [operation] }, options);
 }

@@ -53,12 +53,6 @@ const result = await applyStyleTransaction.execute({
 `queryMapFeatures`. Pass the returned object to an AI SDK `tools` set, or call
 each tool's `.execute(input)` method directly.
 
-This is a breaking `0.x` minor API change. The root package exports neither AI
-factory, and no legacy aliases, compatibility parsers, or string-encoded JSON
-inputs remain supported. See the complete
-[unified AI tools migration guide](docs/migrations/0.x-unified-ai-tools.md)
-for the import, capability, and input-field cutover.
-
 ## Entry points
 
 The package has seven supported entry points:
@@ -122,9 +116,9 @@ const result = applyStyleTransaction(style, {
 });
 ```
 
-Layer filters support `replace`, `and`, `or`, and `clear`. GeoJSON source filters support `replace` and `clear`. Composition keeps legacy property filters and expression filters as distinct syntax families and rejects mixing them. A failed operation rolls back the entire candidate; successful results contain replayable RFC 6901 diffs and exact changed layer/source IDs.
+Layer filters support `replace`, `and`, `or`, and `clear`. GeoJSON source filters support `replace` and `clear`. Filters use expression syntax exclusively. A failed operation rolls back the entire candidate; successful results contain replayable RFC 6901 diffs and exact changed layer/source IDs.
 
-`setStyleRootProperties` applies recursive RFC 7396 merge-patch behavior to allowed root fields: object keys merge, `null` deletes, and arrays/scalars replace. It cannot modify `version`, `sources`, or `layers`. This is intentionally different from legacy `setMapLight`, which performs a one-level patch: omitted light keys survive, a supplied nested object replaces that top-level setting wholesale, and `null` resets only that supplied setting.
+`setStyleRootProperties` applies recursive RFC 7396 merge-patch behavior to allowed root fields: object keys merge, `null` deletes, and arrays/scalars replace. It cannot modify `version`, `sources`, or `layers`.
 
 ### Inline GeoJSON
 
@@ -186,8 +180,8 @@ complete Style document or `data.style`. Read a complete document through
 `/core` or your MapLibre Map instance when it is needed.
 
 AI inputs are strict native JSON structures. Do not encode nested objects or
-arrays as strings: removed legacy fields are rejected as `INVALID_INPUT` before
-a handler or Map is invoked. The migration guide documents every replacement.
+arrays as strings; invalid input is rejected as `INVALID_INPUT` before a
+handler or Map is invoked.
 
 For GeoJSON source updates, use `setGeoJsonData` in
 `applyStyleTransaction` for a native replacement (`setData`), and use
@@ -396,7 +390,7 @@ await client.readResource({ uri: buildLiveMapStyleUri('a.b') });
 The builder adds the same-segment `~` marker and encodes the ID exactly once.
 The transport validates the original raw `resources/read` URI before the SDK
 constructs a `URL`. Normalization-changing dot prefixes, literal or encoded dot
-segments, encoded-unreserved aliases, double encoding, and legacy unmarked map
+segments, encoded-unreserved aliases, double encoding, and unmarked map
 routes are rejected with zero resolver work. Only a canonical raw URI reaches
 the resource callback, where the semantic ID is decoded once.
 

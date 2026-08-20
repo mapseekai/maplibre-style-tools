@@ -4,7 +4,7 @@ export type {
   AddLayerFromSourceOperation,
   AddSourceOperation,
   CoreExecutionLimits,
-  CompatibilityStyleOperation,
+  DefinitionStyleOperation,
   DeepMergeLayerDefinitionOperation,
   DeepMergeSourceDefinitionOperation,
   DuplicateLayerOperation,
@@ -149,9 +149,8 @@ export { buildStyleContext } from './context.js';
 export { listSourceLayers, searchLayers } from './search.js';
 export { applyRootOperation } from './operations/root.js';
 export {
-  applyCompatibilityStyleOperation,
-  applyValidatedCompatibilityEdit,
-} from './operations/compatibility.js';
+  applyDefinitionStyleOperation,
+} from './operations/definitions.js';
 export { applyLayerOperation } from './operations/layers.js';
 export { applySourceOperation } from './operations/sources.js';
 export {

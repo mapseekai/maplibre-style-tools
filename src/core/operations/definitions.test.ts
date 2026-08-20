@@ -9,16 +9,14 @@ import { replayStyleDiff } from '../diff.js';
 import { styleOperationSchema } from '../schemas.js';
 import { applyStyleTransaction } from '../transaction.js';
 import type {
-  CompatibilityStyleOperation,
+  DefinitionStyleOperation,
   JsonObject,
   OperationContext,
   StyleDocument,
-  StyleOperation,
 } from '../types.js';
 import {
-  applyCompatibilityStyleOperation,
-  applyValidatedCompatibilityEdit,
-} from './compatibility.js';
+  applyDefinitionStyleOperation,
+} from './definitions.js';
 
 function baseStyle(): StyleDocument {
   return {
@@ -81,7 +79,7 @@ function context(): OperationContext {
   };
 }
 
-const validOperations: CompatibilityStyleOperation[] = [
+const validOperations: DefinitionStyleOperation[] = [
   {
     op: 'addLayerDefinition',
     layer: { id: 'background', type: 'background' },
@@ -123,7 +121,12 @@ const validOperations: CompatibilityStyleOperation[] = [
   },
 ];
 
-test('all seven compatibility variants remain strict descriptor-safe StyleOperations', () => {
+const applyDefinitionEdit = (
+  style: StyleDocument,
+  operation: DefinitionStyleOperation,
+) => applyStyleTransaction(style, { operations: [operation] });
+
+test('all seven definition variants remain strict descriptor-safe StyleOperations', () => {
   for (const operation of validOperations) {
     const parsed = styleOperationSchema.safeParse(operation);
     assert.equal(parsed.success, true, operation.op);
@@ -158,7 +161,7 @@ test('all seven compatibility variants remain strict descriptor-safe StyleOperat
 
 test('adds a raw layer definition through the transaction and reports an exact layer target', () => {
   const original = baseStyle();
-  const result = applyValidatedCompatibilityEdit(original, {
+  const result = applyDefinitionEdit(original, {
     op: 'addLayerDefinition',
     layer: { id: 'background', type: 'background' },
     beforeId: 'roads',
@@ -179,9 +182,9 @@ test('adds a raw layer definition through the transaction and reports an exact l
   assert.notStrictEqual(result.style, original);
 });
 
-test('legacy layer deep merge recurses while retaining null values', () => {
+test('definition layer deep merge recurses while retaining null values', () => {
   const original = baseStyle();
-  const result = applyValidatedCompatibilityEdit(original, {
+  const result = applyDefinitionEdit(original, {
     op: 'deepMergeLayerDefinition',
     layerId: 'roads',
     patch: {
@@ -224,9 +227,9 @@ test('layer replacement and deep merge support atomic ID renames with remove/add
         paint: { 'line-color': '#fff' },
       },
     },
-  ] satisfies CompatibilityStyleOperation[]) {
+  ] satisfies DefinitionStyleOperation[]) {
     const original = baseStyle();
-    const result = applyValidatedCompatibilityEdit(original, operation);
+    const result = applyDefinitionEdit(original, operation);
     assert.equal(result.ok, true, operation.op);
     assert.deepEqual(result.changedLayers, ['roads', 'roads-next'], operation.op);
     assert.deepEqual(result.changedSources, [], operation.op);
@@ -251,9 +254,9 @@ test('layer ID collisions and invalid completed layers roll back atomically', ()
       op: 'replaceLayerDefinition', layerId: 'roads',
       layer: { id: 'labels', type: 'line', source: 'base', 'source-layer': 'roads' },
     },
-  ] satisfies CompatibilityStyleOperation[]) {
+  ] satisfies DefinitionStyleOperation[]) {
     const original = baseStyle();
-    const result = applyValidatedCompatibilityEdit(original, operation);
+    const result = applyDefinitionEdit(original, operation);
     assert.equal(result.ok, false, operation.op);
     if (!result.ok) assert.equal(result.error.code, 'CONFLICT', operation.op);
     assert.deepEqual(result.style, original, operation.op);
@@ -262,7 +265,7 @@ test('layer ID collisions and invalid completed layers roll back atomically', ()
   }
 
   const original = baseStyle();
-  const invalid = applyValidatedCompatibilityEdit(original, {
+  const invalid = applyDefinitionEdit(original, {
     op: 'addLayerDefinition', layer: { id: 'invalid-without-type' },
   });
   assert.equal(invalid.ok, false);
@@ -271,7 +274,7 @@ test('layer ID collisions and invalid completed layers roll back atomically', ()
   assert.deepEqual(invalid.diff, []);
 });
 
-test('legacy source merge retains null while replacement removes omitted keys', () => {
+test('definition source merge retains null while replacement removes omitted keys', () => {
   const merged = applyStyleTransaction(baseStyle(), {
     validate: false,
     operations: [{
@@ -299,7 +302,7 @@ test('legacy source merge retains null while replacement removes omitted keys', 
     entry.target.kind === 'source' && entry.target.id === 'points'
   )), true);
 
-  const replacement = applyValidatedCompatibilityEdit(baseStyle(), {
+  const replacement = applyDefinitionEdit(baseStyle(), {
     op: 'replaceSourceDefinition',
     sourceId: 'points',
     source: {
@@ -314,8 +317,8 @@ test('legacy source merge retains null while replacement removes omitted keys', 
   assert.deepEqual(replayStyleDiff(baseStyle(), replacement.diff), replacement.style);
 });
 
-test('whole root compatibility replacement drops omitted keys and null clears every supported field', () => {
-  const replaced = applyValidatedCompatibilityEdit(baseStyle(), {
+test('whole root definition replacement drops omitted keys and null clears every supported field', () => {
+  const replaced = applyDefinitionEdit(baseStyle(), {
     op: 'replaceRootProperty',
     property: 'metadata',
     value: { owner: 'new' },
@@ -332,7 +335,7 @@ test('whole root compatibility replacement drops omitted keys and null clears ev
   for (const property of [
     'metadata', 'transition', 'sky', 'projection', 'terrain',
   ] as const) {
-    const result = applyValidatedCompatibilityEdit(baseStyle(), {
+    const result = applyDefinitionEdit(baseStyle(), {
       op: 'replaceRootProperty', property, value: null,
     });
     assert.equal(result.ok, true, property);
@@ -347,7 +350,7 @@ test('whole root compatibility replacement drops omitted keys and null clears ev
 
 test('light patch is shallow per top-level key, deletes supplied nulls, and preserves an empty light object', () => {
   const original = baseStyle();
-  const nested = applyValidatedCompatibilityEdit(original, {
+  const nested = applyDefinitionEdit(original, {
     op: 'shallowPatchRootProperty',
     property: 'light',
     patch: { 'color-transition': { duration: 120 } },
@@ -369,7 +372,7 @@ test('light patch is shallow per top-level key, deletes supplied nulls, and pres
     },
   ]);
 
-  const cleared = applyValidatedCompatibilityEdit({
+  const cleared = applyDefinitionEdit({
     ...baseStyle(), light: { anchor: 'map' },
   } as StyleDocument, {
     op: 'shallowPatchRootProperty',
@@ -383,7 +386,7 @@ test('light patch is shallow per top-level key, deletes supplied nulls, and pres
     op: 'remove', path: '/light/anchor', target: { kind: 'style' },
   }]);
 
-  const clearTransitionOnly = applyValidatedCompatibilityEdit(baseStyle(), {
+  const clearTransitionOnly = applyDefinitionEdit(baseStyle(), {
     op: 'shallowPatchRootProperty',
     property: 'light',
     patch: { 'color-transition': null },
@@ -394,7 +397,7 @@ test('light patch is shallow per top-level key, deletes supplied nulls, and pres
   });
 });
 
-test('compatibility inputs cannot write protected Style authority fields', () => {
+test('definition inputs cannot write protected Style authority fields', () => {
   for (const operation of [
     { op: 'replaceRootProperty', property: 'version', value: {} },
     { op: 'replaceRootProperty', property: 'sources', value: {} },
@@ -405,28 +408,20 @@ test('compatibility inputs cannot write protected Style authority fields', () =>
   }
 });
 
-test('the convenience wrapper delegates to the sole transaction and direct handler reports only apply state', () => {
-  for (const operation of validOperations) {
-    const wrapped = applyValidatedCompatibilityEdit(baseStyle(), operation);
-    const directTransaction = applyStyleTransaction(baseStyle(), {
-      operations: [operation satisfies StyleOperation],
-    });
-    assert.deepEqual(wrapped, directTransaction, operation.op);
-  }
-
+test('direct definition handler reports only apply state', () => {
   const working = baseStyle();
-  const operation: CompatibilityStyleOperation = {
+  const operation: DefinitionStyleOperation = {
     op: 'replaceRootProperty', property: 'metadata', value: { direct: true },
   };
   const applyContext = context();
-  const applied = applyCompatibilityStyleOperation(working, operation, applyContext);
+  const applied = applyDefinitionStyleOperation(working, operation, applyContext);
   assert.deepEqual(applied, { ok: true, changed: true });
   assert.deepEqual(working.metadata, { direct: true });
   assert.deepEqual([...applyContext.changedLayerIds], []);
   assert.deepEqual([...applyContext.changedSourceIds], []);
 });
 
-test('a later compatibility failure rolls the entire batch back', () => {
+test('a later definition failure rolls the entire batch back', () => {
   const original = baseStyle();
   const result = applyStyleTransaction(original, {
     operations: [
@@ -448,15 +443,15 @@ test('a later compatibility failure rolls the entire batch back', () => {
   assert.deepEqual(result.diff, []);
 });
 
-test('compatibility operation aliases remain closed JSON objects at compile time', () => {
-  const operation: CompatibilityStyleOperation = {
+test('definition operations remain closed JSON objects at compile time', () => {
+  const operation: DefinitionStyleOperation = {
     op: 'replaceSourceDefinition',
     sourceId: 'points',
     source: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
   };
   const json: JsonObject = operation;
   assert.equal(json.op, 'replaceSourceDefinition');
-  // @ts-expect-error compatibility operations are closed and reject extension fields.
-  const extra: CompatibilityStyleOperation = { ...operation, unexpected: true };
+  // @ts-expect-error Definition operations are closed and reject extension fields.
+  const extra: DefinitionStyleOperation = { ...operation, unexpected: true };
   void extra;
 });

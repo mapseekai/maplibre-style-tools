@@ -20,26 +20,26 @@ import type {
 import type { createMapLibreStyleTools as RootFactory } from './index.js';
 // @ts-expect-error root compact AI factory was removed.
 import type { createCompactMapLibreStyleTools as RootCompactFactory } from './index.js';
-// @ts-expect-error root legacy AI options were removed.
+// @ts-expect-error root AI options were removed.
 import type { CreateMapLibreStyleToolsOptions as RootOptions } from './index.js';
-// @ts-expect-error root legacy style accessor was removed.
+// @ts-expect-error root style accessor was removed.
 import type { StyleAccessor } from './index.js';
-// @ts-expect-error root legacy result wrapper was removed.
+// @ts-expect-error root result wrapper was removed.
 import type { ToolCallResult } from './index.js';
-// @ts-expect-error root legacy operation type was removed.
+// @ts-expect-error root operation type was removed.
 import type { StyleOperation } from './index.js';
-// @ts-expect-error root legacy operation result was removed.
+// @ts-expect-error root operation result was removed.
 import type { StyleOperationResult } from './index.js';
 // @ts-expect-error compact AI factory was removed from /ai.
 import type { createCompactMapLibreStyleTools } from './ai/index.js';
-// @ts-expect-error legacy AI name arrays were removed.
+// @ts-expect-error removed AI name arrays remain unavailable.
 import type { FULL_LEGACY_TOOL_NAMES } from './ai/index.js';
-// @ts-expect-error legacy parser module was removed.
+// @ts-expect-error removed parser module remains unavailable.
 import type { parseStrictJson } from  './ai/compatibility.js';
-// @ts-expect-error legacy result converter was removed.
+// @ts-expect-error removed result converter remains unavailable.
 import type { toAiToolResult } from './ai-sdk/result.js';
 // The imports above intentionally fail to verify removed public exports. The type-only
-// reference keeps their fixtures observable to ESLint without adding a compatibility surface.
+// reference keeps their fixtures observable to ESLint without adding an extra public surface.
 type RemovedPublicExports =
   | RootFactory
   | RootCompactFactory
@@ -73,7 +73,7 @@ type NewAiSurface =
 void createMapLibreStyleTools;
 void (null as unknown as NewAiSurface);
 
-test('removes legacy AI factories from root and exposes only the unified /ai factory', async () => {
+test('keeps the unified /ai factory as the only AI public surface', async () => {
   const root = await import('./index.js');
   const ai = await import('./ai/index.js');
   assert.equal('createMapLibreStyleTools' in root, false);

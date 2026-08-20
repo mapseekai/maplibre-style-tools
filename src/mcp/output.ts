@@ -1,7 +1,3 @@
-import {
-  CallToolResultSchema,
-  type CallToolResult,
-} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import { STYLE_TOOL_ERROR_CODES } from '../core/errors.js';
@@ -77,20 +73,3 @@ export const capabilityToolResult = <Data extends JsonValue>(
   structuredContent: result,
   ...(result.success ? {} : { isError: true }),
 });
-
-const compatibilityWrapperError = (): TypeError =>
-  new TypeError('MCP compatibility wrapper is not an official call tool result.');
-
-export const parseOfficialCallToolResult = (value: unknown): CallToolResult => {
-  if (typeof value !== 'object' || value === null) {
-    return CallToolResultSchema.parse(value);
-  }
-  let descriptor: PropertyDescriptor | undefined;
-  try {
-    descriptor = Object.getOwnPropertyDescriptor(value, 'toolResult');
-  } catch {
-    throw compatibilityWrapperError();
-  }
-  if (descriptor !== undefined) throw compatibilityWrapperError();
-  return CallToolResultSchema.parse(value);
-};

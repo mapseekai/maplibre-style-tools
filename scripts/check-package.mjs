@@ -298,7 +298,7 @@ const packedModules = [
   'core/geojson',
   'core/index',
   'core/json-pointer',
-  'core/operations/compatibility',
+  'core/operations/definitions',
   'core/operations/filters',
   'core/operations/layers',
   'core/operations/root',

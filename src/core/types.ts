@@ -375,7 +375,7 @@ export type ShallowPatchRootPropertyOperation = {
   property: 'light';
   patch: JsonObject;
 };
-export type CompatibilityStyleOperation =
+export type DefinitionStyleOperation =
   | AddLayerDefinitionOperation
   | DeepMergeLayerDefinitionOperation
   | ReplaceLayerDefinitionOperation
@@ -390,7 +390,7 @@ export type StyleOperation =
   | SetLayerFilterOperation
   | SetGeoJsonSourceFilterOperation
   | SourceOperation
-  | CompatibilityStyleOperation;
+  | DefinitionStyleOperation;
 export type StyleTransaction = {
   operations: StyleOperation[];
   validate?: boolean;

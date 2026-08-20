@@ -8,7 +8,6 @@ import {
   createMcpToolEnvelopeSchema,
   mcpToolEnvelopeSchema,
   parseMcpToolEnvelope,
-  parseOfficialCallToolResult,
   parseStyleToolErrorShape,
   styleToolErrorWireSchema,
   toolFailure,
@@ -52,28 +51,6 @@ test('failure result is assignable through a generic guarded return', async () =
     toolFailure(createStyleToolError('NOT_FOUND', 'missing')),
   );
   assert.equal((await guarded).isError, true);
-});
-
-test('official result parser excludes the SDK compatibility wrapper before content access', () => {
-  assert.equal(parseOfficialCallToolResult(toolSuccess('Done.', { value: 1 })).content[0]?.type, 'text');
-  const compatibility = {
-    toolResult: toolSuccess('Done.', { value: 1 }),
-    content: [{ type: 'text', text: '{"success":true,"message":"Done.","data":{"value":1}}' }],
-    structuredContent: { success: true, message: 'Done.', data: { value: 1 } },
-    isError: false,
-  };
-  assert.throws(() => parseOfficialCallToolResult(compatibility), /compatibility wrapper/u);
-  let getterCalls = 0;
-  const hostile = { ...compatibility };
-  Object.defineProperty(hostile, 'toolResult', {
-    enumerable: true,
-    get() {
-      getterCalls += 1;
-      throw new Error('private getter');
-    },
-  });
-  assert.throws(() => parseOfficialCallToolResult(hostile), /compatibility wrapper/u);
-  assert.equal(getterCalls, 0);
 });
 
 test('wire schemas narrow envelopes without authenticating received errors', () => {

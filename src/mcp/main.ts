@@ -56,7 +56,6 @@ export {
   createMcpToolEnvelopeSchema,
   mcpToolEnvelopeSchema,
   parseMcpToolEnvelope,
-  parseOfficialCallToolResult,
   parseStyleToolErrorShape,
   styleToolErrorWireSchema,
   toolFailure,
