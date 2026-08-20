@@ -480,6 +480,14 @@ export class LiveMapRegistry {
       if (!parsedCommand.success) throw invalidInputError('Invalid live bridge command.');
       parsed = parsedCommand.data;
       assertCapability(handle.metadata.capabilities, parsed);
+      if (parsed.type === 'applyStyleDocument'
+        || parsed.type === 'updateGeoJsonData'
+        || parsed.type === 'setSourceTileLodParams'
+        || parsed.type === 'listSprites'
+        || parsed.type === 'addSprite'
+        || parsed.type === 'removeSprite') {
+        throw createStyleToolError('CAPABILITY_DENIED', 'Bridge command is not supported by this registry.');
+      }
       if (parsed.type === 'applyTransaction'
         && parsed.transaction.operations.length > handle.metadata.limits.maxOperations) {
         throw invalidInputError('Transaction exceeds negotiated operation limit.');

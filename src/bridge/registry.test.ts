@@ -307,6 +307,29 @@ test('enforces capability, operation, frame, and write preconditions before send
   assert.equal(bounded.peer.sent.length, 0);
 });
 
+test('temporarily rejects every unimplemented v2 command before queueing or sending', async () => {
+  const fixture = await setup(
+    ['style.read', 'style.write', 'runtime.state', 'assets.write'],
+    undefined,
+    { operationTimeoutMs: 20, transportGraceMs: 1 },
+  );
+  const commands: readonly BridgeCommand[] = [
+    {
+      type: 'applyStyleDocument', expectedRevision: 0, expectedStyleHash: hash0,
+      source: { kind: 'style', style: style0 }, diff: true,
+    },
+    { type: 'updateGeoJsonData', sourceId: 'roads', diff: { removeAll: true } },
+    { type: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 2, tileCountMaxMinRatio: 1 },
+    { type: 'listSprites' },
+    { type: 'addSprite', spriteId: 'marker', url: 'https://example.test/marker.json' },
+    { type: 'removeSprite', spriteId: 'marker' },
+  ];
+  for (const command of commands) {
+    await assert.rejects(fixture.registry.execute('demo-map', command), hasCode('CAPABILITY_DENIED'));
+    assert.equal(fixture.peer.sent.length, 0);
+  }
+});
+
 test('recomputes feature and image byte claims and policy-closes malicious peers', async () => {
   const queryFixture = await setup(['features.query']);
   const query: BridgeCommand = {
