@@ -16,9 +16,10 @@ import type {
   SourceFeatureQueryInput,
   SourceTileLodParamsInput,
 } from '../adapters/maplibre/types.js';
-import { DEFAULT_RUNTIME_LIST_LIMIT } from '../adapters/maplibre/schemas.js';
+import { DEFAULT_RUNTIME_LIST_LIMIT, runtimeListInputSchema } from '../adapters/maplibre/schemas.js';
 import { hashStyle } from '../adapters/maplibre/style-hash.js';
-import { STYLE_TOOL_ERROR_CODES, applyStyleTransaction, createStyleToolError, isStyleToolError, type JsonObject, type StyleDocument, type StyleToolError, type StyleToolErrorCode, type StyleTransaction } from '../core/index.js';
+import { STYLE_TOOL_ERROR_CODES, applyStyleTransaction, createStyleToolError, isStyleToolError, jsonValueSchema, type JsonObject, type StyleDocument, type StyleToolError, type StyleToolErrorCode, type StyleTransaction } from '../core/index.js';
+import { toJsonPointer } from '../core/json-pointer.js';
 import type { RuntimeAuthority, StyleAuthority } from '../capabilities/authority.js';
 import type { BridgeCommand } from '../bridge/protocol.js';
 import type { LiveMapRegistry } from '../bridge/registry.js';
@@ -47,6 +48,42 @@ const rollbackErrorFromDetails = (value: unknown): StyleToolError | undefined =>
     return undefined;
   }
   return createStyleToolError(value.code as StyleToolErrorCode, value.message);
+};
+
+const parseRuntimeListInput = (input: unknown):
+  | { ok: true; value: RuntimeListInput }
+  | { ok: false; error: StyleToolError } => {
+  try {
+    const parsed = runtimeListInputSchema.safeParse(input);
+    if (parsed.success) return { ok: true, value: parsed.data };
+    const issue = parsed.error.issues[0];
+    if (issue === undefined) {
+      return {
+        ok: false,
+        error: createStyleToolError('INVALID_INPUT', 'Runtime command input is invalid.', ''),
+      };
+    }
+    const details = 'params' in issue && issue.params !== undefined
+      ? jsonValueSchema.safeParse(issue.params)
+      : undefined;
+    return {
+      ok: false,
+      error: createStyleToolError(
+        'INVALID_INPUT',
+        issue.message,
+        toJsonPointer(issue.path.map((token) => typeof token === 'symbol' ? String(token) : token)),
+        details?.success && !Array.isArray(details.data)
+          && details.data !== null && typeof details.data === 'object'
+          ? details.data
+          : undefined,
+      ),
+    };
+  } catch {
+    return {
+      ok: false,
+      error: createStyleToolError('INVALID_INPUT', 'Runtime command input is invalid.', ''),
+    };
+  }
 };
 
 const limitList = <Item extends string | JsonObject>(
@@ -217,6 +254,8 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
       removeFeatureState: (input: RemoveFeatureStateInput) => execute({ type: 'removeFeatureState', ...input }),
       setGlobalState: (input: GlobalStateInput) => execute({ type: 'setGlobalState', ...input }),
       listImages: async (input: RuntimeListInput = {}) => {
+        const parsed = parseRuntimeListInput(input);
+        if (!parsed.ok) return parsed;
         try {
           const result = await this.registry.execute(this.mapId, { type: 'listImages' });
           if (result.type !== 'images') {
@@ -225,7 +264,7 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
           return {
             ok: true as const,
             data: limitList(
-              result.imageIds, result.returned, result.truncated, input,
+              result.imageIds, result.returned, result.truncated, parsed.value,
             ),
           };
         } catch (error) { return { ok: false as const, error: asToolError(error) }; }
@@ -247,6 +286,8 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
       }),
       removeImage: (input: RemoveImageInput) => execute({ type: 'removeImage', imageId: input.imageId }),
       listSprites: async (input: RuntimeListInput = {}) => {
+        const parsed = parseRuntimeListInput(input);
+        if (!parsed.ok) return parsed;
         try {
           const result = await this.registry.execute(this.mapId, { type: 'listSprites' });
           if (result.type !== 'sprites') {
@@ -255,7 +296,7 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
           return {
             ok: true as const,
             data: limitList(
-              result.items as JsonObject[], result.returned, result.truncated, input,
+              result.items as JsonObject[], result.returned, result.truncated, parsed.value,
             ),
           };
         } catch (error) { return { ok: false as const, error: asToolError(error) }; }

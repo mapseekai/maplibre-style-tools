@@ -229,6 +229,19 @@ test('bridge runtime applies the caller image-list limit and reports local trunc
   });
 });
 
+test('bridge runtime rejects invalid image and sprite list limits before registry access', async () => {
+  for (const method of ['listImages', 'listSprites'] as const) {
+    for (const limit of [0, -1, 1.5, 501]) {
+      const registry = runtimeRegistry();
+      const commands = new BridgeMapAuthority(registry as never, 'map-1').runtimeCommands();
+      const result = await commands[method]({ limit } as never);
+      assert.equal(result.ok, false, `${method} limit ${limit}`);
+      if (!result.ok) assert.equal(result.error.code, 'INVALID_INPUT', `${method} limit ${limit}`);
+      assert.deepEqual(registry.commands, [], `${method} limit ${limit}`);
+    }
+  }
+});
+
 test('bridge runtime forwards source tile LOD parameters', async () => {
   const registry = runtimeRegistry();
   const commands = new BridgeMapAuthority(registry as never, 'map-1').runtimeCommands();
