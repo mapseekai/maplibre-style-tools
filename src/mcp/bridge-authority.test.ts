@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { hashStyle } from '../adapters/maplibre/style-hash.js';
 import { createStyleToolError } from '../core/index.js';
 import { BridgeMapAuthority } from './bridge-authority.js';
 
@@ -109,6 +110,43 @@ test('bridge transaction accepts an omitted diff when none was requested', async
   if (result.ok) assert.deepEqual(result.diff, []);
 });
 
+test('bridge transaction fails closed when an omitted Style does not match the result hash', async () => {
+  const registry = transactionRegistry({
+    ...fullResult, style: undefined, omitted: { style: true },
+  });
+  const authority = new BridgeMapAuthority(registry as never, 'map-1');
+  const result = await authority.applyTransaction(liveTransaction as never, { diff: true });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error.message, /Style hash/u);
+});
+
+test('bridge mutation failure restores current Style and rollback fields from authenticated details', async () => {
+  const restored = { ...liveStyle, name: 'restored' };
+  const restoredHash = await hashStyle(restored);
+  const authority = new BridgeMapAuthority({
+    execute: async (_mapId: string, command: Record<string, unknown>) => {
+      if (command.type === 'getStyle') {
+        return { type: 'style', revision: 4, styleHash: 'a'.repeat(64), style: liveStyle };
+      }
+      throw createStyleToolError('IO_ERROR', 'Style apply failed.', undefined, {
+        currentSnapshot: {
+          revision: 5, styleHash: restoredHash, style: restored,
+        },
+        rolledBack: false,
+        rollbackError: { code: 'TIMEOUT', message: 'Bridge operation timed out' },
+      });
+    },
+  } as never, 'map-1');
+  const result = await authority.applyTransaction(liveTransaction as never, { diff: true });
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'current');
+  assert.deepEqual(result.style, restored);
+  assert.equal(result.rolledBack, false);
+  assert.equal(result.rollbackError?.code, 'TIMEOUT');
+  assert.equal(result.error.code, 'IO_ERROR');
+  assert.equal(result.error.details, undefined);
+});
+
 test('bridge whole-document apply commits an inline Style against a fresh snapshot', async () => {
   const source = { ...liveStyle, name: 'replacement' };
   const registry = transactionRegistry({ ...fullResult, style: source });
@@ -150,10 +188,19 @@ const runtimeRegistry = () => {
     commands,
     execute: async (_mapId: string, command: Record<string, unknown>) => {
       commands.push(command);
+      if (command.type === 'listImages') {
+        return {
+          type: 'images', imageIds: ['marker', 'terrain'], returned: 2,
+          truncated: false, serializedBytes: 20,
+        };
+      }
       if (command.type === 'listSprites') {
         return {
-          type: 'sprites', items: [{ id: 'base', url: 'https://sprites.example/base' }],
-          returned: 1, truncated: true, serializedBytes: 52,
+          type: 'sprites', items: [
+            { id: 'base', url: 'https://sprites.example/base' },
+            { id: 'terrain', url: 'https://sprites.example/terrain' },
+          ],
+          returned: 2, truncated: false, serializedBytes: 110,
         };
       }
       return { type: 'ack', accepted: true };
@@ -165,8 +212,21 @@ test('bridge runtime forwards a GeoJSON diff command', async () => {
   const registry = runtimeRegistry();
   const commands = new BridgeMapAuthority(registry as never, 'map-1').runtimeCommands();
   const diff = { remove: ['obsolete'], update: [{ id: 7, removeProperties: ['draft'] }] };
-  assert.equal((await commands.updateGeoJsonDataRuntime({ sourceId: 'roads', diff })).ok, true);
+  assert.deepEqual(
+    await commands.updateGeoJsonDataRuntime({ sourceId: 'roads', diff }),
+    { ok: true, data: null },
+  );
   assert.deepEqual(registry.commands, [{ type: 'updateGeoJsonData', sourceId: 'roads', diff }]);
+});
+
+test('bridge runtime applies the caller image-list limit and reports local truncation', async () => {
+  const registry = runtimeRegistry();
+  const commands = new BridgeMapAuthority(registry as never, 'map-1').runtimeCommands();
+  const result = await commands.listImages({ limit: 1 });
+  assert.deepEqual(result, {
+    ok: true,
+    data: { items: ['marker'], returned: 1, truncated: true },
+  });
 });
 
 test('bridge runtime forwards source tile LOD parameters', async () => {

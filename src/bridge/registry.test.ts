@@ -382,7 +382,8 @@ test('recomputes feature and image byte claims and policy-closes malicious peers
   await assert.rejects(imageFixture.registry.acceptResult(
     imageFixture.peer.id,
     success(imageFixture.peer.sent[0]!, {
-      type: 'images', imageIds: ['marker'], serializedBytes: 1,
+      type: 'images', imageIds: ['marker'], returned: 1,
+      truncated: false, serializedBytes: 1,
     }),
   ), /protocol|bytes/i);
   assert.equal(imageFixture.peer.closeCode, 1008);

@@ -230,6 +230,7 @@ test('getStyle degrades indivisibly and other fixed results never truncate seman
   if (prepared.frame.ok) assert.fail('expected bounded failure');
   assert.equal(prepared.frame.error.code, 'INVALID_INPUT');
   assert.throws(() => prepareOutboundBridgeFrame(resultFrame({
-    type: 'images', imageIds: ['x'.repeat(100)], serializedBytes: 102,
+    type: 'images', imageIds: ['x'.repeat(100)], returned: 1,
+    truncated: false, serializedBytes: 102,
   }), ['style.read'], { type: 'listImages' }, 80), /size/i);
 });

@@ -308,7 +308,13 @@ test('fixed query/image result schemas reject impossible collection metadata', (
   assert.equal(BridgeResultFrameSchema.safeParse(resultFrame({
     type: 'images',
     imageIds: Array.from({ length: 501 }, (_, index) => `image-${index}`),
+    returned: 501,
+    truncated: true,
     serializedBytes: 1,
+  })).success, false);
+  assert.equal(BridgeResultFrameSchema.safeParse(resultFrame({
+    type: 'images', imageIds: ['marker'], returned: 0,
+    truncated: false, serializedBytes: 10,
   })).success, false);
 });
 
@@ -323,7 +329,7 @@ test('every success, failure, and event variant round-trips through the strict f
       truncated: false, serializedBytes: 2, warnings: [],
     },
     { type: 'state', accepted: true },
-    { type: 'images', imageIds: [], serializedBytes: 2 },
+    { type: 'images', imageIds: [], returned: 0, truncated: false, serializedBytes: 2 },
     { type: 'sprites', items: [], returned: 0, truncated: false, serializedBytes: 2 },
     { type: 'ack', accepted: true },
   ];

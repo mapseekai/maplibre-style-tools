@@ -911,7 +911,7 @@ export class LiveMapRegistry {
       case 'images': {
         const bytes = jsonUtf8ByteLength(result.imageIds);
         if (bytes !== result.serializedBytes || bytes > 64 * 1024
-          || result.imageIds.length > 500) {
+          || result.imageIds.length > 500 || result.returned !== result.imageIds.length) {
           throw new Error('image result bytes violate protocol');
         }
         return { result };

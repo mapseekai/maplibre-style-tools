@@ -5,6 +5,7 @@ import {
   applyStyleDocumentOrUrlToMap,
   createMapRuntimeCommands,
   hashStyle,
+  sha256CanonicalJson,
   prepareTransactionForMap,
   queryRenderedFeaturesBounded,
   querySourceFeaturesBounded,
@@ -21,6 +22,7 @@ import {
   DEFAULT_MAX_STYLE_BYTES,
   isStyleToolError,
   jsonUtf8ByteLength,
+  utf8ByteLength,
   validateStyleDocument,
   type CoreExecutionLimits,
   type JsonObject,
@@ -334,10 +336,10 @@ const createCommandDeadline = (
 };
 
 const hashWithDeadline = (
-  style: StyleDocument,
+  style: unknown,
   deadline: MapOperationDeadline,
 ): Promise<string> => {
-  const work = hashStyle(style);
+  const work = sha256CanonicalJson(style);
   if (deadline.signal?.aborted === true || Date.now() >= deadline.expiresAt) {
     void work.then(() => undefined, () => undefined);
     return Promise.reject(timeoutError());
@@ -679,23 +681,28 @@ export async function createBrowserMapRuntime(
           await observe(true);
           throw conflictError(state, includeStyle);
         }
-        const candidateValidation = validateStyleDocument(
-          prepared.view.transactionResult.style,
-          { maxStyleBytes: limits.maxStyleBytes },
-        );
-        if (!candidateValidation.ok) {
-          throw candidateValidation.errors[0]
-            ?? createStyleToolError('INVALID_INPUT', 'Prepared Style is invalid.');
+        let candidate = prepared.view.transactionResult.style;
+        if (command.transaction.validate) {
+          const candidateValidation = validateStyleDocument(
+            candidate,
+            { maxStyleBytes: limits.maxStyleBytes },
+          );
+          if (!candidateValidation.ok) {
+            throw candidateValidation.errors[0]
+              ?? createStyleToolError('INVALID_INPUT', 'Prepared Style is invalid.');
+          }
+          candidate = candidateValidation.style;
         }
-        const validatedCandidate = candidateValidation.style;
-        if (jsonUtf8ByteLength(validatedCandidate as JsonValue) > limits.maxStyleBytes) {
+        const serializedCandidate = JSON.stringify(candidate);
+        if (serializedCandidate === undefined
+          || utf8ByteLength(serializedCandidate) > limits.maxStyleBytes) {
           throw createStyleToolError('INVALID_INPUT', 'Prepared Style exceeds configured limit.');
         }
-        const candidateHash = await hashWithDeadline(validatedCandidate, sharedDeadline);
+        const candidateHash = await hashWithDeadline(candidate, sharedDeadline);
         try {
           assertStyleResourcePolicy({
             baseline: reconciled.style,
-            candidate: validatedCandidate,
+            candidate,
             capabilities,
             policy: resourcePolicy,
           });
@@ -874,7 +881,8 @@ export async function createBrowserMapRuntime(
         let imageIds = listed.items;
         while (jsonUtf8ByteLength(imageIds) > MAX_RUNTIME_LIST_BYTES) imageIds = imageIds.slice(0, -1);
         return {
-          type: 'images', imageIds,
+          type: 'images', imageIds, returned: imageIds.length,
+          truncated: listed.truncated || imageIds.length < listed.returned,
           serializedBytes: jsonUtf8ByteLength(imageIds),
         } as BrowserRuntimeResult<C>;
       }

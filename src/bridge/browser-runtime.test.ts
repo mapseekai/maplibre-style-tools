@@ -649,6 +649,54 @@ test('bounds sprite lists by count and UTF-8 serialized bytes', async () => {
   assert.ok(new TextEncoder().encode(JSON.stringify([...byteBounded.items, omitted])).byteLength > 64 * 1024);
 });
 
+test('image list results preserve count and UTF-8 transport truncation', async () => {
+  const countMap = new FakeMap(rawStyle());
+  for (let index = 0; index < 501; index += 1) countMap.images.set(`image-${index}`, {});
+  const countResult = await (await createBrowserMapRuntime(
+    countMap.asMap(), runtimeOptions(),
+  )).execute({ type: 'listImages' });
+  assert.equal(countResult.type, 'images');
+  if (countResult.type !== 'images') assert.fail('expected images');
+  const countList = countResult as typeof countResult & { returned: number; truncated: boolean };
+  assert.equal(countList.returned, 500);
+  assert.equal(countResult.imageIds.length, 500);
+  assert.equal(countList.truncated, true);
+
+  const byteMap = new FakeMap(rawStyle());
+  const segment = 'é'.repeat(120);
+  for (let index = 0; index < 500; index += 1) byteMap.images.set(`${segment}-${index}`, {});
+  const byteResult = await (await createBrowserMapRuntime(
+    byteMap.asMap(), runtimeOptions(),
+  )).execute({ type: 'listImages' });
+  assert.equal(byteResult.type, 'images');
+  if (byteResult.type !== 'images') assert.fail('expected images');
+  const byteList = byteResult as typeof byteResult & { returned: number; truncated: boolean };
+  assert.equal(byteList.returned, byteResult.imageIds.length);
+  assert.equal(byteList.truncated, true);
+  assert.ok(byteList.returned < 500);
+  assert.equal(
+    byteResult.serializedBytes,
+    new TextEncoder().encode(JSON.stringify(byteResult.imageIds)).byteLength,
+  );
+});
+
+test('validate false reaches Map work with a Style-Spec-invalid prepared candidate', async () => {
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const snapshot = await runtime.execute({ type: 'getStyle' });
+  if (snapshot.type !== 'style') assert.fail('expected style snapshot');
+  await runtime.execute({
+    type: 'applyTransaction',
+    expectedRevision: snapshot.revision,
+    expectedStyleHash: snapshot.styleHash,
+    transaction: {
+      validate: false,
+      operations: [{ op: 'setStyleRootProperties', properties: { name: 7 } }],
+    },
+  }).catch(() => undefined);
+  assert.ok(map.setStyleCalls > 0);
+});
+
 test('bounds feature/state/image paths before Map mutation', async () => {
   const map = new FakeMap(rawStyle());
   map.sourceFeatures = Array.from({ length: 101 }, (_, index) => rawFeature(index));

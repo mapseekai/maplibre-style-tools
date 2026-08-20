@@ -12,10 +12,13 @@ import type {
   RemoveSpriteInput,
   RenderedFeatureQueryInput,
   RuntimeGeoJsonDiffUpdate,
+  RuntimeListInput,
   SourceFeatureQueryInput,
   SourceTileLodParamsInput,
 } from '../adapters/maplibre/types.js';
-import { applyStyleTransaction, createStyleToolError, isStyleToolError, type JsonObject, type StyleDocument, type StyleToolError, type StyleTransaction } from '../core/index.js';
+import { DEFAULT_RUNTIME_LIST_LIMIT } from '../adapters/maplibre/schemas.js';
+import { hashStyle } from '../adapters/maplibre/style-hash.js';
+import { STYLE_TOOL_ERROR_CODES, applyStyleTransaction, createStyleToolError, isStyleToolError, type JsonObject, type StyleDocument, type StyleToolError, type StyleToolErrorCode, type StyleTransaction } from '../core/index.js';
 import type { RuntimeAuthority, StyleAuthority } from '../capabilities/authority.js';
 import type { BridgeCommand } from '../bridge/protocol.js';
 import type { LiveMapRegistry } from '../bridge/registry.js';
@@ -34,6 +37,32 @@ const unavailable = (error: unknown) => ({
   error: asToolError(error),
 });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const rollbackErrorFromDetails = (value: unknown): StyleToolError | undefined => {
+  if (!isRecord(value) || typeof value.code !== 'string'
+    || !(STYLE_TOOL_ERROR_CODES as readonly string[]).includes(value.code)
+    || typeof value.message !== 'string') {
+    return undefined;
+  }
+  return createStyleToolError(value.code as StyleToolErrorCode, value.message);
+};
+
+const limitList = <Item extends string | JsonObject>(
+  items: Item[],
+  returned: number,
+  transportTruncated: boolean,
+  input: RuntimeListInput,
+) => {
+  const limited = items.slice(0, input.limit ?? DEFAULT_RUNTIME_LIST_LIMIT);
+  return {
+    items: limited,
+    returned: limited.length,
+    truncated: transportTruncated || returned > limited.length,
+  };
+};
+
 /** Style and runtime authority backed by one live bridge map. */
 export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
   constructor(private readonly registry: LiveMapRegistry, private readonly mapId: string) {}
@@ -48,13 +77,65 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
 
   context() { return {}; }
 
+  async #mutationFailure(
+    error: unknown,
+    baseline?: { style: StyleDocument; styleHash: string },
+  ): Promise<MapStyleApplyResult> {
+    const authentic = asToolError(error);
+    const details = authentic.details;
+    const currentSnapshot = details?.currentSnapshot;
+    const snapshot = isRecord(currentSnapshot) ? currentSnapshot : undefined;
+    let style = snapshot !== undefined && isRecord(snapshot.style)
+      ? snapshot.style as StyleDocument
+      : undefined;
+    if (style === undefined && snapshot !== undefined
+      && baseline !== undefined && snapshot.styleHash === baseline.styleHash) {
+      style = baseline.style;
+    }
+    if (style === undefined && snapshot !== undefined) {
+      try {
+        const refreshed = await this.registry.execute(this.mapId, { type: 'getStyle' });
+        if (refreshed.type === 'style') style = refreshed.style as StyleDocument;
+      } catch {
+        // The original authenticated mutation failure remains primary.
+      }
+    }
+    const rollbackError = rollbackErrorFromDetails(details?.rollbackError);
+    const rolledBack = typeof details?.rolledBack === 'boolean' ? details.rolledBack : undefined;
+    const primaryEntries = details === undefined
+      ? []
+      : Object.entries(details).filter(([key]) =>
+        key !== 'currentSnapshot' && key !== 'rolledBack' && key !== 'rollbackError');
+    const primaryDetails = primaryEntries.length === 0
+      ? undefined
+      : Object.fromEntries(primaryEntries) as JsonObject;
+    const primary = createStyleToolError(
+      authentic.code, authentic.message, authentic.path, primaryDetails,
+    );
+    if (style === undefined) {
+      return {
+        ...unavailable(primary),
+        ...(rolledBack === false ? { rolledBack } : {}),
+        ...(rollbackError === undefined ? {} : { rollbackError }),
+      };
+    }
+    return {
+      ok: false, style, styleAuthority: 'current', applied: false,
+      changedLayers: [], changedSources: [], diff: [], warnings: [], error: primary,
+      ...(rolledBack === undefined ? {} : { rolledBack }),
+      ...(rollbackError === undefined ? {} : { rollbackError }),
+    };
+  }
+
   async #applyStyleMutation(
     command: FreshStyleMutationCommand,
     options: { diff: boolean },
   ): Promise<MapStyleApplyResult> {
+    let baseline: { style: StyleDocument; styleHash: string } | undefined;
     try {
       const current = await this.registry.execute(this.mapId, { type: 'getStyle' });
       if (current.type !== 'style') return unavailable(createStyleToolError('INTERNAL', 'Bridge returned an invalid style result.'));
+      baseline = { style: current.style as StyleDocument, styleHash: current.styleHash };
       let projectedStyle: StyleDocument | undefined;
       if (command.type === 'applyTransaction') {
         const projected = applyStyleTransaction(current.style as StyleDocument, command.transaction);
@@ -75,7 +156,16 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
       if (options.diff && result.diff === undefined) {
         return unavailable(createStyleToolError('INTERNAL', 'Bridge full transaction result omitted the requested diff.'));
       }
-      const style = result.style ?? projectedStyle;
+      let style = result.style as StyleDocument | undefined;
+      if (style === undefined && projectedStyle !== undefined) {
+        const projectedHash = await hashStyle(projectedStyle);
+        if (projectedHash !== result.styleHash) {
+          return unavailable(createStyleToolError(
+            'INTERNAL', 'Projected Style hash does not match the bridge transaction result.',
+          ));
+        }
+        style = projectedStyle;
+      }
       if (style === undefined) {
         return unavailable(createStyleToolError('INTERNAL', 'Bridge full transaction result omitted the current Style.'));
       }
@@ -84,7 +174,7 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
         changedLayers: [...result.changedLayerIds], changedSources: [...result.changedSourceIds],
         diff: options.diff ? [...(result.diff ?? [])] : [], warnings: [...result.warnings], styleAuthority: 'current',
       } as MapStyleApplyResult;
-    } catch (error) { return unavailable(error); }
+    } catch (error) { return this.#mutationFailure(error, baseline); }
   }
 
   async applyTransaction(transaction: StyleTransaction, options: { diff: boolean }): Promise<MapStyleApplyResult> {
@@ -108,7 +198,7 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
     const execute = async <C extends BridgeCommand>(command: C) => {
       try {
         await this.registry.execute(this.mapId, command);
-        return { ok: true as const, data: undefined };
+        return { ok: true as const, data: null };
       } catch (error) {
         return { ok: false as const, error: asToolError(error) };
       }
@@ -126,7 +216,7 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
       setFeatureState: (input: FeatureStateInput) => execute({ type: 'setFeatureState', ...input }),
       removeFeatureState: (input: RemoveFeatureStateInput) => execute({ type: 'removeFeatureState', ...input }),
       setGlobalState: (input: GlobalStateInput) => execute({ type: 'setGlobalState', ...input }),
-      listImages: async () => {
+      listImages: async (input: RuntimeListInput = {}) => {
         try {
           const result = await this.registry.execute(this.mapId, { type: 'listImages' });
           if (result.type !== 'images') {
@@ -134,7 +224,9 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
           }
           return {
             ok: true as const,
-            data: { items: result.imageIds, returned: result.imageIds.length, truncated: false },
+            data: limitList(
+              result.imageIds, result.returned, result.truncated, input,
+            ),
           };
         } catch (error) { return { ok: false as const, error: asToolError(error) }; }
       },
@@ -154,7 +246,7 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
         ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
       }),
       removeImage: (input: RemoveImageInput) => execute({ type: 'removeImage', imageId: input.imageId }),
-      listSprites: async () => {
+      listSprites: async (input: RuntimeListInput = {}) => {
         try {
           const result = await this.registry.execute(this.mapId, { type: 'listSprites' });
           if (result.type !== 'sprites') {
@@ -162,10 +254,9 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
           }
           return {
             ok: true as const,
-            data: {
-              items: result.items as JsonObject[], returned: result.returned,
-              truncated: result.truncated,
-            },
+            data: limitList(
+              result.items as JsonObject[], result.returned, result.truncated, input,
+            ),
           };
         } catch (error) { return { ok: false as const, error: asToolError(error) }; }
       },

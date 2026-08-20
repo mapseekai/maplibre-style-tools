@@ -3,6 +3,7 @@ import {
   utf8ByteLength,
   type StyleDocument,
 } from '../core/index.js';
+import type { DeepReadonlyPrepared } from '../adapters/maplibre/types.js';
 import type { BridgeCapability } from './protocol.js';
 
 export interface ResourcePolicy {
@@ -31,8 +32,8 @@ export interface ResourceReference {
 }
 
 export interface StyleResourcePolicyInput {
-  baseline: StyleDocument;
-  candidate: StyleDocument;
+  baseline: DeepReadonlyPrepared<StyleDocument>;
+  candidate: DeepReadonlyPrepared<StyleDocument>;
   capabilities: readonly BridgeCapability[];
   policy: ResourcePolicy | NormalizedResourcePolicy;
 }
@@ -189,7 +190,9 @@ const collectImports = (references: ResourceReference[], imports: unknown): void
   }
 };
 
-export function collectStyleResourceReferences(style: StyleDocument): ResourceReference[] {
+export function collectStyleResourceReferences(
+  style: DeepReadonlyPrepared<StyleDocument>,
+): ResourceReference[] {
   const references: ResourceReference[] = [];
   addString(references, '/glyphs', ownDataValue(style, 'glyphs'));
   collectSprite(references, ownDataValue(style, 'sprite'));

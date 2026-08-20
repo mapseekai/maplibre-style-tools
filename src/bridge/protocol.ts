@@ -387,7 +387,12 @@ export const BridgeStateResultSchema = z.strictObject({
 export const BridgeImagesResultSchema = z.strictObject({
   type: z.literal('images'),
   imageIds: z.array(z.string().min(1).max(256)).max(500),
+  returned: nonNegativeSafeIntegerSchema.max(500),
+  truncated: z.boolean(),
   serializedBytes: nonNegativeSafeIntegerSchema.max(64 * 1024),
+}).refine((value) => value.returned === value.imageIds.length, {
+  message: 'returned must equal imageIds length',
+  path: ['returned'],
 });
 export const BridgeSpritesResultSchema = z.strictObject({
   type: z.literal('sprites'),
