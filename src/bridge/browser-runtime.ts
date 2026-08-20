@@ -731,6 +731,11 @@ export async function createBrowserMapRuntime(
             if (isStyleToolError(error)) throw error;
             throw createStyleToolError('INVALID_INPUT', 'Style document resource URL is invalid.');
           }
+          const preMutation = await observe(true, sharedDeadline);
+          if (preMutation.revision !== reconciled.revision
+            || preMutation.styleHash !== reconciled.styleHash) {
+            throw conflictError(preMutation, includeStyle);
+          }
           executionState.nonAbortableMapWorkStarted = true;
           const applied = await applyStyleDocumentOrUrlToMap(map, candidate, {
             deadline: sharedDeadline,

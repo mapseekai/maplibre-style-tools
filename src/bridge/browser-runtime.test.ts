@@ -293,6 +293,31 @@ test('applies a complete inline Style document through the transaction result pa
   assert.equal(map.setStyleCalls, 1);
 });
 
+test('rechecks inline Style authority after candidate hashing before Map mutation', async (t) => {
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const baseline = runtime.snapshot();
+  const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+  let digestCalls = 0;
+  t.mock.method(globalThis.crypto.subtle, 'digest', (
+    algorithm: AlgorithmIdentifier,
+    data: BufferSource,
+  ) => {
+    digestCalls += 1;
+    if (digestCalls === 2) map.external(rawStyle('#00ff00'));
+    return digest(algorithm, data);
+  });
+
+  await assert.rejects(runtime.execute(applyStyleCommand(baseline, {
+    kind: 'style',
+    style: strictStyle('#ff0000'),
+  })), hasCode('REVISION_CONFLICT'));
+
+  assert.equal(map.setStyleCalls, 0);
+  assert.equal(runtime.snapshot().revision, 1);
+  assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#00ff00');
+});
+
 test('admits and applies an allowed relative Style document URL', async () => {
   const map = new FakeMap(rawStyle());
   map.styleUrls.set('https://images.example/app/styles/night.json', rawStyle('#112233'));
