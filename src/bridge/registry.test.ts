@@ -307,26 +307,53 @@ test('enforces capability, operation, frame, and write preconditions before send
   assert.equal(bounded.peer.sent.length, 0);
 });
 
-test('temporarily rejects every unimplemented v2 command before queueing or sending', async () => {
+test('queues and settles every v2 command implemented by the browser runtime', async () => {
   const fixture = await setup(
     ['style.read', 'style.write', 'runtime.state', 'assets.write'],
-    undefined,
-    { operationTimeoutMs: 20, transportGraceMs: 1 },
   );
-  const commands: readonly BridgeCommand[] = [
-    {
+  const cases: ReadonlyArray<{
+    command: BridgeCommand;
+    result: Record<string, unknown>;
+  }> = [
+    { command: {
       type: 'applyStyleDocument', expectedRevision: 0, expectedStyleHash: hash0,
-      source: { kind: 'style', style: style0 }, diff: true,
+      source: { kind: 'style', style: style1 }, diff: true,
+    }, result: {
+      type: 'transaction', detail: 'full', revision: 1, styleHash: hash1,
+      applied: true, noOp: false, changedLayerIds: [], changedSourceIds: [],
+      warnings: [], style: style1, diff: [],
+    } },
+    {
+      command: { type: 'updateGeoJsonData', sourceId: 'roads', diff: { removeAll: true } },
+      result: { type: 'ack', accepted: true },
     },
-    { type: 'updateGeoJsonData', sourceId: 'roads', diff: { removeAll: true } },
-    { type: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 2, tileCountMaxMinRatio: 1 },
-    { type: 'listSprites' },
-    { type: 'addSprite', spriteId: 'marker', url: 'https://example.test/marker.json' },
-    { type: 'removeSprite', spriteId: 'marker' },
+    {
+      command: { type: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 2, tileCountMaxMinRatio: 1 },
+      result: { type: 'ack', accepted: true },
+    },
+    {
+      command: { type: 'listSprites' },
+      result: {
+        type: 'sprites', items: [{ id: 'base', url: 'https://example.test/base.json' }],
+        returned: 1, truncated: false,
+        serializedBytes: jsonUtf8ByteLength([{ id: 'base', url: 'https://example.test/base.json' }]),
+      },
+    },
+    {
+      command: { type: 'addSprite', spriteId: 'marker', url: 'https://example.test/marker.json' },
+      result: { type: 'ack', accepted: true },
+    },
+    {
+      command: { type: 'removeSprite', spriteId: 'marker' },
+      result: { type: 'ack', accepted: true },
+    },
   ];
-  for (const command of commands) {
-    await assert.rejects(fixture.registry.execute('demo-map', command), hasCode('CAPABILITY_DENIED'));
-    assert.equal(fixture.peer.sent.length, 0);
+  for (const { command, result } of cases) {
+    const pending = fixture.registry.execute('demo-map', command);
+    const sent = fixture.peer.sent.at(-1)!;
+    assert.deepEqual(sent.command, command);
+    await fixture.registry.acceptResult(fixture.peer.id, success(sent, result));
+    await pending;
   }
 });
 

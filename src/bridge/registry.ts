@@ -480,14 +480,6 @@ export class LiveMapRegistry {
       if (!parsedCommand.success) throw invalidInputError('Invalid live bridge command.');
       parsed = parsedCommand.data;
       assertCapability(handle.metadata.capabilities, parsed);
-      if (parsed.type === 'applyStyleDocument'
-        || parsed.type === 'updateGeoJsonData'
-        || parsed.type === 'setSourceTileLodParams'
-        || parsed.type === 'listSprites'
-        || parsed.type === 'addSprite'
-        || parsed.type === 'removeSprite') {
-        throw createStyleToolError('CAPABILITY_DENIED', 'Bridge command is not supported by this registry.');
-      }
       if (parsed.type === 'applyTransaction'
         && parsed.transaction.operations.length > handle.metadata.limits.maxOperations) {
         throw invalidInputError('Transaction exceeds negotiated operation limit.');
@@ -813,7 +805,7 @@ export class LiveMapRegistry {
         this.#settleEntry(entry, false, mapNotReadyError());
         continue;
       }
-      if (entry.command.type === 'applyTransaction'
+      if ((entry.command.type === 'applyTransaction' || entry.command.type === 'applyStyleDocument')
         && (entry.command.expectedRevision !== handle.metadata.revision
           || entry.command.expectedStyleHash !== handle.metadata.styleHash)) {
         this.#settleEntry(entry, false, createStyleToolError(
@@ -927,8 +919,14 @@ export class LiveMapRegistry {
       case 'state':
       case 'ack':
         return { result };
-      case 'sprites':
-        throw new Error('Sprite results are not supported by this registry.');
+      case 'sprites': {
+        const bytes = jsonUtf8ByteLength(result.items);
+        if (bytes !== result.serializedBytes || bytes > 64 * 1024
+          || result.items.length > 500 || result.returned !== result.items.length) {
+          throw new Error('sprite result bytes violate protocol');
+        }
+        return { result };
+      }
       case 'authenticated':
       case 'registered':
         throw new Error('control result cannot settle a map command');
@@ -944,12 +942,14 @@ export class LiveMapRegistry {
   ): Promise<{ snapshot?: ValidatedSnapshot }> {
     const current = frame.error.details?.currentSnapshot;
     if (current === undefined) {
-      if (pending.command.type === 'applyTransaction' && frame.error.code === 'TIMEOUT') {
+      if ((pending.command.type === 'applyTransaction' || pending.command.type === 'applyStyleDocument')
+        && frame.error.code === 'TIMEOUT') {
         throw new Error('mutation timeout requires an authoritative current snapshot');
       }
       return {};
     }
-    if (pending.command.type !== 'applyTransaction') {
+    if (pending.command.type !== 'applyTransaction'
+      && pending.command.type !== 'applyStyleDocument') {
       throw new Error('authoritative error snapshot requires mutation command');
     }
     const snapshot = await this.#validateSnapshot(current as MapSnapshot, handle.metadata.limits);
