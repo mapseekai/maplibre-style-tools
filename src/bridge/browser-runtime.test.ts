@@ -422,6 +422,31 @@ test('denies a top-level Style URL without network.load before Map mutation', as
   assert.deepEqual(map.getStyle(), rawStyle());
 });
 
+test('binds URL Style authority when resource admission changes the Map', async () => {
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    resourcePolicy: {
+      baseUrl: 'https://images.example/app/',
+      allowedResourceOrigins: ['https://images.example', 'https://tiles.example'],
+      allowedProtocols: ['pmtiles'],
+      isProtocolRegistered: (scheme) => {
+        map.external(rawStyle('#00ff00'));
+        return scheme === 'pmtiles';
+      },
+    },
+  }));
+  const baseline = runtime.snapshot();
+
+  await assert.rejects(runtime.execute(applyStyleCommand(baseline, {
+    kind: 'url',
+    url: 'pmtiles://catalog/styles/night.json',
+  })), hasCode('REVISION_CONFLICT'));
+
+  assert.equal(map.setStyleCalls, 0);
+  assert.equal(runtime.snapshot().revision, 1);
+  assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#00ff00');
+});
+
 test('restores the baseline when a resolved Style URL introduces a prohibited resource', async () => {
   const map = new FakeMap(rawStyle());
   map.styleUrls.set('https://images.example/app/styles/unsafe.json', {
@@ -444,6 +469,49 @@ test('restores the baseline when a resolved Style URL introduces a prohibited re
   assert.equal(map.setStyleCalls, 2);
   assert.deepEqual(runtime.snapshot(), baseline);
   assert.deepEqual(map.getStyle(), rawStyle());
+});
+
+test('does not overwrite reentrant authority while rejecting resolved Style resources', async () => {
+  const map = new FakeMap(rawStyle());
+  let markUnknown: (() => void) | undefined;
+  const unknown = new Promise<void>((resolve) => { markUnknown = resolve; });
+  map.styleUrls.set('https://images.example/app/styles/unsafe.json', {
+    ...rawStyle('#ff0000'),
+    glyphs: 'pmtiles://catalog/fonts/{fontstack}/{range}.pbf',
+  });
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    resourcePolicy: {
+      baseUrl: 'https://images.example/app/',
+      allowedResourceOrigins: ['https://images.example', 'https://tiles.example'],
+      allowedProtocols: ['pmtiles'],
+      isProtocolRegistered: () => {
+        map.external(rawStyle('#00ff00'));
+        return false;
+      },
+    },
+    onSyncStateChange: () => markUnknown?.(),
+  }));
+  const baseline = runtime.snapshot();
+
+  const execution = runtime.execute(applyStyleCommand(baseline, {
+    kind: 'url',
+    url: './styles/unsafe.json',
+  }));
+  await unknown;
+  await runtime.noteExternalStyle();
+  await assert.rejects(execution, (error: unknown) => {
+    if (!hasCode('CAPABILITY_DENIED')(error) || !isStyleToolError(error)) return false;
+    assert.equal(error.details?.rolledBack, false);
+    assert.deepEqual(error.details?.rollbackError, {
+      code: 'REVISION_CONFLICT',
+      message: 'Map style changed before live mutation.',
+    });
+    return true;
+  });
+
+  assert.equal(map.setStyleCalls, 1);
+  assert.equal(runtime.snapshot().revision, 1);
+  assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#00ff00');
 });
 
 test('rejects invalid external authority and blocks commands until explicit recovery', async () => {
@@ -524,11 +592,11 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
       command: {
         type: 'addSprite',
         spriteId: 'added',
-        url: 'https://sprites.example/added',
+        url: 'https://images.example/sprites/added',
       },
       expectedCalls: [
         { method: 'listSprites', args: [] },
-        { method: 'addSprite', args: ['added', 'https://sprites.example/added'] },
+        { method: 'addSprite', args: ['added', 'https://images.example/sprites/added'] },
       ],
       expectedResult: { type: 'ack', accepted: true },
     },
@@ -536,13 +604,13 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
       command: {
         type: 'addSprite',
         spriteId: 'base',
-        url: 'https://sprites.example/replacement',
+        url: 'https://images.example/sprites/replacement',
         overwrite: true,
       },
       expectedCalls: [
         { method: 'listSprites', args: [] },
         { method: 'removeSprite', args: ['base'] },
-        { method: 'addSprite', args: ['base', 'https://sprites.example/replacement'] },
+        { method: 'addSprite', args: ['base', 'https://images.example/sprites/replacement'] },
       ],
       expectedResult: { type: 'ack', accepted: true },
     },
@@ -561,6 +629,102 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
     const result = await runtime.execute(fixture.command);
     assert.deepEqual(result, fixture.expectedResult);
     assert.deepEqual(map.runtimeCalls, fixture.expectedCalls);
+  }
+});
+
+test('admits addSprite URLs through the shared resource policy before adapter work', async () => {
+  const allowedMap = new FakeMap(rawStyle());
+  const allowedRuntime = await createBrowserMapRuntime(allowedMap.asMap(), runtimeOptions());
+  await allowedRuntime.execute({
+    type: 'addSprite',
+    spriteId: 'marker/a~b',
+    url: './sprites/../sprites/marker.json',
+  });
+  assert.deepEqual(allowedMap.runtimeCalls, [
+    { method: 'listSprites', args: [] },
+    {
+      method: 'addSprite',
+      args: ['marker/a~b', 'https://images.example/app/sprites/marker.json'],
+    },
+  ]);
+
+  const deniedCases: ReadonlyArray<{
+    name: string;
+    url: string;
+    expectedCode: StyleToolError['code'];
+    options?: Partial<BrowserRuntimeOptions>;
+  }> = [
+    {
+      name: 'missing network capability',
+      url: './sprites/marker.json',
+      expectedCode: 'CAPABILITY_DENIED',
+      options: {
+        capabilities: allCapabilities.filter((capability) => capability !== 'network.load'),
+      },
+    },
+    {
+      name: 'blocked origin',
+      url: 'https://blocked.example/sprites/marker.json',
+      expectedCode: 'CAPABILITY_DENIED',
+    },
+    {
+      name: 'blocked prefix',
+      url: 'https://images.example/public/sprites/marker.json',
+      expectedCode: 'CAPABILITY_DENIED',
+      options: {
+        resourcePolicy: {
+          baseUrl: 'https://images.example/app/',
+          allowedResourceOrigins: [],
+          allowedUrlPrefixes: ['https://images.example/app/sprites/'],
+        },
+      },
+    },
+    {
+      name: 'credentials',
+      url: 'https://user:secret@images.example/sprites/marker.json',
+      expectedCode: 'INVALID_INPUT',
+    },
+    {
+      name: 'forbidden protocol',
+      url: 'file:///tmp/marker.json',
+      expectedCode: 'CAPABILITY_DENIED',
+    },
+    {
+      name: 'unregistered custom protocol',
+      url: 'pmtiles://catalog/sprites/marker.json',
+      expectedCode: 'CAPABILITY_DENIED',
+      options: {
+        resourcePolicy: {
+          baseUrl: 'https://images.example/app/',
+          allowedResourceOrigins: ['https://images.example'],
+          allowedProtocols: ['pmtiles'],
+          isProtocolRegistered: () => false,
+        },
+      },
+    },
+    {
+      name: 'data URL without opt-in',
+      url: 'data:application/json,%7B%7D',
+      expectedCode: 'CAPABILITY_DENIED',
+    },
+  ];
+
+  for (const fixture of deniedCases) {
+    const map = new FakeMap(rawStyle());
+    map.sprites.set('marker/a~b', 'https://images.example/app/sprites/old.json');
+    const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions(fixture.options));
+    await assert.rejects(runtime.execute({
+      type: 'addSprite',
+      spriteId: 'marker/a~b',
+      url: fixture.url,
+      overwrite: true,
+    }), hasCode(fixture.expectedCode), fixture.name);
+    assert.deepEqual(map.runtimeCalls, [], fixture.name);
+    assert.equal(
+      map.sprites.get('marker/a~b'),
+      'https://images.example/app/sprites/old.json',
+      fixture.name,
+    );
   }
 });
 

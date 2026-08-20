@@ -45,6 +45,14 @@ export interface RuntimeImageResourcePolicyInput {
   policy: ResourcePolicy | NormalizedResourcePolicy;
 }
 
+export interface RuntimeAssetResourcePolicyInput {
+  assetType: 'images' | 'sprites';
+  assetId: string;
+  url: string;
+  capabilities: readonly BridgeCapability[];
+  policy: ResourcePolicy | NormalizedResourcePolicy;
+}
+
 export interface StyleDocumentUrlPolicyInput {
   url: string;
   capabilities: readonly BridgeCapability[];
@@ -339,11 +347,11 @@ export function assertStyleResourcePolicy(input: StyleResourcePolicyInput): void
   }
 }
 
-export function assertRuntimeImageResourcePolicy(
-  input: RuntimeImageResourcePolicyInput,
+export function assertRuntimeAssetResourcePolicy(
+  input: RuntimeAssetResourcePolicyInput,
 ): { resolvedUrl: string } {
   const policy = normalizeResourcePolicy(input.policy);
-  const path = `/runtime/images/${escapeJsonPointer(input.imageId)}/url`;
+  const path = `/runtime/${input.assetType}/${escapeJsonPointer(input.assetId)}/url`;
   let resolvedUrl: string;
   try {
     resolvedUrl = ABSOLUTE_RESOURCE_SCHEME.test(input.url)
@@ -355,6 +363,18 @@ export function assertRuntimeImageResourcePolicy(
   requireNetworkCapability(input.capabilities, path);
   assertAbsoluteResourceAllowed(resolvedUrl, path, policy);
   return { resolvedUrl };
+}
+
+export function assertRuntimeImageResourcePolicy(
+  input: RuntimeImageResourcePolicyInput,
+): { resolvedUrl: string } {
+  return assertRuntimeAssetResourcePolicy({
+    assetType: 'images',
+    assetId: input.imageId,
+    url: input.url,
+    capabilities: input.capabilities,
+    policy: input.policy,
+  });
 }
 
 export function assertStyleDocumentUrlPolicy(

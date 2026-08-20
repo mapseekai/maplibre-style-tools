@@ -41,6 +41,7 @@ import {
   type BridgeTransactionResult,
 } from './protocol.js';
 import {
+  assertRuntimeAssetResourcePolicy,
   assertRuntimeImageResourcePolicy,
   assertStyleDocumentUrlPolicy,
   assertStyleResourcePolicy,
@@ -773,6 +774,7 @@ export async function createBrowserMapRuntime(
           diff: command.diff,
           maxStyleBytes: limits.maxStyleBytes,
           maxDiffBytes: limits.maxDiffBytes,
+          expectedBaselineStyle: reconciled.style,
         });
         if (!applied.ok || applied.styleAuthority !== 'current') {
           return await reconcileResult(
@@ -798,6 +800,7 @@ export async function createBrowserMapRuntime(
             diff: command.diff,
             maxStyleBytes: limits.maxStyleBytes,
             maxDiffBytes: limits.maxDiffBytes,
+            expectedBaselineStyle: resolvedStyle,
           });
           if (!restored.ok || restored.styleAuthority !== 'current') {
             await waitForRecovery('adapter-authority-unavailable');
@@ -959,13 +962,27 @@ export async function createBrowserMapRuntime(
           serializedBytes: jsonUtf8ByteLength(items),
         } as BrowserRuntimeResult<C>;
       }
-      case 'addSprite':
+      case 'addSprite': {
+        let approved: { resolvedUrl: string };
+        try {
+          approved = assertRuntimeAssetResourcePolicy({
+            assetType: 'sprites',
+            assetId: command.spriteId,
+            url: command.url,
+            capabilities,
+            policy: resourcePolicy,
+          });
+        } catch (error) {
+          if (isStyleToolError(error)) throw error;
+          throw createStyleToolError('INVALID_INPUT', 'Runtime sprite URL is invalid.');
+        }
         mapRuntimeError(runtimeCommands.addSprite({
           spriteId: command.spriteId,
-          url: command.url,
+          url: approved.resolvedUrl,
           ...(command.overwrite === undefined ? {} : { overwrite: command.overwrite }),
         }));
         return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
+      }
       case 'removeSprite':
         mapRuntimeError(runtimeCommands.removeSprite({ spriteId: command.spriteId }));
         return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
