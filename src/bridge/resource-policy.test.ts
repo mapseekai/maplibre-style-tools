@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { StyleDocument, StyleToolError } from '../core/index.js';
 import {
   assertRuntimeImageResourcePolicy,
+  assertStyleDocumentUrlPolicy,
   assertStyleResourcePolicy,
   collectStyleResourceReferences,
   normalizeResourcePolicy,
@@ -236,6 +237,29 @@ test('runtime image policy resolves once and returns the canonical authorized UR
     },
   });
   assert.deepEqual(decision, { resolvedUrl: 'https://allowed.example/app/images/marker.png' });
+});
+
+test('Style document URL policy resolves relative URLs and enforces network admission', () => {
+  const policy = {
+    ...denyAllPolicy,
+    baseUrl: 'https://allowed.example/app/',
+    allowedUrlPrefixes: ['https://allowed.example/app/styles/'],
+  };
+  assert.deepEqual(assertStyleDocumentUrlPolicy({
+    url: './styles/night.json',
+    capabilities: networkCapabilities,
+    policy,
+  }), { resolvedUrl: 'https://allowed.example/app/styles/night.json' });
+  assert.throws(() => assertStyleDocumentUrlPolicy({
+    url: './styles/night.json',
+    capabilities: ['style.write'],
+    policy,
+  }), hasCode('CAPABILITY_DENIED'));
+  assert.throws(() => assertStyleDocumentUrlPolicy({
+    url: 'https://blocked.example/night.json',
+    capabilities: networkCapabilities,
+    policy,
+  }), hasCode('CAPABILITY_DENIED'));
 });
 
 test('redaction strips credentials, query, and fragment without disclosing opaque values', () => {

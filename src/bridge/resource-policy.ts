@@ -44,6 +44,12 @@ export interface RuntimeImageResourcePolicyInput {
   policy: ResourcePolicy | NormalizedResourcePolicy;
 }
 
+export interface StyleDocumentUrlPolicyInput {
+  url: string;
+  capabilities: readonly BridgeCapability[];
+  policy: ResourcePolicy | NormalizedResourcePolicy;
+}
+
 const ABSOLUTE_RESOURCE_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const CUSTOM_PROTOCOL = /^[a-z][a-z0-9+.-]*$/u;
 const DEFAULT_MAX_DATA_URL_BYTES = 1024 * 1024;
@@ -342,6 +348,24 @@ export function assertRuntimeImageResourcePolicy(
       : new URL(input.url, policy.baseUrl).href;
   } catch {
     throw createStyleToolError('INVALID_INPUT', 'Runtime image URL is invalid.', path);
+  }
+  requireNetworkCapability(input.capabilities, path);
+  assertAbsoluteResourceAllowed(resolvedUrl, path, policy);
+  return { resolvedUrl };
+}
+
+export function assertStyleDocumentUrlPolicy(
+  input: StyleDocumentUrlPolicyInput,
+): { resolvedUrl: string } {
+  const policy = normalizeResourcePolicy(input.policy);
+  const path = '/source/url';
+  let resolvedUrl: string;
+  try {
+    resolvedUrl = ABSOLUTE_RESOURCE_SCHEME.test(input.url)
+      ? new URL(input.url).href
+      : new URL(input.url, policy.baseUrl).href;
+  } catch {
+    throw createStyleToolError('INVALID_INPUT', 'Style document URL is invalid.', path);
   }
   requireNetworkCapability(input.capabilities, path);
   assertAbsoluteResourceAllowed(resolvedUrl, path, policy);

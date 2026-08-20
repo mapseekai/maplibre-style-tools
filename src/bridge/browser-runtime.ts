@@ -2,6 +2,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl';
 
 import {
   applyPreparedStyleToMap,
+  applyStyleDocumentOrUrlToMap,
   createMapRuntimeCommands,
   hashStyle,
   prepareTransactionForMap,
@@ -39,6 +40,7 @@ import {
 } from './protocol.js';
 import {
   assertRuntimeImageResourcePolicy,
+  assertStyleDocumentUrlPolicy,
   assertStyleResourcePolicy,
   normalizeResourcePolicy,
   type NormalizedResourcePolicy,
@@ -709,6 +711,109 @@ export async function createBrowserMapRuntime(
           applied, reconciled.styleHash, candidateHash, sharedDeadline,
         ) as BrowserRuntimeResult<C>;
       }
+      case 'applyStyleDocument': {
+        if (command.expectedRevision !== reconciled.revision
+          || command.expectedStyleHash !== reconciled.styleHash) {
+          throw conflictError(reconciled, includeStyle);
+        }
+        if (command.source.kind === 'style') {
+          const candidate = firstValidationError(command.source.style, limits.maxStyleBytes);
+          let candidateHash: string;
+          try {
+            assertStyleResourcePolicy({
+              baseline: reconciled.style,
+              candidate,
+              capabilities,
+              policy: resourcePolicy,
+            });
+            candidateHash = await hashWithDeadline(candidate, sharedDeadline);
+          } catch (error) {
+            if (isStyleToolError(error)) throw error;
+            throw createStyleToolError('INVALID_INPUT', 'Style document resource URL is invalid.');
+          }
+          executionState.nonAbortableMapWorkStarted = true;
+          const applied = await applyStyleDocumentOrUrlToMap(map, candidate, {
+            deadline: sharedDeadline,
+            diff: command.diff,
+            maxStyleBytes: limits.maxStyleBytes,
+            maxDiffBytes: limits.maxDiffBytes,
+          });
+          return await reconcileResult(
+            applied, reconciled.styleHash, candidateHash, sharedDeadline,
+          ) as BrowserRuntimeResult<C>;
+        }
+
+        let approved: { resolvedUrl: string };
+        try {
+          approved = assertStyleDocumentUrlPolicy({
+            url: command.source.url,
+            capabilities,
+            policy: resourcePolicy,
+          });
+        } catch (error) {
+          if (isStyleToolError(error)) throw error;
+          throw createStyleToolError('INVALID_INPUT', 'Style document URL is invalid.');
+        }
+        executionState.nonAbortableMapWorkStarted = true;
+        const applied = await applyStyleDocumentOrUrlToMap(map, approved.resolvedUrl, {
+          deadline: sharedDeadline,
+          diff: command.diff,
+          maxStyleBytes: limits.maxStyleBytes,
+          maxDiffBytes: limits.maxDiffBytes,
+        });
+        if (!applied.ok || applied.styleAuthority !== 'current') {
+          return await reconcileResult(
+            applied, reconciled.styleHash, undefined, sharedDeadline,
+          ) as BrowserRuntimeResult<C>;
+        }
+        const resolvedStyle = firstValidationError(applied.style, limits.maxStyleBytes);
+        let resolvedHash: string;
+        try {
+          assertStyleResourcePolicy({
+            baseline: reconciled.style,
+            candidate: resolvedStyle,
+            capabilities,
+            policy: resourcePolicy,
+          });
+          resolvedHash = await hashWithDeadline(resolvedStyle, sharedDeadline);
+        } catch (error) {
+          const policyError = isStyleToolError(error)
+            ? error
+            : createStyleToolError('INVALID_INPUT', 'Resolved Style resource URL is invalid.');
+          const restored = await applyStyleDocumentOrUrlToMap(map, reconciled.style, {
+            deadline: sharedDeadline,
+            diff: command.diff,
+            maxStyleBytes: limits.maxStyleBytes,
+            maxDiffBytes: limits.maxDiffBytes,
+          });
+          if (!restored.ok || restored.styleAuthority !== 'current') {
+            await waitForRecovery('adapter-authority-unavailable');
+            const primary = deadlineExpired(sharedDeadline) ? timeoutError() : policyError;
+            const failedRestore: MapStyleApplyResult = {
+              ...restored,
+              rolledBack: false,
+              ...(!restored.ok ? { rollbackError: restored.error } : {}),
+            };
+            throw errorWithSnapshot(primary, state, includeStyle, failedRestore);
+          }
+          const rejected: MapStyleApplyResult = {
+            ...restored,
+            ok: false,
+            applied: false,
+            changedLayers: [],
+            changedSources: [],
+            diff: [],
+            error: policyError,
+            rolledBack: true,
+          };
+          return await reconcileResult(
+            rejected, reconciled.styleHash, undefined, sharedDeadline,
+          ) as BrowserRuntimeResult<C>;
+        }
+        return await reconcileResult(
+          applied, reconciled.styleHash, resolvedHash, sharedDeadline,
+        ) as BrowserRuntimeResult<C>;
+      }
       case 'querySourceFeatures': {
         const queried = querySourceFeaturesBounded(map, {
           sourceId: command.sourceId,
@@ -815,7 +920,6 @@ export async function createBrowserMapRuntime(
       case 'removeImage':
         mapRuntimeError(runtimeCommands.removeImage({ imageId: command.imageId }));
         return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
-      case 'applyStyleDocument':
       case 'updateGeoJsonData':
       case 'setSourceTileLodParams':
       case 'listSprites':

@@ -27,6 +27,7 @@ class FakeMap {
   addImageCalls = 0;
   sourceFeatures: unknown[] = [];
   readonly images = new Map<string, unknown>();
+  readonly styleUrls = new Map<string, StyleSpecification>();
   readonly synchronousCalls = new Map<string, number>();
   beforeSynchronousCommand: (() => void) | undefined;
   private readonly listeners = new Map<EventName, Set<Listener>>();
@@ -63,9 +64,14 @@ class FakeMap {
   }
 
   setStyle(style: StyleSpecification | string): this {
-    assert.notEqual(typeof style, 'string');
     this.setStyleCalls += 1;
-    this.style = structuredClone(style as StyleSpecification);
+    if (typeof style === 'string') {
+      const resolved = this.styleUrls.get(style);
+      assert.notEqual(resolved, undefined, `missing fake Style URL: ${style}`);
+      this.style = structuredClone(resolved!);
+    } else {
+      this.style = structuredClone(style);
+    }
     this.loaded = true;
     queueMicrotask(() => this.emit('style.load'));
     return this;
@@ -186,6 +192,17 @@ const applyCommand = async (
   },
 });
 
+const applyStyleCommand = (
+  baseline: { revision: number; styleHash: string },
+  source: Extract<BridgeCommand, { type: 'applyStyleDocument' }>['source'],
+): Extract<BridgeCommand, { type: 'applyStyleDocument' }> => ({
+  type: 'applyStyleDocument',
+  expectedRevision: baseline.revision,
+  expectedStyleHash: baseline.styleHash,
+  source,
+  diff: true,
+});
+
 const hasCode = (code: StyleToolError['code']) => (error: unknown): boolean =>
   isStyleToolError(error) && error.code === code;
 
@@ -256,6 +273,83 @@ test('applies once, advances revision after completion, and preserves no-op revi
   assert.equal(noOp.type === 'transaction' && noOp.noOp, true);
   assert.equal(noOp.type === 'transaction' && noOp.revision, 1);
   assert.equal(map.setStyleCalls, 1);
+});
+
+test('applies a complete inline Style document through the transaction result path', async () => {
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const baseline = runtime.snapshot();
+
+  const result = await runtime.execute(applyStyleCommand(baseline, {
+    kind: 'style',
+    style: strictStyle('#ff0000'),
+  }));
+
+  assert.equal(result.type, 'transaction');
+  assert.equal(result.applied, true);
+  assert.equal(result.revision, 1);
+  assert.deepEqual(result.detail === 'full' ? result.changedLayerIds : [], ['roads']);
+  assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#ff0000');
+  assert.equal(map.setStyleCalls, 1);
+});
+
+test('admits and applies an allowed relative Style document URL', async () => {
+  const map = new FakeMap(rawStyle());
+  map.styleUrls.set('https://images.example/app/styles/night.json', rawStyle('#112233'));
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const baseline = runtime.snapshot();
+
+  const result = await runtime.execute(applyStyleCommand(baseline, {
+    kind: 'url',
+    url: './styles/night.json',
+  }));
+
+  assert.equal(result.type, 'transaction');
+  assert.equal(result.applied, true);
+  assert.equal(result.revision, 1);
+  assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#112233');
+  assert.equal(map.setStyleCalls, 1);
+});
+
+test('denies a top-level Style URL without network.load before Map mutation', async () => {
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    capabilities: allCapabilities.filter((capability) => capability !== 'network.load'),
+  }));
+  const baseline = runtime.snapshot();
+
+  await assert.rejects(runtime.execute(applyStyleCommand(baseline, {
+    kind: 'url',
+    url: './styles/night.json',
+  })), hasCode('CAPABILITY_DENIED'));
+
+  assert.equal(map.setStyleCalls, 0);
+  assert.deepEqual(runtime.snapshot(), baseline);
+  assert.deepEqual(map.getStyle(), rawStyle());
+});
+
+test('restores the baseline when a resolved Style URL introduces a prohibited resource', async () => {
+  const map = new FakeMap(rawStyle());
+  map.styleUrls.set('https://images.example/app/styles/unsafe.json', {
+    ...rawStyle('#ff0000'),
+    glyphs: 'https://blocked.example/{fontstack}/{range}.pbf',
+  });
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const baseline = runtime.snapshot();
+
+  await assert.rejects(runtime.execute(applyStyleCommand(baseline, {
+    kind: 'url',
+    url: './styles/unsafe.json',
+  })), (error: unknown) => {
+    if (!hasCode('CAPABILITY_DENIED')(error) || !isStyleToolError(error)) return false;
+    assert.equal(error.details?.rolledBack, true);
+    assert.deepEqual(error.details?.currentSnapshot, baseline);
+    return true;
+  });
+
+  assert.equal(map.setStyleCalls, 2);
+  assert.deepEqual(runtime.snapshot(), baseline);
+  assert.deepEqual(map.getStyle(), rawStyle());
 });
 
 test('rejects invalid external authority and blocks commands until explicit recovery', async () => {
