@@ -153,7 +153,7 @@ const allCapabilities: BridgeCapability[] = [
   'style.write',
   'features.query',
   'runtime.state',
-  'images.write',
+  'assets.write',
   'network.load',
 ];
 

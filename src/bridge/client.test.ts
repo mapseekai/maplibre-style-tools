@@ -303,7 +303,7 @@ test('routes ordered commands to correlated results', async () => {
   await connection.whenReady();
   const baseline = connection.snapshot();
   const command: BridgeCommandFrame = {
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'command',
     correlationId: 'apply-1',
     mapId: 'demo-map',
@@ -360,7 +360,7 @@ test('replays an ack-pending registration byte-for-byte after transient close', 
   second.open();
   const auth = await waitForSent<BridgeAuthFrame>(second, 0);
   second.receive({
-    protocolVersion: 1, kind: 'result', correlationId: auth.correlationId, ok: true,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'result', correlationId: auth.correlationId, ok: true,
     result: { type: 'authenticated', connectionId: 'connection-2', limits: defaultLimits },
   });
   await waitForSent(second, 1);

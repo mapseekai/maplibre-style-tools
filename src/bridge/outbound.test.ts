@@ -40,17 +40,31 @@ const applyCommand: BridgeCommand = {
   },
 };
 
+const applyDocumentCommand: BridgeCommand = {
+  type: 'applyStyleDocument',
+  expectedRevision: 0,
+  expectedStyleHash: '0'.repeat(64),
+  source: { kind: 'style', style: style() },
+  diff: true,
+};
+
 const commands: Array<[BridgeCommand, BridgeCapability]> = [
   [{ type: 'getStyle' }, 'style.read'],
   [applyCommand, 'style.write'],
+  [applyDocumentCommand, 'style.write'],
+  [{ type: 'updateGeoJsonData', sourceId: 'roads', diff: { removeAll: true } }, 'style.write'],
+  [{ type: 'setSourceTileLodParams', maxZoomLevelsOnScreen: 2, tileCountMaxMinRatio: 1 }, 'runtime.state'],
   [{ type: 'querySourceFeatures', sourceId: 'roads' }, 'features.query'],
   [{ type: 'queryRenderedFeatures' }, 'features.query'],
   [{ type: 'setFeatureState', target: { source: 'roads', id: 1 }, state: {} }, 'runtime.state'],
   [{ type: 'removeFeatureState', target: { source: 'roads', id: 1 } }, 'runtime.state'],
   [{ type: 'setGlobalState', propertyName: 'mode', value: 'dark' }, 'runtime.state'],
   [{ type: 'listImages' }, 'style.read'],
-  [{ type: 'addImage', imageId: 'marker', image: { kind: 'rgba', width: 1, height: 1, data: 'AAAAAA==' } }, 'images.write'],
-  [{ type: 'removeImage', imageId: 'marker' }, 'images.write'],
+  [{ type: 'addImage', imageId: 'marker', image: { kind: 'rgba', width: 1, height: 1, data: 'AAAAAA==' } }, 'assets.write'],
+  [{ type: 'removeImage', imageId: 'marker' }, 'assets.write'],
+  [{ type: 'listSprites' }, 'style.read'],
+  [{ type: 'addSprite', spriteId: 'marker', url: 'https://example.test/marker.json' }, 'assets.write'],
+  [{ type: 'removeSprite', spriteId: 'marker' }, 'assets.write'],
 ];
 
 const resultFrame = (result: Record<string, unknown>): BridgeResultFrame => ({
@@ -88,7 +102,7 @@ test('each command requires its explicit capability', () => {
 
 test('a near-limit registration deterministically falls back to metadata-only', () => {
   const frame: BridgeRegisterFrame = {
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'register',
     correlationId: 'register-1',
     registrationAttemptId: 'A'.repeat(43),
@@ -149,6 +163,17 @@ test('every current-authority mutation failure keeps its code and authoritative 
   }
 });
 
+test('whole-style mutation failures project exactly like transactions', () => {
+  const failure = failureFrame('INTERNAL', {
+    currentSnapshot: { revision: 9, styleHash, style: style('x'.repeat(2_000)) },
+    rolledBack: false,
+    rollbackError: { code: 'IO_ERROR', message: 'private rollback' },
+  });
+  const transaction = prepareOutboundBridgeFrame(failure, ['style.read'], applyCommand, 700);
+  const document = prepareOutboundBridgeFrame(failure, ['style.read'], applyDocumentCommand, 700);
+  assert.deepEqual(document.frame, transaction.frame);
+});
+
 test('write-only peers permit receipts and metadata but reject full or Style-bearing frames', () => {
   const receipt = resultFrame({
     type: 'transaction', detail: 'receipt', revision: 1, styleHash,
@@ -160,7 +185,7 @@ test('write-only peers permit receipts and metadata but reject full or Style-bea
     style: style('secret'),
   });
   const event: BridgeEventFrame = {
-    protocolVersion: 1, kind: 'event', event: 'mapSnapshot', mapId: 'demo-map',
+    protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'event', event: 'mapSnapshot', mapId: 'demo-map',
     snapshot: { revision: 1, styleHash, style: style('secret') },
   };
   assert.doesNotThrow(() => assertInboundResultAllowed(['style.write'], applyCommand, receipt));

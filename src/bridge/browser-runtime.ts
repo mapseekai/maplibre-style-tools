@@ -815,6 +815,15 @@ export async function createBrowserMapRuntime(
       case 'removeImage':
         mapRuntimeError(runtimeCommands.removeImage({ imageId: command.imageId }));
         return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
+      case 'applyStyleDocument':
+      case 'updateGeoJsonData':
+      case 'setSourceTileLodParams':
+      case 'listSprites':
+      case 'addSprite':
+      case 'removeSprite':
+        throw createStyleToolError('CAPABILITY_DENIED', 'Bridge command is not supported by this runtime.');
+      default:
+        throw createStyleToolError('CAPABILITY_DENIED', 'Bridge command is not supported by this runtime.');
     }
   };
 

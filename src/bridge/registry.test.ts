@@ -91,7 +91,7 @@ const registration = (
   replaceLeaseId?: string,
   overrides: Partial<BridgeRegisterFrame> = {},
 ): BridgeRegisterFrame => ({
-  protocolVersion: 1,
+  protocolVersion: BRIDGE_PROTOCOL_VERSION,
   kind: 'register',
   correlationId: `register-${mapId}`,
   registrationAttemptId: attemptId(),
@@ -137,7 +137,7 @@ const failure = (
   code: StyleToolError['code'],
   details?: JsonObject,
 ): BridgeResultFrame => ({
-  protocolVersion: 1,
+  protocolVersion: BRIDGE_PROTOCOL_VERSION,
   kind: 'result',
   correlationId: request.correlationId,
   ok: false,
@@ -152,7 +152,7 @@ const event = (
   eventType: 'mapSnapshot' | 'externalStyleChange',
   snapshot: MapSnapshot,
 ): BridgeEventFrame => ({
-  protocolVersion: 1,
+  protocolVersion: BRIDGE_PROTOCOL_VERSION,
   kind: 'event',
   event: eventType,
   mapId: 'demo-map',
@@ -381,7 +381,7 @@ test('events merge monotonically and mapStatus blocks new work until a current s
 
   const unknown = await setup();
   await unknown.registry.acceptEvent(unknown.peer.id, {
-    protocolVersion: 1, kind: 'event', event: 'mapStatus',
+    protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'event', event: 'mapStatus',
     mapId: 'demo-map', syncState: 'unknown',
   });
   assert.equal(unknown.registry.get('demo-map')?.metadata.syncState, 'unknown');
@@ -469,7 +469,7 @@ test('stale and pre-status results settle once without rolling back or restoring
   const unknown = await setup();
   const oldEpochPending = unknown.registry.execute('demo-map', getStyle);
   await unknown.registry.acceptEvent(unknown.peer.id, {
-    protocolVersion: 1, kind: 'event', event: 'mapStatus',
+    protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'event', event: 'mapStatus',
     mapId: 'demo-map', syncState: 'unknown',
   });
   await unknown.registry.acceptResult(unknown.peer.id, success(unknown.peer.sent[0]!, {

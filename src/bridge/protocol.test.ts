@@ -37,7 +37,7 @@ const limits = {
 };
 
 const resultFrame = (result: Record<string, unknown>) => ({
-  protocolVersion: 1,
+  protocolVersion: BRIDGE_PROTOCOL_VERSION,
   kind: 'result',
   correlationId: 'result-1',
   ok: true,
@@ -55,7 +55,7 @@ const transactionReceipt = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const commandFrame = <C extends BridgeCommand>(command: C): BridgeCommandFrame => ({
-  protocolVersion: 1,
+  protocolVersion: BRIDGE_PROTOCOL_VERSION,
   kind: 'command',
   correlationId: 'same',
   mapId: 'demo-map',
@@ -64,7 +64,7 @@ const commandFrame = <C extends BridgeCommand>(command: C): BridgeCommandFrame =
 });
 
 test('canonical JSON sorts object keys recursively but preserves arrays', async () => {
-  assert.equal(BRIDGE_PROTOCOL_VERSION, 1);
+  assert.equal(BRIDGE_PROTOCOL_VERSION, 2);
   const left = { z: [{ b: 2, a: 1 }], a: true };
   const right = { a: true, z: [{ a: 1, b: 2 }] };
   assert.equal(canonicalizeJson(left), '{"a":true,"z":[{"a":1,"b":2}]}');
@@ -78,9 +78,9 @@ test('canonical JSON rejects cycles and non-JSON numeric values', () => {
   assert.throws(() => canonicalizeJson({ n: Number.NaN }), /JSON|strict/);
 });
 
-test('codec rejects oversized and wrong-version frames', () => {
+test('codec rejects oversized and copied version-1 command frames', () => {
   const auth = {
-    protocolVersion: 1 as const,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'auth' as const,
     correlationId: 'auth-1',
     token: 'x'.repeat(43),
@@ -90,7 +90,7 @@ test('codec rejects oversized and wrong-version frames', () => {
   assert.throws(() => decodeBridgeFrame(encoded, BridgeAuthFrameSchema, 8), /size limit/);
   assert.throws(
     () => decodeBridgeFrame(
-      JSON.stringify({ ...auth, protocolVersion: 2 }),
+      JSON.stringify({ ...auth, protocolVersion: 1 }),
       BridgeAuthFrameSchema,
     ),
     /protocolVersion|Invalid input/,
@@ -99,7 +99,7 @@ test('codec rejects oversized and wrong-version frames', () => {
 
 test('codec measures UTF-8 bytes and accepts ArrayBuffer views without widening schemas', () => {
   const auth = {
-    protocolVersion: 1 as const,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'auth' as const,
     correlationId: '界',
     token: 'x'.repeat(43),
@@ -199,7 +199,7 @@ test('map IDs reject literal or encoded dot-segment spellings without rejecting 
   }
   assert.equal(BridgeMapIdSchema.safeParse('a.b').success, true);
   assert.equal(BridgeRegisterFrameSchema.safeParse({
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'register',
     correlationId: 'register-1',
     registrationAttemptId: 'A'.repeat(43),
@@ -214,7 +214,7 @@ test('registration attempt IDs are exact 32-byte base64url tokens', () => {
   const valid = 'A'.repeat(43);
   assert.equal(RegistrationAttemptIdSchema.parse(valid), valid);
   const register = {
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'register',
     correlationId: 'register-1',
     registrationAttemptId: valid,
@@ -235,30 +235,42 @@ test('registration attempt IDs are exact 32-byte base64url tokens', () => {
   }
 });
 
-test('all ten command variants are strict and map to one fixed result discriminant', () => {
+test('all sixteen command variants are strict and map to one fixed result discriminant', () => {
   assert.deepEqual(Object.keys(BridgeCommandVariantSchemas).sort(), [
     'addImage',
+    'addSprite',
+    'applyStyleDocument',
     'applyTransaction',
     'getStyle',
     'listImages',
+    'listSprites',
     'queryRenderedFeatures',
     'querySourceFeatures',
     'removeFeatureState',
     'removeImage',
+    'removeSprite',
     'setFeatureState',
     'setGlobalState',
+    'setSourceTileLodParams',
+    'updateGeoJsonData',
   ]);
   assert.deepEqual(BRIDGE_COMMAND_RESULT_TYPES, {
     getStyle: 'style',
     applyTransaction: 'transaction',
+    applyStyleDocument: 'transaction',
     querySourceFeatures: 'features',
     queryRenderedFeatures: 'features',
     setFeatureState: 'state',
     removeFeatureState: 'state',
     setGlobalState: 'state',
     listImages: 'images',
+    listSprites: 'sprites',
     addImage: 'ack',
     removeImage: 'ack',
+    updateGeoJsonData: 'ack',
+    setSourceTileLodParams: 'ack',
+    addSprite: 'ack',
+    removeSprite: 'ack',
   });
   assert.equal(BridgeCommandVariantSchemas.getStyle.safeParse({ type: 'getStyle' }).success, true);
   assert.equal(BridgeCommandVariantSchemas.getStyle.safeParse({
@@ -312,6 +324,7 @@ test('every success, failure, and event variant round-trips through the strict f
     },
     { type: 'state', accepted: true },
     { type: 'images', imageIds: [], serializedBytes: 2 },
+    { type: 'sprites', items: [], returned: 0, truncated: false, serializedBytes: 2 },
     { type: 'ack', accepted: true },
   ];
   for (const result of successes) {
@@ -319,7 +332,7 @@ test('every success, failure, and event variant round-trips through the strict f
   }
   for (const code of ['INTERNAL', 'IO_ERROR', 'REVISION_CONFLICT', 'TIMEOUT'] as const) {
     const failure = {
-      protocolVersion: 1,
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
       kind: 'result',
       correlationId: 'failure-1',
       ok: false,
@@ -340,15 +353,15 @@ test('every success, failure, and event variant round-trips through the strict f
   }
   for (const event of [
     {
-      protocolVersion: 1, kind: 'event', event: 'mapSnapshot', mapId: 'demo-map',
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'event', event: 'mapSnapshot', mapId: 'demo-map',
       snapshot: { revision: 0, styleHash: hash0, style: style0 },
     },
     {
-      protocolVersion: 1, kind: 'event', event: 'externalStyleChange', mapId: 'demo-map',
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'event', event: 'externalStyleChange', mapId: 'demo-map',
       snapshot: { revision: 1, styleHash: hash1 },
     },
     {
-      protocolVersion: 1, kind: 'event', event: 'mapStatus', mapId: 'demo-map',
+      protocolVersion: BRIDGE_PROTOCOL_VERSION, kind: 'event', event: 'mapStatus', mapId: 'demo-map',
       syncState: 'unknown',
     },
   ]) {
@@ -358,7 +371,7 @@ test('every success, failure, and event variant round-trips through the strict f
 
 test('mapStatus can only announce unknown; recovery requires a snapshot', () => {
   const event = {
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'event',
     event: 'mapStatus',
     mapId: 'demo-map',
@@ -373,6 +386,9 @@ test('mapStatus can only announce unknown; recovery requires a snapshot', () => 
 function assertResultLookupTypes(
   styleResult: BridgeResultFor<Extract<BridgeCommand, { type: 'getStyle' }>>,
   applyResult: BridgeResultFor<Extract<BridgeCommand, { type: 'applyTransaction' }>>,
+  applyDocumentResult: BridgeResultFor<Extract<BridgeCommand, { type: 'applyStyleDocument' }>>,
+  spritesResult: BridgeResultFor<Extract<BridgeCommand, { type: 'listSprites' }>>,
+  spriteMutationResult: BridgeResultFor<Extract<BridgeCommand, { type: 'addSprite' }>>,
 ): BridgeResultFrame | undefined {
   void styleResult.style;
   // @ts-expect-error style results do not expose transaction detail
@@ -380,6 +396,10 @@ function assertResultLookupTypes(
   void applyResult.detail;
   // @ts-expect-error transaction results do not expose an unconditional Style
   void applyResult.style;
+  void applyDocumentResult.detail;
+  void spritesResult.items;
+  // @ts-expect-error sprite mutations only expose acknowledgements
+  void spriteMutationResult.items;
   return undefined;
 }
 void assertResultLookupTypes;

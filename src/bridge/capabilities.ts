@@ -5,8 +5,11 @@ export function requiredCapabilityForCommand(command: BridgeCommand): BridgeCapa
   switch (command.type) {
     case 'getStyle':
     case 'listImages':
+    case 'listSprites':
       return 'style.read';
     case 'applyTransaction':
+    case 'applyStyleDocument':
+    case 'updateGeoJsonData':
       return 'style.write';
     case 'querySourceFeatures':
     case 'queryRenderedFeatures':
@@ -14,10 +17,13 @@ export function requiredCapabilityForCommand(command: BridgeCommand): BridgeCapa
     case 'setFeatureState':
     case 'removeFeatureState':
     case 'setGlobalState':
+    case 'setSourceTileLodParams':
       return 'runtime.state';
     case 'addImage':
     case 'removeImage':
-      return 'images.write';
+    case 'addSprite':
+    case 'removeSprite':
+      return 'assets.write';
   }
 }
 

@@ -197,7 +197,9 @@ const projectErrorDetails = (
     return { hasCurrentSnapshot: false };
   }
   const currentValue = ownDataValue(details, 'currentSnapshot');
-  if (currentValue !== undefined && command.type !== 'applyTransaction') {
+  if (currentValue !== undefined
+    && command.type !== 'applyTransaction'
+    && command.type !== 'applyStyleDocument') {
     throw new Error('Authoritative snapshots require a correlated mutation command.');
   }
 
@@ -218,12 +220,14 @@ const projectErrorDetails = (
   }
 
   const rolledBack = ownDataValue(details, 'rolledBack');
-  if (typeof rolledBack === 'boolean' && command.type === 'applyTransaction') {
+  if (typeof rolledBack === 'boolean'
+    && (command.type === 'applyTransaction' || command.type === 'applyStyleDocument')) {
     full.rolledBack = rolledBack;
     metadata.rolledBack = rolledBack;
   }
   const rollbackValue = ownDataValue(details, 'rollbackError');
-  if (isRecord(rollbackValue) && command.type === 'applyTransaction') {
+  if (isRecord(rollbackValue)
+    && (command.type === 'applyTransaction' || command.type === 'applyStyleDocument')) {
     const code = styleToolErrorCode(ownDataValue(rollbackValue, 'code'));
     if (code !== undefined) {
       const rollback = { code, message: publicBridgeErrorMessage(code) };
@@ -462,7 +466,7 @@ export function prepareOutboundBridgeFrame(
 }
 
 const allowedDetailKeys = (error: ParsedError, command: BridgeCommand): readonly string[] => {
-  const keys = command.type === 'applyTransaction'
+  const keys = command.type === 'applyTransaction' || command.type === 'applyStyleDocument'
     ? ['currentSnapshot', 'rolledBack', 'rollbackError']
     : [];
   switch (error.code) {
@@ -492,7 +496,7 @@ const assertDetailsAllowed = (
   }
   const current = ownDataValue(details, 'currentSnapshot');
   if (current !== undefined) {
-    if (command.type !== 'applyTransaction') {
+    if (command.type !== 'applyTransaction' && command.type !== 'applyStyleDocument') {
       throw new Error('Authoritative snapshots require a mutation command.');
     }
     const snapshot = MapSnapshotSchema.parse(current);

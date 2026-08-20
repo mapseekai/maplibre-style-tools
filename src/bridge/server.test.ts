@@ -6,6 +6,7 @@ import WebSocket from 'ws';
 import type { StyleDocument, StyleToolError } from '../core/index.js';
 import { hashStyle } from '../adapters/maplibre/style-hash.js';
 import {
+  BRIDGE_PROTOCOL_VERSION,
   BridgeResultFrameSchema,
   type BridgeAuthFrame,
   type BridgeCommandFrame,
@@ -48,7 +49,7 @@ const nextClose = (socket: WebSocket): Promise<number> => new Promise((resolve) 
 });
 
 const authFrame = (authenticationToken = token): BridgeAuthFrame => ({
-  protocolVersion: 1,
+  protocolVersion: BRIDGE_PROTOCOL_VERSION,
   kind: 'auth',
   correlationId: 'auth-1',
   token: authenticationToken,
@@ -63,7 +64,7 @@ const registerFrame = (
   attempt += 1;
   const prefix = attempt.toString(36);
   return {
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'register',
     correlationId: `register-${mapId}`,
     registrationAttemptId: `${prefix}${'A'.repeat(43 - prefix.length)}`,
@@ -168,7 +169,7 @@ test('closes auth timeout, wrong version, and oversized clients with exact code 
   assert.equal(await nextClose(idle), 1008);
   const wrongVersion = await connect(server.url);
   const versionClose = nextClose(wrongVersion);
-  wrongVersion.send(JSON.stringify({ ...authFrame(), protocolVersion: 2 }));
+  wrongVersion.send(JSON.stringify({ ...authFrame(), protocolVersion: 1 }));
   assert.equal(await versionClose, 1002);
   const oversized = await connect(server.url);
   const oversizedClose = nextClose(oversized);
@@ -202,7 +203,7 @@ test('registers one map and routes correlated results through the registry', asy
   const pending = server.registry.execute('demo-map', { type: 'getStyle' });
   const command = await commandPromise;
   socket.send(JSON.stringify({
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'result',
     correlationId: command.correlationId,
     ok: true,
@@ -256,7 +257,7 @@ test('a write-only browser that returns a forged full transaction is policy-clos
   const command = await commandPromise;
   const close = nextClose(socket);
   socket.send(JSON.stringify({
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'result',
     correlationId: command.correlationId,
     ok: true,
@@ -292,7 +293,7 @@ test('serializes delayed registration before later inbound events and closes cle
   await authenticate(socket);
   socket.send(JSON.stringify(registerFrame()));
   socket.send(JSON.stringify({
-    protocolVersion: 1,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
     kind: 'event',
     event: 'externalStyleChange',
     mapId: 'demo-map',

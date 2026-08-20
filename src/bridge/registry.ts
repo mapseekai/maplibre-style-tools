@@ -919,9 +919,13 @@ export class LiveMapRegistry {
       case 'state':
       case 'ack':
         return { result };
+      case 'sprites':
+        throw new Error('Sprite results are not supported by this registry.');
       case 'authenticated':
       case 'registered':
         throw new Error('control result cannot settle a map command');
+      default:
+        throw new Error('Unsupported bridge command result.');
     }
   }
 
