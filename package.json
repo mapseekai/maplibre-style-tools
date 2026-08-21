@@ -59,6 +59,8 @@
     "build": "tsc -b tsconfig.build.json",
     "check:package": "pnpm run build && node scripts/check-package.mjs",
     "example:typecheck": "tsc -p examples/browser-bridge/tsconfig.json",
+    "example:typecheck:ai-chat": "tsc -p examples/ai-chat/tsconfig.json",
+    "example:dev:ai-chat": "pnpm run example:typecheck:ai-chat && vite --config examples/ai-chat/vite.config.ts",
     "pretest:example:bridge": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/example-test-dist', { recursive: true, force: true });\"",
     "test:example:bridge": "pnpm run build && tsc -p examples/browser-bridge/tsconfig.test.json && node --test .tmp/example-test-dist/src/main.test.js",
     "build:example:bridge": "pnpm run example:typecheck && vite build --config examples/browser-bridge/vite.config.ts",

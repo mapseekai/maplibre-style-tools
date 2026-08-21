@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MapLibre AI chat</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="map" aria-label="MapLibre map"></section>
+      <aside class="chat-pane" aria-label="AI chat">
+        <h1>AI 地图样式助手</h1>
+        <form id="settings" class="settings">
+          <label>Base URL
+            <input data-testid="base-url" type="text" value="https://api.openai.com/v1" autocomplete="off" />
+          </label>
+          <label>API Key
+            <input data-testid="api-key" type="password" placeholder="sk-..." autocomplete="off" />
+          </label>
+          <label>Model
+            <input data-testid="model" type="text" value="gpt-4o-mini" autocomplete="off" />
+          </label>
+        </form>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="prompt-form" class="prompt-form">
+          <input data-testid="prompt" type="text" placeholder="例如:把海洋改成淡绿色" autocomplete="off" />
+          <button type="submit" data-testid="send">发送</button>
+        </form>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

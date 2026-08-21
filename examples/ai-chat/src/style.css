@@ -1,0 +1,76 @@
+:root {
+  color: #17212b;
+  background: #eef2f3;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, .app-shell { min-height: 100%; margin: 0; }
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  height: 100vh;
+}
+
+#map { min-height: 420px; }
+
+.chat-pane {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  /* Definite height: the implicit app-shell row is auto-sized, so without
+     this the 1fr row never constrains and the whole page scrolls. */
+  height: 100vh;
+  padding: 1rem;
+  background: #ffffff;
+  border-left: 1px solid #d9e1e5;
+}
+
+h1 { margin: 0; font-size: 1.15rem; }
+
+.settings { display: grid; gap: 0.5rem; }
+
+.settings label { display: grid; gap: 0.25rem; font-size: 0.78rem; font-weight: 600; }
+
+input {
+  min-height: 2.2rem;
+  border: 1px solid #aab9c2;
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+}
+
+.chat-log {
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid #e3e9ec;
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  background: #f8fafb;
+  font-size: 0.85rem;
+}
+
+.chat-log .msg { white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 0.4rem; padding: 0.45rem 0.6rem; }
+.chat-log .msg.user { background: #dcf1f5; align-self: flex-end; }
+.chat-log .msg.assistant { background: #ffffff; border: 1px solid #e3e9ec; }
+.chat-log .msg.tool { background: #f0eefb; font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.chat-log .msg.error { background: #fde8e8; color: #9b1c1c; }
+
+.prompt-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; }
+
+button {
+  min-height: 2.2rem;
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+  color: #ffffff;
+  background: #16697a;
+}
+button:disabled { cursor: default; opacity: 0.55; }
