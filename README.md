@@ -298,7 +298,11 @@ network fetch. The package-derived server version is generated at build time.
 ## Live MapLibre browser bridge
 
 The browser bridge connects an existing MapLibre map to the live-map extension
-hosted by `maplibre-style-mcp`:
+hosted by `maplibre-style-mcp`. For the end-to-end runtime path from an MCP
+tool call to the live map, see
+[How MCP Accesses a Running MapLibre Map](docs/mcp-live-map-access.md).
+
+A page connects its map with `connectMapLibreBridge`:
 
 ```ts
 import { connectMapLibreBridge } from 'maplibre-style-tools/bridge';
