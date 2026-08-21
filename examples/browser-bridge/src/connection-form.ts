@@ -70,6 +70,8 @@ export function renderExampleConnectionForm(
         'assets.write', 'network.load',
       ],
       allowedResourceOrigins: [],
+      // Demo-only: lets the bridge push inline icon images (data: URLs).
+      allowDataUrls: true,
     });
     token.value = '';
   });

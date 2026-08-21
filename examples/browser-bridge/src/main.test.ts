@@ -69,6 +69,8 @@ test('connection form exposes the stable E2E selector/default/submit contract', 
       'assets.write', 'network.load',
     ],
     allowedResourceOrigins: [],
+    // Demo-only: lets the bridge push inline icon images (data: URLs).
+    allowDataUrls: true,
   });
   assert.equal(ui.getByTestId('bridge-token').value, '');
 });

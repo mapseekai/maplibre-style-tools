@@ -12,7 +12,6 @@ import { applyTransactionToMap } from 'maplibre-style-tools/maplibre';
 
 import { renderExampleConnectionForm } from './connection-form.js';
 import {
-  DEMO_STYLE,
   addGeoJsonDemoTransaction,
   duplicateDemoTransaction,
   filterDemoTransaction,
@@ -26,7 +25,7 @@ const requireElement = <ElementType extends HTMLElement>(testId: string): Elemen
 
 const map = new Map({
   container: 'map',
-  style: DEMO_STYLE,
+  style: 'https://demotiles.maplibre.org/style.json',
   center: [0, 0],
   zoom: 1,
   attributionControl: false,
