@@ -27,11 +27,11 @@ export interface StyleAuthority {
   context(): MapToolContext;
   applyTransaction(
     transaction: StyleTransaction,
-    options: { diff: boolean },
+    options: { diff: boolean; signal?: AbortSignal },
   ): MapStyleApplyResult | Promise<MapStyleApplyResult>;
   applyDocument(
     source: StyleDocument | string,
-    options: { diff: boolean },
+    options: { diff: boolean; signal?: AbortSignal },
   ): MapStyleApplyResult | Promise<MapStyleApplyResult>;
 }
 

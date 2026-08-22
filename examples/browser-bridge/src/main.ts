@@ -30,6 +30,7 @@ const map = new Map({
   zoom: 1,
   attributionControl: false,
 });
+map.getCanvas().setAttribute('data-testid', 'map-canvas');
 
 const status = requireElement('bridge-status');
 const mapId = requireElement('map-id');

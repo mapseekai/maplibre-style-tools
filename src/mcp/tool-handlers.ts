@@ -31,14 +31,14 @@ export const exportStyleSessionInputSchema = z.strictObject({
 });
 
 export interface McpToolHandlers {
-  readonly openStyleSession: (input: unknown) => Promise<McpTextToolResult>;
-  readonly closeStyleSession: (input: unknown) => Promise<McpTextToolResult>;
-  readonly exportStyleSession: (input: unknown) => Promise<McpTextToolResult>;
-  readonly inspectStyle: (input: unknown) => Promise<McpTextToolResult>;
-  readonly applyStyleTransaction: (input: unknown) => Promise<McpTextToolResult>;
-  readonly applyStyleDocument: (input: unknown) => Promise<McpTextToolResult>;
-  readonly runMapCommand: (input: unknown) => Promise<McpTextToolResult>;
-  readonly queryMapFeatures: (input: unknown) => Promise<McpTextToolResult>;
+  readonly openStyleSession: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly closeStyleSession: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly exportStyleSession: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly inspectStyle: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly applyStyleTransaction: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly applyStyleDocument: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly runMapCommand: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
+  readonly queryMapFeatures: (input: unknown, signal?: AbortSignal) => Promise<McpTextToolResult>;
 }
 
 const invalid = (message: string): CapabilityResult<never> => ({
@@ -69,15 +69,21 @@ export const createMcpToolHandlers = (
 ): McpToolHandlers => {
   const result = (value: CapabilityResult<JsonValue>): McpTextToolResult =>
     boundary.requireToolSuccess(capabilityToolResult(value));
-  const sessionTool = async (raw: unknown, name: McpCapabilityToolName): Promise<McpTextToolResult> => {
+  const sessionTool = async (raw: unknown, name: McpCapabilityToolName, signal?: AbortSignal): Promise<McpTextToolResult> => {
     const parsed = adapterInput(raw, name === 'inspectStyle' && isAuthorityFreeInspect((raw as { input?: unknown })?.input));
     if (!parsed.ok) return result(invalid('Expected a strict object with target and input.'));
-    if (parsed.target === undefined) return result(await capabilityRegistry[name].execute(() => null, parsed.input) as CapabilityResult<JsonValue>);
+    if (parsed.target === undefined) return result(await capabilityRegistry[name].execute(
+      () => null,
+      parsed.input,
+      signal === undefined ? undefined : { abortSignal: signal },
+    ) as CapabilityResult<JsonValue>);
     const target = parsed.target;
     if (target.kind === 'map') {
       if (registry === undefined) return result(invalid('Live map targets are unavailable on this MCP server.'));
       return result(await capabilityRegistry[name].execute(
-        () => new BridgeMapAuthority(registry, target.mapId), parsed.input,
+        () => new BridgeMapAuthority(registry, target.mapId),
+        parsed.input,
+        signal === undefined ? undefined : { abortSignal: signal },
       ) as CapabilityResult<JsonValue>);
     }
     if (target.kind !== 'session') return result(invalid('Unsupported authority target.'));
@@ -91,7 +97,11 @@ export const createMcpToolHandlers = (
       const authority = new SessionStyleAuthority(
         store, sessionTarget.sessionId, expectedRevision, snapshot.style,
       );
-      const executed = await capabilityRegistry[name].execute(() => authority, parsed.input) as CapabilityResult<JsonValue>;
+      const executed = await capabilityRegistry[name].execute(
+        () => authority,
+        parsed.input,
+        signal === undefined ? undefined : { abortSignal: signal },
+      ) as CapabilityResult<JsonValue>;
       if (executed.success && (name === 'applyStyleTransaction' || name === 'applyStyleDocument')
         && typeof executed.data === 'object' && executed.data !== null && !Array.isArray(executed.data)) {
         const exported = await store.export(sessionTarget.sessionId);
@@ -122,9 +132,9 @@ export const createMcpToolHandlers = (
       catch (error) { return result(failure(error)); }
     },
     inspectStyle: (raw) => sessionTool(raw, 'inspectStyle'),
-    applyStyleTransaction: (raw) => sessionTool(raw, 'applyStyleTransaction'),
-    applyStyleDocument: (raw) => sessionTool(raw, 'applyStyleDocument'),
-    runMapCommand: (raw) => sessionTool(raw, 'runMapCommand'),
+    applyStyleTransaction: (raw, signal) => sessionTool(raw, 'applyStyleTransaction', signal),
+    applyStyleDocument: (raw, signal) => sessionTool(raw, 'applyStyleDocument', signal),
+    runMapCommand: (raw, signal) => sessionTool(raw, 'runMapCommand', signal),
     queryMapFeatures: (raw) => sessionTool(raw, 'queryMapFeatures'),
   };
 };

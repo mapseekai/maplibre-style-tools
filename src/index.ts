@@ -1,4 +1,3 @@
-/// <reference types="node" preserve="true" />
 /// <reference types="geojson" preserve="true" />
 
 export type {

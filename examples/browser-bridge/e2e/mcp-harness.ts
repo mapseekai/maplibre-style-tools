@@ -6,6 +6,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
@@ -16,7 +17,6 @@ import type { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import {
   parseMcpToolEnvelope,
-  parseOfficialCallToolResult,
 } from 'maplibre-style-tools/mcp';
 import { z } from 'zod';
 
@@ -69,7 +69,7 @@ export const BridgeStartupHandoffSchema = z.discriminatedUnion('mcpTransport', [
 export type BridgeStartupHandoff = z.infer<typeof BridgeStartupHandoffSchema>;
 
 export const parseHarnessCallResult = (value: unknown) => {
-  const official = parseOfficialCallToolResult(value);
+  const official = CallToolResultSchema.parse(value);
   return parseMcpToolEnvelope(official.structuredContent);
 };
 
@@ -256,7 +256,12 @@ export interface McpHarnessFactory {
   activeChildCount(): number;
 }
 
-class McpHarnessFactoryImpl implements McpHarnessFactory {
+export interface TestMcpHarnessFactory extends McpHarnessFactory {
+  startHttp(): Promise<HttpMcpHarness>;
+  closeAll(): Promise<void>;
+}
+
+class McpHarnessFactoryImpl implements TestMcpHarnessFactory {
   readonly #tracker: HarnessTracker;
 
   constructor(tracker: HarnessTracker) {
@@ -431,6 +436,9 @@ class McpHarnessFactoryImpl implements McpHarnessFactory {
   }
 }
 
+export const createMcpHarnessFactory = (): TestMcpHarnessFactory =>
+  new McpHarnessFactoryImpl(new HarnessTracker());
+
 const resolveExecutable = async (name: string): Promise<string> => {
   for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
     if (directory.length === 0) continue;
@@ -494,6 +502,9 @@ export const spawnPreviewHelpWithOnlyNodeAndPnpmOnPath = async (): Promise<{
 };
 
 const auditPage = async (page: Page, use: (page: Page) => Promise<void>): Promise<void> => {
+  // The example map intentionally loads its base style from the MapLibre demo
+  // tiles host; every other external origin must stay absent from the page.
+  const allowedExternalOrigins = new Set(['https://demotiles.maplibre.org']);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   const failedRequests: string[] = [];
@@ -513,7 +524,7 @@ const auditPage = async (page: Page, use: (page: Page) => Promise<void>): Promis
     const url = request.url();
     if (!url.startsWith('http://') && !url.startsWith('https://')) return;
     const origin = new URL(url).origin;
-    if (origin !== bridgeOrigin) externalOrigins.add(origin);
+    if (origin !== bridgeOrigin && !allowedExternalOrigins.has(origin)) externalOrigins.add(origin);
   });
   let testError: unknown;
   try {
@@ -538,14 +549,14 @@ const auditPage = async (page: Page, use: (page: Page) => Promise<void>): Promis
 type Fixtures = {
   harness: McpHarness;
   httpHarness: HttpMcpHarness;
-  harnessFactory: McpHarnessFactory;
+  harnessFactory: TestMcpHarnessFactory;
 };
 
 export const test = base.extend<Fixtures>({
   page: async ({ page }, use) => { await auditPage(page, use); },
   harnessFactory: async ({ browserName }, use) => {
     void browserName;
-    const factory = new McpHarnessFactoryImpl(new HarnessTracker());
+    const factory = createMcpHarnessFactory();
     try { await use(factory); } finally { await factory.closeAll(); }
   },
   harness: async ({ harnessFactory }, use) => {
@@ -553,7 +564,7 @@ export const test = base.extend<Fixtures>({
     try { await use(harness); } finally { await harness.close(); }
   },
   httpHarness: async ({ harnessFactory }, use) => {
-    const harness = await (harnessFactory as McpHarnessFactoryImpl).startHttp();
+    const harness = await harnessFactory.startHttp();
     try { await use(harness); } finally { await harness.close(); }
   },
 });

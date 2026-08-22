@@ -212,10 +212,12 @@ packageSmoke('packed package exposes mcp without import-time handles', async (t)
   ], packed.consumerDir);
   assert.equal(output.stdout.trim(), 'function');
   assert.equal(output.stderr, '');
+  assert.ok(packed.packlist.includes('dist/mcp/index.js'));
+  assert.ok(packed.packlist.includes('dist/mcp/index.d.ts'));
   assert.ok(packed.packlist.includes('dist/mcp/main.js'));
   assert.ok(packed.packlist.includes('dist/mcp/main.d.ts'));
   assert.match(
-    await readFile(join(packed.installedPackageDir, 'dist/mcp/main.d.ts'), 'utf8'),
+    await readFile(join(packed.installedPackageDir, 'dist/mcp/index.d.ts'), 'utf8'),
     /^\/\/\/ <reference types="node" preserve="true" \/>/m,
   );
   assert.equal(packed.packlist.some(
@@ -227,9 +229,9 @@ packageSmoke('packed manifest, NodeNext types, and binary all resolve from the e
   const packed = await createFreshPackedConsumer(t);
   const exportsMap = packed.manifest.exports as Record<string, unknown>;
   assert.deepEqual(exportsMap['./mcp'], {
-    types: './dist/mcp/main.d.ts',
-    import: './dist/mcp/main.js',
-    default: './dist/mcp/main.js',
+    types: './dist/mcp/index.d.ts',
+    import: './dist/mcp/index.js',
+    default: './dist/mcp/index.js',
   });
   assert.deepEqual(packed.manifest.bin, {
     'maplibre-style': './dist/cli/main.js',

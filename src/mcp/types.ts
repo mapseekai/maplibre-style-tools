@@ -120,6 +120,7 @@ export interface ApplyStyleSessionRequest {
 export interface ApplySessionTransactionResult {
   readonly revision: number;
   readonly dryRun: boolean;
+  readonly style: StyleDocument;
   readonly diff: readonly StyleDiffEntry[];
   readonly changedLayers: readonly string[];
   readonly changedSources: readonly string[];

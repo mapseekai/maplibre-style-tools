@@ -7,7 +7,11 @@ import { createMapLibreStyleMcpServer } from './create-server.js';
 import { createLiveMapMcpExtension } from './live-extension.js';
 import { MCP_SERVER_VERSION } from './version.generated.js';
 
-const style = { version: 8, sources: {}, layers: [{ id: 'roads', type: 'line' }] };
+const style = {
+  version: 8,
+  sources: { roads: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } },
+  layers: [{ id: 'roads', type: 'line', source: 'roads' }],
+};
 const tools = [
   'inspectStyle', 'applyStyleTransaction', 'applyStyleDocument', 'runMapCommand', 'queryMapFeatures',
   'openStyleSession', 'closeStyleSession', 'exportStyleSession',
@@ -20,11 +24,20 @@ test('MCP contract exposes unified capability and session tools', async () => {
   try {
     await Promise.all([created.connect(serverTransport), client.connect(clientTransport)]);
     assert.deepEqual((await client.listTools()).tools.map(({ name }) => name), tools);
-    await client.callTool({ name: 'openStyleSession', arguments: { style } });
-    await client.callTool({
+    const opened = await client.callTool({ name: 'openStyleSession', arguments: { style } });
+    assert.equal(opened.isError, undefined);
+    assert.equal((opened.structuredContent as { success?: unknown } | undefined)?.success, true);
+    const inspected = await client.callTool({
       name: 'inspectStyle', arguments: { target: { kind: 'session', sessionId: 'contract-session' }, input: { action: 'listLayers' } },
     });
-    await client.callTool({ name: 'exportStyleSession', arguments: { sessionId: 'contract-session' } });
+    assert.equal(inspected.isError, undefined);
+    assert.equal((inspected.structuredContent as { success?: unknown } | undefined)?.success, true);
+    const exported = await client.callTool({ name: 'exportStyleSession', arguments: { sessionId: 'contract-session' } });
+    assert.equal(exported.isError, undefined);
+    assert.equal((exported.structuredContent as { success?: unknown } | undefined)?.success, true);
+    const closed = await client.callTool({ name: 'closeStyleSession', arguments: { sessionId: 'contract-session' } });
+    assert.equal(closed.isError, undefined);
+    assert.equal((closed.structuredContent as { success?: unknown } | undefined)?.success, true);
     assert.deepEqual(client.getServerVersion(), { name: 'maplibre-style-mcp-server', version: MCP_SERVER_VERSION });
   } finally { await Promise.allSettled([client.close(), created.close()]); }
 });

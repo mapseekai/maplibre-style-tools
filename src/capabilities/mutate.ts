@@ -72,6 +72,7 @@ const failure = (result: Extract<MapStyleApplyResult, { ok: false }>) => {
 export const executeApplyStyleTransaction = async (
   getAuthority: AuthoritySource<StyleAuthority>,
   rawInput: unknown,
+  execution: { abortSignal?: AbortSignal } = {},
 ): Promise<CapabilityResult<StyleMutationReceipt>> => {
     const parsedInput = applyStyleTransactionToolInputSchema.safeParse(rawInput);
     if (!parsedInput.success) return invalidInputFailure(parsedInput.error);
@@ -122,7 +123,7 @@ export const executeApplyStyleTransaction = async (
     if (authority === null) return toFailure(authorityNotReadyError());
     const result = await authority.applyTransaction(
       transaction,
-      { diff: includeDiff },
+      { diff: includeDiff, ...(execution.abortSignal === undefined ? {} : { signal: execution.abortSignal }) },
     );
     if (!result.ok) return failure(result);
     return receipt(TRANSACTION_MESSAGE, {
@@ -137,6 +138,7 @@ export const executeApplyStyleTransaction = async (
 export const executeApplyStyleDocument = async (
   getAuthority: AuthoritySource<StyleAuthority>,
   rawInput: unknown,
+  execution: { abortSignal?: AbortSignal } = {},
 ): Promise<CapabilityResult<StyleMutationReceipt>> => {
     const parsedInput = applyStyleDocumentInputSchema.safeParse(rawInput);
     if (!parsedInput.success) return invalidInputFailure(parsedInput.error);
@@ -145,7 +147,7 @@ export const executeApplyStyleDocument = async (
     if (authority === null) return toFailure(authorityNotReadyError());
     const result = await authority.applyDocument(
       input.source.kind === 'style' ? input.source.style : input.source.url,
-      { diff: input.diff ?? true },
+      { diff: input.diff ?? true, ...(execution.abortSignal === undefined ? {} : { signal: execution.abortSignal }) },
     );
     if (!result.ok) return failure(result);
     return receipt(DOCUMENT_MESSAGE, {

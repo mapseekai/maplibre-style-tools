@@ -40,6 +40,23 @@ export const createMcpToolEnvelopeSchema = <DataSchema extends z.ZodTypeAny>(
 
 export const mcpToolEnvelopeSchema = createMcpToolEnvelopeSchema(jsonValueSchema);
 
+/**
+ * Advertised MCP outputSchema for every tool. Kept non-recursive (unlike
+ * mcpToolEnvelopeSchema) so the advertised JSON Schema stays a plain object
+ * without $defs; runtime envelopes are still validated by toMcpResult.
+ */
+export const mcpToolOutputSchema = z.strictObject({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.unknown().optional(),
+  error: z.strictObject({
+    code: z.enum(STYLE_TOOL_ERROR_CODES),
+    message: z.string(),
+    path: z.string().optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
+  }).optional(),
+});
+
 export const parseStyleToolErrorShape = (value: unknown): StyleToolError =>
   styleToolErrorWireSchema.parse(value);
 

@@ -119,6 +119,37 @@ const assertBrowserClosure = ({
   return files;
 };
 
+const assertCjsRequireExports = (cwd, expectedExports) => {
+  const smoke = `const assert = require('node:assert/strict');
+${expectedExports.map(({ specifier, name }) => `{
+  const entry = require(${JSON.stringify(specifier)});
+  assert.equal(typeof entry[${JSON.stringify(name)}], 'function',
+    ${JSON.stringify(`CommonJS require(${JSON.stringify(specifier)}) is missing ${name}`)});
+}`).join('\n')}
+`;
+  const result = spawnSync(process.execPath, ['--eval', smoke], { cwd, encoding: 'utf8' });
+  if (result.error || result.status !== 0) {
+    throw new Error([
+      'CommonJS require(esm) consumer smoke failed',
+      result.error?.message,
+      result.stdout,
+      result.stderr,
+    ].filter(Boolean).join('\n'));
+  }
+};
+
+if (process.argv[2] === '--check-cjs-require') {
+  const arguments_ = process.argv.slice(3);
+  assertion(arguments_.length > 0 && arguments_.length % 2 === 0,
+    '--check-cjs-require requires specifier/export-name pairs');
+  const expectedExports = [];
+  for (let index = 0; index < arguments_.length; index += 2) {
+    expectedExports.push({ specifier: arguments_[index], name: arguments_[index + 1] });
+  }
+  assertCjsRequireExports(process.cwd(), expectedExports);
+  process.exit(0);
+}
+
 if (process.argv[2] === '--check-browser-closure') {
   const arguments_ = process.argv.slice(3);
   let entryArgument;
@@ -267,6 +298,7 @@ const packedModules = [
   'capabilities/index',
   'capabilities/inspect',
   'capabilities/map-authority',
+  'capabilities/model-schema',
   'capabilities/mutate',
   'capabilities/openai-tools',
   'capabilities/registry',
@@ -317,6 +349,7 @@ const packedModules = [
   'mcp/core-adapters',
   'mcp/create-server',
   'mcp/http',
+  'mcp/index',
   'mcp/live-extension',
   'mcp/live-resources',
   'mcp/main',
@@ -1069,8 +1102,8 @@ try {
   command('tar', ['-xzf', tarballPath, '-C', packDirectory]);
   command('mv', [join(packDirectory, 'package'), unpacked]);
   const rootDeclaration = source(join(unpacked, 'dist/index.d.ts'));
-  assertion(rootDeclaration.startsWith('/// <reference types="node" preserve="true" />\n/// <reference types="geojson" preserve="true" />'),
-    'root declaration references must preserve node then geojson');
+  assertion(rootDeclaration.startsWith('/// <reference types="geojson" preserve="true" />\n'),
+    'root declaration must preserve geojson and stay free of Node ambient types');
   const aiDeclaration = source(join(unpacked, 'dist/ai/index.d.ts'));
   assertion(aiDeclaration.startsWith('/// <reference types="node" preserve="true" />\n'),
     'AI declaration must preserve its own root-level node reference');
@@ -1086,10 +1119,10 @@ try {
     ));
   assert.deepEqual(nodeReferenceFiles, [
     'dist/ai/index.d.ts',
-    'dist/index.d.ts',
     'dist/mcp/http.d.ts',
+    'dist/mcp/index.d.ts',
     'dist/mcp/main.d.ts',
-  ], 'only root, AI, and MCP transport declarations may reference Node ambient types');
+  ], 'only AI and MCP transport declarations may reference Node ambient types');
   assertCoreDeclarationsAreTransportNeutral(packedFiles, unpacked);
   assertMapLibreDeclarationsAreNodeFree(packedFiles, unpacked);
 
@@ -1143,9 +1176,9 @@ try {
       default: './dist/capabilities/index.js',
     },
     './mcp': {
-      types: './dist/mcp/main.d.ts',
-      import: './dist/mcp/main.js',
-      default: './dist/mcp/main.js',
+      types: './dist/mcp/index.d.ts',
+      import: './dist/mcp/index.js',
+      default: './dist/mcp/index.js',
     },
     './bridge': {
       types: './dist/bridge/index.d.ts',
@@ -1153,6 +1186,13 @@ try {
       default: './dist/bridge/index.js',
     },
   });
+  // These entrypoints reach MapLibre only through type-only imports, so this
+  // smoke test remains valid without installing the maplibre-gl peer.
+  assertCjsRequireExports(consumer, [
+    { specifier: 'maplibre-style-tools', name: 'applyStyleTransaction' },
+    { specifier: 'maplibre-style-tools/core', name: 'finalizeStyleReplacement' },
+    { specifier: 'maplibre-style-tools/capabilities', name: 'executeApplyStyleTransaction' },
+  ]);
   assert.deepEqual(installedManifest.bin, {
     'maplibre-style': './dist/cli/main.js',
     'maplibre-style-mcp': './dist/mcp/main.js',

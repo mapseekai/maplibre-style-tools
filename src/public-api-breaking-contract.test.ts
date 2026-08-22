@@ -80,3 +80,11 @@ test('keeps the unified /ai factory as the only AI public surface', async () => 
   assert.equal('createCompactMapLibreStyleTools' in root, false);
   assert.deepEqual(Object.keys(ai), ['createMapLibreStyleTools']);
 });
+
+test('the returned tools are assignable to an AI SDK ToolSet', () => {
+  // Consumers must be able to pass createMapLibreStyleTools() straight into
+  // AI SDK generation APIs; the public type is the AI SDK Tool shape.
+  const tools = createMapLibreStyleTools({ getMap: () => null });
+  const compatible: import('ai').ToolSet = tools;
+  void compatible;
+});

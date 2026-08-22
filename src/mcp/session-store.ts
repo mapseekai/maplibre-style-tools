@@ -633,6 +633,7 @@ export function createStyleSessionStoreWithDependencies(
       const publicResult: ApplySessionTransactionResult = cloneKnownJson({
         revision: nextRevision,
         dryRun,
+        style: nextStyle,
         diff: nextDiff,
         changedLayers: result.changedLayers,
         changedSources: result.changedSources,
@@ -703,6 +704,7 @@ export function createStyleSessionStoreWithDependencies(
       return cloneKnownJson({
         revision: nextRevision,
         dryRun: false,
+        style: nextStyle,
         diff: nextDiff,
         changedLayers: result.changedLayers,
         changedSources: result.changedSources,

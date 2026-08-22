@@ -5,7 +5,7 @@ import {
   formatBridgeConnectionInfo,
   parseBridgeOptions,
 } from './bridge-options.js';
-import { parseMcpProcessOptions } from './main.js';
+import { parseMcpProcessOptions } from './index.js';
 
 const token32 = 't'.repeat(32);
 

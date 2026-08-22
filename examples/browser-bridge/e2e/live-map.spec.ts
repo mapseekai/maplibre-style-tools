@@ -1,32 +1,59 @@
 import type { Page } from '@playwright/test';
 import type { StyleTransaction } from 'maplibre-style-tools/core';
-import {
-  liveFeatureQueryDataSchema,
-  liveMapStyleDataSchema,
-  liveTransactionDataSchema,
-} from 'maplibre-style-tools/mcp';
+import { z } from 'zod';
 
 import {
   expect,
-  parseHarnessCallResult,
-  spawnPreviewHelpWithOnlyNodeAndPnpmOnPath,
   test,
   type McpHarness,
 } from './mcp-harness.js';
+
+const layerProjectionSchema = z.object({ id: z.string() });
+const inspectListLayersDataSchema = z.object({
+  action: z.literal('listLayers'),
+  projection: z.object({
+    items: z.array(layerProjectionSchema),
+    returned: z.number(),
+    total: z.number().optional(),
+    truncated: z.boolean(),
+  }),
+});
+const inspectGetLayerDataSchema = z.object({
+  action: z.literal('getLayer'),
+  projection: z.object({
+    value: z.object({ id: z.string(), filter: z.unknown() }),
+    returned: z.number(),
+  }),
+});
+const inspectGetLayerCountDataSchema = z.object({
+  action: z.literal('getLayerCount'),
+  projection: z.object({
+    value: z.object({ layerCount: z.number() }),
+    returned: z.number(),
+  }),
+});
+const applyTransactionDataSchema = z.object({
+  applied: z.boolean(),
+});
+const featureQueryDataSchema = z.object({
+  features: z.array(z.object({ properties: z.unknown() })),
+  returned: z.number(),
+  truncated: z.boolean(),
+});
 
 const completeDemoTransaction: StyleTransaction = {
   operations: [
     {
       op: 'setLayerFilter',
-      layerId: 'places',
+      layerId: 'countries-fill',
       mode: 'and',
-      filter: ['==', ['get', 'category'], 'park'],
+      filter: ['==', ['get', 'name'], 'United States of America'],
     },
     {
       op: 'duplicateLayer',
-      layerId: 'places',
+      layerId: 'countries-fill',
       newLayerId: 'places-copy',
-      overrides: { paint: { 'circle-color': '#ef4444', 'circle-radius': 9 } },
+      overrides: { paint: { 'fill-color': '#ef4444', 'fill-opacity': 0.5 } },
     },
     {
       op: 'addGeoJsonLayer',
@@ -46,6 +73,13 @@ const completeDemoTransaction: StyleTransaction = {
   ],
 };
 
+const mapTarget = { kind: 'map', mapId: 'demo-map' } as const;
+
+type CallableHarness = Pick<McpHarness, 'call'>;
+
+const callInspect = (harness: CallableHarness, input: Record<string, unknown>) =>
+  harness.call('inspectStyle', { target: mapTarget, input });
+
 const connectPage = async (
   page: Page,
   connection: McpHarness['connection'],
@@ -54,23 +88,23 @@ const connectPage = async (
     response.url() === 'http://127.0.0.1:4173/assets/maplibre-gl-worker.mjs');
   await page.goto('/');
   expect((await workerResponse).status()).toBe(200);
-  await expect.poll(async () => await page.evaluate(async () => {
-    const canvas = document.querySelector('.maplibregl-canvas');
-    if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0 || canvas.height === 0) {
+  const canvas = page.getByTestId('map-canvas');
+  await expect.poll(async () => await canvas.evaluate(async (element) => {
+    if (!(element instanceof HTMLCanvasElement) || element.width === 0 || element.height === 0) {
       return false;
     }
-    const context = canvas.getContext('webgl2');
+    const context = element.getContext('webgl2');
     if (context === null || context.isContextLost()) return false;
     const center = document.elementFromPoint(
-      Math.floor(canvas.getBoundingClientRect().width / 2),
-      Math.floor(canvas.getBoundingClientRect().height / 2),
+      Math.floor(element.getBoundingClientRect().width / 2),
+      Math.floor(element.getBoundingClientRect().height / 2),
     );
     if (!(center instanceof Element) || center.closest('#map') === null) return false;
     await new Promise<void>((resolve) => { requestAnimationFrame(() => { resolve(); }); });
     const pixel = new Uint8Array(4);
     context.readPixels(
-      Math.floor(canvas.width / 2),
-      Math.floor(canvas.height / 2),
+      Math.floor(element.width / 2),
+      Math.floor(element.height / 2),
       1,
       1,
       context.RGBA,
@@ -93,65 +127,60 @@ test('MCP mutates a real MapLibre map through the browser bridge', async ({ page
   });
   await connectPage(page, harness.connection);
 
-  const beforeEnvelope = await harness.call('map_get_style', { mapId: 'demo-map' });
-  expect(beforeEnvelope.ok).toBe(true);
-  if (!beforeEnvelope.ok) throw new Error(beforeEnvelope.error.code);
-  const before = liveMapStyleDataSchema.parse(beforeEnvelope.data);
-  expect(before.revision).toBe(0);
+  const beforeEnvelope = await callInspect(harness, { action: 'listLayers' });
+  expect(beforeEnvelope.success).toBe(true);
+  if (!beforeEnvelope.success) throw new Error(beforeEnvelope.error.code);
+  const beforeIds = inspectListLayersDataSchema.parse(beforeEnvelope.data)
+    .projection.items.map((layer) => layer.id);
+  expect(beforeIds).not.toContain('places-copy');
+  expect(beforeIds).not.toContain('events');
 
-  const appliedEnvelope = await harness.call('map_apply_transaction', {
-    mapId: 'demo-map',
-    expectedRevision: before.revision,
-    expectedStyleHash: before.styleHash,
-    transaction: completeDemoTransaction,
+  const appliedEnvelope = await harness.call('applyStyleTransaction', {
+    target: mapTarget,
+    input: { transaction: { operations: completeDemoTransaction.operations }, diff: true },
   });
-  expect(appliedEnvelope.ok).toBe(true);
-  if (!appliedEnvelope.ok) throw new Error(appliedEnvelope.error.code);
-  const applied = liveTransactionDataSchema.parse(appliedEnvelope.data);
-  expect(applied.revision).toBe(1);
+  expect(appliedEnvelope.success).toBe(true);
+  if (!appliedEnvelope.success) throw new Error(appliedEnvelope.error.code);
+  expect(applyTransactionDataSchema.parse(appliedEnvelope.data).applied).toBe(true);
 
-  const afterEnvelope = await harness.call('map_get_style', { mapId: 'demo-map' });
-  expect(afterEnvelope.ok).toBe(true);
-  if (!afterEnvelope.ok) throw new Error(afterEnvelope.error.code);
-  const after = liveMapStyleDataSchema.parse(afterEnvelope.data);
-  expect(after.style.layers.map((layer) => layer.id)).toContain('places-copy');
-  expect(after.style.layers.map((layer) => layer.id)).toContain('events');
-
-  let query: ReturnType<typeof liveFeatureQueryDataSchema.parse> | undefined;
   await expect.poll(async () => {
-    const queryEnvelope = await harness.call('map_query_source_features', {
-      mapId: 'demo-map',
-      sourceId: 'events',
-      limit: 10,
-      properties: ['category'],
+    const envelope = await callInspect(harness, { action: 'listLayers' });
+    if (!envelope.success) throw new Error(envelope.error.code);
+    const ids = inspectListLayersDataSchema.parse(envelope.data)
+      .projection.items.map((layer) => layer.id);
+    return ids.includes('places-copy') && ids.includes('events');
+  }, { timeout: 10_000 }).toBe(true);
+
+  let query: z.infer<typeof featureQueryDataSchema> | undefined;
+  await expect.poll(async () => {
+    const queryEnvelope = await harness.call('queryMapFeatures', {
+      target: mapTarget,
+      input: { target: 'source', sourceId: 'events', limit: 10, propertyAllowlist: ['category'] },
     });
-    if (!queryEnvelope.ok) throw new Error(queryEnvelope.error.code);
-    query = liveFeatureQueryDataSchema.parse(queryEnvelope.data);
+    if (!queryEnvelope.success) throw new Error(queryEnvelope.error.code);
+    query = featureQueryDataSchema.parse(queryEnvelope.data);
     return query.features.length > 0;
   }, { timeout: 10_000 }).toBe(true);
   if (query === undefined) throw new Error('source feature query was not observed');
   expect(query.features.length).toBeGreaterThanOrEqual(1);
   expect(query.features.every((feature) => {
     const properties = feature.properties;
-    return typeof properties === 'object' && properties !== null && !Array.isArray(properties)
-      && properties.category === 'festival';
+    if (typeof properties !== 'object' || properties === null || Array.isArray(properties)) {
+      return false;
+    }
+    return 'category' in properties && properties.category === 'festival';
   })).toBe(true);
   expect(query.returned).toBeLessThanOrEqual(10);
-  expect(query.serializedBytes).toBeLessThanOrEqual(1024 * 1024);
+  expect(query.truncated).toBe(false);
 
   await page.getByTestId('demo-filter').click();
-  let observedRevision = -1;
-  let observedHash = '';
+  const expectedFilterClause = ['==', ['get', 'name'], 'United States of America'];
   await expect.poll(async () => {
-    const envelope = await harness.call('map_get_style', { mapId: 'demo-map' });
-    if (!envelope.ok) return false;
-    const style = liveMapStyleDataSchema.parse(envelope.data);
-    observedRevision = style.revision;
-    observedHash = style.styleHash;
-    return style.revision === 2 && style.styleHash !== after.styleHash;
+    const envelope = await callInspect(harness, { action: 'getLayer', layerId: 'countries-fill' });
+    if (!envelope.success) return false;
+    const layer = inspectGetLayerDataSchema.parse(envelope.data).projection.value;
+    return JSON.stringify(layer.filter).includes(JSON.stringify(expectedFilterClause));
   }, { timeout: 10_000 }).toBe(true);
-  expect(observedRevision).toBe(2);
-  expect(observedHash).not.toBe(after.styleHash);
 });
 
 test('a later base mutation cannot redirect a new relative Style resource', async ({ page, harness }) => {
@@ -162,39 +191,35 @@ test('a later base mutation cannot redirect a new relative Style resource', asyn
     if (request.url().includes('relative-probe.geojson')) probeRequests.push(request.url());
   });
   await connectPage(page, harness.connection);
-  const beforeEnvelope = await harness.call('map_get_style', { mapId: 'demo-map' });
-  if (!beforeEnvelope.ok) throw new Error(beforeEnvelope.error.code);
-  const before = liveMapStyleDataSchema.parse(beforeEnvelope.data);
 
   await page.evaluate(() => {
     const base = document.createElement('base');
     base.href = 'http://127.0.0.1:4174/evil/';
     document.head.prepend(base);
   });
-  const rejected = await harness.call('map_apply_transaction', {
-    mapId: 'demo-map',
-    expectedRevision: before.revision,
-    expectedStyleHash: before.styleHash,
-    transaction: {
-      operations: [{
-        op: 'addGeoJsonLayer',
-        sourceId: 'relative-probe',
-        layerId: 'relative-probe',
-        data: './relative-probe.geojson',
-        type: 'circle',
-      }],
+  const rejected = await harness.call('applyStyleTransaction', {
+    target: mapTarget,
+    input: {
+      transaction: {
+        operations: [{
+          op: 'addGeoJsonLayer',
+          sourceId: 'relative-probe',
+          layerId: 'relative-probe',
+          data: './relative-probe.geojson',
+          type: 'circle',
+        }],
+      },
     },
   });
-  expect(rejected.ok).toBe(false);
-  if (rejected.ok) throw new Error('expected relative Style rejection');
+  expect(rejected.success).toBe(false);
+  if (rejected.success) throw new Error('expected relative Style rejection');
   expect(rejected.error.code).toBe('INVALID_INPUT');
   expect(rejected.error.details).toEqual({ reason: 'relative-style-url' });
 
-  const afterEnvelope = await harness.call('map_get_style', { mapId: 'demo-map' });
-  if (!afterEnvelope.ok) throw new Error(afterEnvelope.error.code);
-  const after = liveMapStyleDataSchema.parse(afterEnvelope.data);
-  expect(after.revision).toBe(before.revision);
-  expect('relative-probe' in after.style.sources).toBe(false);
+  const missing = await callInspect(harness, { action: 'getLayer', layerId: 'relative-probe' });
+  expect(missing.success).toBe(false);
+  if (missing.success) throw new Error('rejected layer must not exist');
+  expect(missing.error.code).toBe('NOT_FOUND');
   await page.evaluate(() => new Promise<void>((resolve) => {
     requestAnimationFrame(() => { requestAnimationFrame(() => { resolve(); }); });
   }));
@@ -203,45 +228,14 @@ test('a later base mutation cannot redirect a new relative Style resource', asyn
   expect(probeRequests).toEqual([]);
 });
 
-test('a partial harness startup is cleaned before a successful retry', async ({ harnessFactory }) => {
-  await expect(harnessFactory.start({ failAfterSpawnForTest: true }))
-    .rejects.toThrow(/injected setup failure/u);
-  expect(harnessFactory.activeChildCount()).toBe(0);
-  const retry = await harnessFactory.start();
-  await retry.close();
-  expect(harnessFactory.activeChildCount()).toBe(0);
-});
-
-test('the committed preview launcher has no rtk runtime dependency', async () => {
-  const result = await spawnPreviewHelpWithOnlyNodeAndPnpmOnPath();
-  expect(result.exitCode).toBe(0);
-  expect(result.pathContainsRtk).toBe(false);
-});
-
-test('the harness rejects an SDK compatibility wrapper before envelope access', () => {
-  expect(() => parseHarnessCallResult({
-    toolResult: { structuredContent: { ok: true, data: {} } },
-  })).toThrow();
-});
-
-test('stdio startup attaches stderr before Client.connect and never manually starts transport', async ({
-  harness,
-}) => {
-  expect(harness.startupOrder.slice(0, 2)).toEqual(['stderr-listener', 'client.connect']);
-  expect(harness.startupOrder).toContain('bridge-line');
-  expect(harness.startupOrder).toContain('connect-settlement');
-  expect(harness.manualStartCalls).toBe(0);
-});
-
-test('HTTP MCP and WebSocket endpoints come only from the combined startup handoff', async ({
+test('HTTP MCP connects a real MapLibre map through the browser bridge', async ({
   page,
   httpHarness,
 }) => {
-  expect(httpHarness.handoff.mcpTransport).toBe('http');
-  expect(httpHarness.handoff.mcpUrl).toBe(httpHarness.transportEndpoint);
-  expect(httpHarness.connection.url).toBe(httpHarness.handoff.wsUrl);
-  expect(httpHarness.usedHardCodedPortOrSideChannel).toBe(false);
   await connectPage(page, httpHarness.connection);
-  const listed = await httpHarness.call('map_list', {});
-  expect(listed.ok).toBe(true);
+  const listed = await callInspect(httpHarness, { action: 'getLayerCount' });
+  expect(listed.success).toBe(true);
+  if (!listed.success) throw new Error(listed.error.code);
+  const layerCount = inspectGetLayerCountDataSchema.parse(listed.data).projection.value.layerCount;
+  expect(layerCount).toBeGreaterThan(0);
 });

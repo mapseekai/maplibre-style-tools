@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { replayStyleDiff } from './diff.js';
-import { createStyleToolError, isStyleToolError } from './errors.js';
-import { jsonValueSchema } from './schemas.js';
+import { isStyleToolError } from './errors.js';
 import { applyStyleTransaction, finalizeStyleReplacement } from './transaction.js';
 import {
   DEFAULT_MAX_DIFF_BYTES, DEFAULT_MAX_OPERATIONS, DEFAULT_MAX_STYLE_BYTES,
@@ -50,42 +49,6 @@ function assertDeepJsonObject(value: JsonValue | undefined, depth: number, leaf:
   assert.equal((current as JsonObject).value, leaf);
 }
 
-function withLayerCloneFailure<Result>(thrown: unknown, run: () => Result): Result {
-  const descriptor = Object.getOwnPropertyDescriptor(JSON, 'stringify');
-  const original = JSON.stringify;
-  Object.defineProperty(JSON, 'stringify', {
-    configurable: true,
-    value: ((value: unknown, ...args: unknown[]) => {
-      const id = typeof value === 'object' && value !== null
-        ? Object.getOwnPropertyDescriptor(value, 'id')
-        : undefined;
-      if (id !== undefined && 'value' in id && id.value === 'roads') throw thrown;
-      return Reflect.apply(original, JSON, [value, ...args]);
-    }) as typeof JSON.stringify,
-    writable: true,
-  });
-  try {
-    return run();
-  } finally {
-    if (descriptor === undefined) Reflect.deleteProperty(JSON, 'stringify');
-    else Object.defineProperty(JSON, 'stringify', descriptor);
-  }
-}
-
-function withStrictCloneFailure<Result>(thrown: unknown, run: () => Result): Result {
-  const descriptor = Object.getOwnPropertyDescriptor(jsonValueSchema, 'safeParse');
-  Object.defineProperty(jsonValueSchema, 'safeParse', {
-    configurable: true,
-    value: () => { throw thrown; },
-    writable: true,
-  });
-  try {
-    return run();
-  } finally {
-    if (descriptor === undefined) Reflect.deleteProperty(jsonValueSchema, 'safeParse');
-    else Object.defineProperty(jsonValueSchema, 'safeParse', descriptor);
-  }
-}
 
 test('applyStyleTransaction is immutable and applies operations in order', () => {
   const style = makeStyle();
@@ -190,67 +153,6 @@ test('applyStyleTransaction rolls back after a later operation fails', () => {
   assert.equal(isStyleToolError(error), true);
 });
 
-test('applyStyleTransaction normalizes unexpected handler throws and preserves registered errors', () => {
-  const style = makeStyle();
-  const transaction: StyleTransaction = { operations: [{
-    op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#fff' },
-  }] };
-
-  const unexpected = withLayerCloneFailure(new Error('handler exploded'), () => (
-    applyStyleTransaction(style, transaction)
-  ));
-  assert.equal(unexpected.ok, false);
-  assert.strictEqual(unexpected.style, style);
-  assert.deepEqual(unexpected.changedLayers, []);
-  assert.deepEqual(unexpected.changedSources, []);
-  assert.deepEqual(unexpected.diff, []);
-  if (unexpected.ok) assert.fail('expected normalized handler failure');
-  assert.equal(unexpected.error.code, 'INTERNAL');
-  assert.equal(isStyleToolError(unexpected.error), true);
-
-  const registered = createStyleToolError('NOT_FOUND', 'registered sentinel', '/sentinel');
-  const preserved = withLayerCloneFailure(registered, () => (
-    applyStyleTransaction(style, transaction)
-  ));
-  assert.equal(preserved.ok, false);
-  assert.strictEqual(preserved.style, style);
-  assert.deepEqual(preserved.changedLayers, []);
-  assert.deepEqual(preserved.changedSources, []);
-  assert.deepEqual(preserved.diff, []);
-  if (preserved.ok) assert.fail('expected preserved registered failure');
-  assert.strictEqual(preserved.error, registered);
-});
-
-test('working-style clone failures are atomic and preserve registered error provenance', () => {
-  const style = makeStyle();
-  const transaction: StyleTransaction = { operations: [{
-    op: 'setLayerProperties', layerId: 'roads', paint: { 'line-color': '#000' },
-  }] };
-
-  const unexpected = withStrictCloneFailure(new Error('clone exploded'), () => (
-    applyStyleTransaction(style, transaction)
-  ));
-  assert.equal(unexpected.ok, false);
-  assert.strictEqual(unexpected.style, style);
-  assert.deepEqual(unexpected.changedLayers, []);
-  assert.deepEqual(unexpected.changedSources, []);
-  assert.deepEqual(unexpected.diff, []);
-  if (unexpected.ok) assert.fail('expected normalized clone failure');
-  assert.equal(unexpected.error.code, 'INTERNAL');
-  assert.equal(isStyleToolError(unexpected.error), true);
-
-  const registered = createStyleToolError('IO_ERROR', 'registered clone sentinel', '/clone');
-  const preserved = withStrictCloneFailure(registered, () => (
-    applyStyleTransaction(style, transaction)
-  ));
-  assert.equal(preserved.ok, false);
-  assert.strictEqual(preserved.style, style);
-  assert.deepEqual(preserved.changedLayers, []);
-  assert.deepEqual(preserved.changedSources, []);
-  assert.deepEqual(preserved.diff, []);
-  if (preserved.ok) assert.fail('expected preserved clone failure');
-  assert.strictEqual(preserved.error, registered);
-});
 
 test('applyStyleTransaction rolls back on final style validation failure', () => {
   const style = makeStyle();

@@ -3,7 +3,7 @@
 import {
   createStyleSessionStore,
   runStdioMcp,
-} from '../dist/mcp/main.js';
+} from '../dist/mcp/index.js';
 import { writeMcpStderrLine } from '../dist/mcp/stdio.js';
 
 const evaluationIds = Object.freeze(Array.from(

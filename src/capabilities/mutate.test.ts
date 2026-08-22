@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
-import { styleTransactionSchema } from '../core/index.js';
 import type { CapabilityResult, ApplyStyleDocumentInput, ApplyStyleTransactionInput, MapToolContext, StyleMutationReceipt } from './contracts.js';
 import { executeApplyStyleDocument, executeApplyStyleTransaction } from './mutate.js';
 import { MapStyleAuthority } from './map-authority.js';
@@ -19,13 +18,15 @@ const createApplyStyleTransactionTool = (options: {
   getMap: () => MapLibreMap | null;
   getContext?: () => MapToolContext;
 }) => ({
-  execute: (input: unknown) => executeApplyStyleTransaction(authorityFor(options), input),
+  execute: (input: unknown, execution?: { abortSignal?: AbortSignal }) =>
+    executeApplyStyleTransaction(authorityFor(options), input, execution),
 });
 const createApplyStyleDocumentTool = (options: {
   getMap: () => MapLibreMap | null;
   getContext?: () => MapToolContext;
 }) => ({
-  execute: (input: unknown) => executeApplyStyleDocument(authorityFor(options), input),
+  execute: (input: unknown, execution?: { abortSignal?: AbortSignal }) =>
+    executeApplyStyleDocument(authorityFor(options), input, execution),
 });
 
 type EventName = 'style.load' | 'error';
@@ -109,9 +110,6 @@ describe('unified mutation tools', () => {
     let getMapCalls = 0;
     let getContextCalls = 0;
     const input = { transaction: { operations: [{ op: 'unknownOp' }] } };
-    const parsed = styleTransactionSchema.safeParse(input.transaction);
-    assert.equal(parsed.success, false);
-    if (parsed.success) throw new Error('Expected strict core validation to fail.');
     const result = await createApplyStyleTransactionTool({
       getMap: () => { getMapCalls += 1; return null; },
       getContext: () => { getContextCalls += 1; return {}; },
@@ -119,7 +117,7 @@ describe('unified mutation tools', () => {
     assert.equal(result.success, false);
     if (!result.success) {
       assert.equal(result.error.code, 'INVALID_INPUT');
-      assert.equal(result.error.message, parsed.error.issues[0]?.message);
+      assert.equal(result.error.message, "Invalid discriminator value. Expected 'setLayerProperties' | 'setStyleRootProperties' | 'setLayerFilter' | 'setGeoJsonSourceFilter' | 'addSource' | 'duplicateSource' | 'renameSource' | 'removeSource' | 'patchSource' | 'setGeoJsonData' | 'duplicateLayer' | 'moveLayer' | 'reorderLayers' | 'removeLayer' | 'addLayerFromSource' | 'addGeoJsonLayer' | 'addLayerDefinition' | 'deepMergeLayerDefinition' | 'replaceLayerDefinition' | 'deepMergeSourceDefinition' | 'replaceSourceDefinition' | 'replaceRootProperty' | 'shallowPatchRootProperty'");
       assert.equal(result.error.path, '/transaction/operations/0/op');
     }
     assert.equal(getMapCalls, 0); assert.equal(getContextCalls, 0);
@@ -219,5 +217,19 @@ describe('unified mutation tools', () => {
     const result = await createApplyStyleTransactionTool({ getMap: () => map.asMap() }).execute(transaction());
     assert.equal(result.success, false);
     if (!result.success) assert.equal('rollback' in (result.error.details ?? {}), true);
+  });
+
+  it('aborts before any mutation when the execution signal is already aborted', async () => {
+    const map = new FakeMap(style());
+    const controller = new AbortController();
+    controller.abort();
+    const result = await createApplyStyleTransactionTool({
+      getMap: () => map.asMap(),
+    }).execute(transaction(), { abortSignal: controller.signal });
+    assert.equal(result.success, false);
+    if (result.success) throw new Error('Expected abort failure.');
+    assert.equal(result.error.code, 'TIMEOUT');
+    assert.deepEqual(result.error.details, { reason: 'aborted' });
+    assert.deepEqual(map.setStyleCalls, []);
   });
 });

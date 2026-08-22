@@ -11,7 +11,7 @@ import {
 import {
   MIN_MCP_MESSAGE_BYTES,
   resolveMcpMessagePolicy,
-} from './main.js';
+} from './index.js';
 
 const nextTurn = () => new Promise<void>((resolve) => { setImmediate(resolve); });
 

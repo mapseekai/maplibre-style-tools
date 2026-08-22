@@ -38,6 +38,10 @@ const unavailable = (error: unknown) => ({
   error: asToolError(error),
 });
 
+const abortedBridgeMutation = (): MapStyleApplyResult => unavailable(createStyleToolError(
+  'TIMEOUT', 'Live bridge operation was aborted.', '', { reason: 'aborted' },
+));
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -214,14 +218,16 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
     } catch (error) { return this.#mutationFailure(error, baseline); }
   }
 
-  async applyTransaction(transaction: StyleTransaction, options: { diff: boolean }): Promise<MapStyleApplyResult> {
+  async applyTransaction(transaction: StyleTransaction, options: { diff: boolean; signal?: AbortSignal }): Promise<MapStyleApplyResult> {
+    if (options.signal?.aborted === true) return abortedBridgeMutation();
     return this.#applyStyleMutation({
       type: 'applyTransaction',
       transaction: { ...transaction, validate: transaction.validate ?? true },
     }, options);
   }
 
-  async applyDocument(source: StyleDocument | string, options: { diff: boolean }): Promise<MapStyleApplyResult> {
+  async applyDocument(source: StyleDocument | string, options: { diff: boolean; signal?: AbortSignal }): Promise<MapStyleApplyResult> {
+    if (options.signal?.aborted === true) return abortedBridgeMutation();
     return this.#applyStyleMutation({
       type: 'applyStyleDocument',
       source: typeof source === 'string'

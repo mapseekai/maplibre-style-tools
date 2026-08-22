@@ -97,6 +97,7 @@ export const executeRunMapCommand = async (
 export const executeQueryMapFeatures = async (
   getAuthority: AuthoritySource<RuntimeAuthority>,
   rawInput: unknown,
+  _execution: { abortSignal?: AbortSignal } = {},
 ): Promise<CapabilityResult<FeatureQueryProjection>> => {
     const parsedInput = queryMapFeaturesInputSchema.safeParse(rawInput);
     if (!parsedInput.success) return invalidInputFailure(parsedInput.error);

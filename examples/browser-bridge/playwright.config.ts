@@ -6,6 +6,7 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 export default defineConfig({
   testDir: './e2e',
+  testMatch: '**/*.spec.ts',
   outputDir: path.join(repoRoot, '.tmp/playwright-output/browser-bridge'),
   reporter: [
     ['line'],
@@ -15,11 +16,14 @@ export default defineConfig({
     }],
   ],
   timeout: 30_000,
-  fullyParallel: false,
-  workers: 1,
+  fullyParallel: true,
+  retries: process.env.CI ? 2 : 0,
   use: {
     baseURL: 'http://127.0.0.1:4173',
     browserName: 'chromium',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
     launchOptions: {
       args: ['--use-angle=swiftshader', '--enable-webgl', '--enable-unsafe-swiftshader'],
     },

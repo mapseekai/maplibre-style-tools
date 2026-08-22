@@ -50,3 +50,28 @@ test('MCP session capability lifecycle commits and detects revision conflicts', 
     assert.deepEqual(data.style?.layers?.[0]?.paint, { 'line-width': 2 });
   }
 });
+
+test('a cancelled request aborts before any session mutation', async () => {
+  const handlers = createMcpToolHandlers(
+    createStyleSessionStore({ idFactory: () => 'session-1' }),
+    createMcpResponseBoundary(resolveMcpMessagePolicy()),
+  );
+  await handlers.openStyleSession({ style });
+  const controller = new AbortController();
+  controller.abort();
+  const aborted = await handlers.applyStyleTransaction({
+    target: { kind: 'session', sessionId: 'session-1' },
+    input: { transaction: { operations: [{ op: 'setLayerProperties', layerId: 'roads', paint: { 'line-width': 9 } }] } },
+  }, controller.signal);
+  assert.equal(aborted.isError, true);
+  assert.equal(aborted.structuredContent.success, false);
+  if (!aborted.structuredContent.success) {
+    assert.equal(aborted.structuredContent.error.code, 'TIMEOUT');
+    assert.deepEqual(aborted.structuredContent.error.details, { reason: 'aborted' });
+  }
+  const exported = await handlers.exportStyleSession({ sessionId: 'session-1' });
+  assert.equal(exported.structuredContent.success, true);
+  if (exported.structuredContent.success) {
+    assert.equal((exported.structuredContent.data as { revision?: unknown }).revision, 0);
+  }
+});

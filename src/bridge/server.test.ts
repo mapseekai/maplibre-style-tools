@@ -276,6 +276,7 @@ test('serializes delayed registration before later inbound events and closes cle
   let markHashStarted: (() => void) | undefined;
   let hashCalls = 0;
   const hashStarted = new Promise<void>((resolve) => { markHashStarted = resolve; });
+  // hashStyle is the public LiveMapRegistryOptions seam for the external hashing boundary.
   const registry = new LiveMapRegistry({
     hashStyle: () => {
       hashCalls += 1;

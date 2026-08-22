@@ -1,8 +1,9 @@
-import { tool } from 'ai';
+import { tool, type Tool, type ToolExecutionOptions } from 'ai';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import type { z } from 'zod';
 
 import { MapStyleAuthority } from '../capabilities/map-authority.js';
+import { capabilityModelJsonSchemaZod } from '../capabilities/model-schema.js';
 import { capabilityRegistry } from '../capabilities/registry.js';
 import type {
   AuthoritySource,
@@ -31,16 +32,17 @@ export interface CreateMapLibreStyleToolsOptions {
   imageLoader?: RuntimeImageLoader;
 }
 
-export interface MapLibreAiTool<TInput, TData> {
-  execute(input: TInput): Promise<CapabilityResult<TData>>;
-}
-export interface MapLibreStyleTools {
+export type MapLibreAiTool<TInput, TData> =
+  Tool<TInput, CapabilityResult<TData>> & {
+    execute(input: TInput, options?: ToolExecutionOptions): Promise<CapabilityResult<TData>>;
+  };
+export type MapLibreStyleTools = {
   inspectStyle: MapLibreAiTool<InspectStyleInput, InspectionProjection>;
   applyStyleTransaction: MapLibreAiTool<ApplyStyleTransactionInput, StyleMutationReceipt>;
   applyStyleDocument: MapLibreAiTool<ApplyStyleDocumentInput, StyleMutationReceipt>;
   runMapCommand: MapLibreAiTool<RunMapCommandInput, MapCommandReceipt>;
   queryMapFeatures: MapLibreAiTool<QueryMapFeaturesInput, FeatureQueryProjection>;
-}
+};
 
 const wrap = <TData>(
   schema: z.ZodType,
@@ -77,27 +79,27 @@ export function createMapLibreStyleTools(
   };
   return {
     inspectStyle: wrap(
-      capabilityRegistry.inspectStyle.inputSchema,
+      capabilityModelJsonSchemaZod('inspectStyle'),
       capabilityRegistry.inspectStyle.description,
       (input) => capabilityRegistry.inspectStyle.execute(authority, input),
     ) as unknown as MapLibreAiTool<InspectStyleInput, InspectionProjection>,
     applyStyleTransaction: wrap(
-      capabilityRegistry.applyStyleTransaction.inputSchema,
+      capabilityModelJsonSchemaZod('applyStyleTransaction'),
       capabilityRegistry.applyStyleTransaction.description,
-      (input) => capabilityRegistry.applyStyleTransaction.execute(authority, input),
+      (input, execution) => capabilityRegistry.applyStyleTransaction.execute(authority, input, execution),
     ) as unknown as MapLibreAiTool<ApplyStyleTransactionInput, StyleMutationReceipt>,
     applyStyleDocument: wrap(
-      capabilityRegistry.applyStyleDocument.inputSchema,
+      capabilityModelJsonSchemaZod('applyStyleDocument'),
       capabilityRegistry.applyStyleDocument.description,
-      (input) => capabilityRegistry.applyStyleDocument.execute(authority, input),
+      (input, execution) => capabilityRegistry.applyStyleDocument.execute(authority, input, execution),
     ) as unknown as MapLibreAiTool<ApplyStyleDocumentInput, StyleMutationReceipt>,
     runMapCommand: wrap(
-      capabilityRegistry.runMapCommand.inputSchema,
+      capabilityModelJsonSchemaZod('runMapCommand'),
       capabilityRegistry.runMapCommand.description,
       (input, execution) => capabilityRegistry.runMapCommand.execute(authority, input, execution),
     ) as unknown as MapLibreAiTool<RunMapCommandInput, MapCommandReceipt>,
     queryMapFeatures: wrap(
-      capabilityRegistry.queryMapFeatures.inputSchema,
+      capabilityModelJsonSchemaZod('queryMapFeatures'),
       capabilityRegistry.queryMapFeatures.description,
       (input) => capabilityRegistry.queryMapFeatures.execute(authority, input),
     ) as unknown as MapLibreAiTool<QueryMapFeaturesInput, FeatureQueryProjection>,

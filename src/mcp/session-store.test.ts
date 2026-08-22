@@ -8,7 +8,7 @@ import {
   createStyleToolError,
   type StyleDocument,
 } from '../core/index.js';
-import * as publicMcpModule from './main.js';
+import * as publicMcpModule from './index.js';
 import { createMcpResponseBoundary, resolveMcpMessagePolicy } from './message-boundary.js';
 import {
   DEFAULT_STYLE_SESSION_LIMITS,

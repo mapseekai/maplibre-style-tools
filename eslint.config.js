@@ -36,5 +36,8 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2023,
     },
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
   },
 ]);

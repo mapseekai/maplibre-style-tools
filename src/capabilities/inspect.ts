@@ -110,6 +110,7 @@ const boundedNestedItems = (items: JsonValue[]) => {
 export const executeInspectStyle = (
   getAuthority: AuthoritySource<StyleAuthority>,
   rawInput: unknown,
+  _execution: { abortSignal?: AbortSignal } = {},
 ): CapabilityResult<InspectionProjection> => {
     const parsedInput = inspectStyleInputSchema.safeParse(rawInput);
     if (!parsedInput.success) return invalidInputFailure(parsedInput.error);

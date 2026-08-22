@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import {
+  DEFAULT_TIMEOUT_MS,
   applyStyleDocumentOrUrlToMap,
   applyTransactionToMap,
 } from '../adapters/maplibre/map-adapter.js';
@@ -48,16 +49,24 @@ export class MapStyleAuthority implements StyleAuthority, RuntimeAuthority {
 
   applyTransaction(
     transaction: StyleTransaction,
-    options: { diff: boolean },
+    options: { diff: boolean; signal?: AbortSignal },
   ): Promise<MapStyleApplyResult> {
-    return applyTransactionToMap(this.map, transaction, options);
+    return applyTransactionToMap(this.map, transaction, {
+      ...(options.signal === undefined
+        ? {} : { deadline: { expiresAt: Date.now() + DEFAULT_TIMEOUT_MS, signal: options.signal } }),
+      diff: options.diff,
+    });
   }
 
   applyDocument(
     source: StyleDocument | string,
-    options: { diff: boolean },
+    options: { diff: boolean; signal?: AbortSignal },
   ): Promise<MapStyleApplyResult> {
-    return applyStyleDocumentOrUrlToMap(this.map, source, options);
+    return applyStyleDocumentOrUrlToMap(this.map, source, {
+      ...(options.signal === undefined
+        ? {} : { deadline: { expiresAt: Date.now() + DEFAULT_TIMEOUT_MS, signal: options.signal } }),
+      diff: options.diff,
+    });
   }
 
   runtimeCommands(): MapRuntimeCommands {

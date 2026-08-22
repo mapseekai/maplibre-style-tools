@@ -51,22 +51,21 @@ export const DEMO_STYLE: StyleDocument & StyleSpecification = {
 export const filterDemoTransaction: StyleTransaction = {
   operations: [{
     op: 'setLayerFilter',
-    layerId: 'places',
+    layerId: 'countries-fill',
     mode: 'and',
-    filter: ['==', ['get', 'category'], 'park'],
+    filter: ['==', ['get', 'name'], 'United States of America'],
   }],
 };
 
 export const duplicateDemoTransaction: StyleTransaction = {
   operations: [{
     op: 'duplicateLayer',
-    layerId: 'places',
-    newLayerId: 'places-highlight',
+    layerId: 'countries-fill',
+    newLayerId: 'countries-fill-highlight',
     overrides: {
       paint: {
-        'circle-color': '#f97316',
-        'circle-radius': 11,
-        'circle-opacity': 0.55,
+        'fill-color': '#f97316',
+        'fill-opacity': 0.55,
       },
     },
   }],

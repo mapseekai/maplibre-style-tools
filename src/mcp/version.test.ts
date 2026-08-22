@@ -12,7 +12,7 @@ import {
   MCP_RESPONSE_ENVELOPE_RESERVE_BYTES,
   MCP_SERVER_VERSION,
   MIN_MCP_MESSAGE_BYTES,
-} from './main.js';
+} from './index.js';
 
 test('MCP version matches the package manifest without runtime manifest lookup', async () => {
   const manifest = JSON.parse(

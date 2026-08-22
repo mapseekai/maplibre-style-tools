@@ -25,6 +25,8 @@ capability semantics are defined once in the core.
 npm install maplibre-style-tools maplibre-gl
 ```
 
+This package is ESM-only and requires Node.js 22.13 or newer. CommonJS projects on that version or newer can load it directly with `require()` through Node's `require(esm)` support; no `.cjs` artifacts are published.
+
 ## Local installation
 
 Build the package once, then add it from a sibling project:
@@ -72,7 +74,7 @@ The package has seven supported entry points:
 - `maplibre-style-tools/mcp` is the MCP interface: the bounded server factory, transport runners, session store, live-bridge extension, and URI helpers. It exposes the same five capabilities plus session-management tools.
 - `maplibre-style-tools/bridge` is the browser-safe live MapLibre client, protocol, capability, hashing, and resource-policy API. It exports no Node WebSocket server state.
 
-The `/ai` and `/mcp` declaration graphs intentionally load their required Node types. Import `/core`, `/maplibre`, `/capabilities`, or `/bridge` directly when that ambient dependency is undesirable.
+The `/ai` and `/mcp` declaration graphs intentionally load their required Node types. Import the root entry, `/core`, `/maplibre`, `/capabilities`, or `/bridge` directly when that ambient dependency is undesirable.
 
 ## Pure core
 

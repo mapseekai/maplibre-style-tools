@@ -30,6 +30,47 @@ const runClosureCheck = (entry, ...extraArguments) => spawnSync(
   { cwd: repoRoot, encoding: 'utf8' },
 );
 
+const temporaryEsmPackage = (t, files) => {
+  const temporaryRoot = join(repoRoot, '.tmp');
+  mkdirSync(temporaryRoot, { recursive: true });
+  const directory = mkdtempSync(join(temporaryRoot, 'check-package-cjs-'));
+  t.after(() => { rmSync(directory, { recursive: true, force: true }); });
+  for (const [name, contents] of Object.entries(files)) {
+    const target = join(directory, 'node_modules/esm-fixture', name);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, contents);
+  }
+  return directory;
+};
+
+const runCjsRequireCheck = (cwd, ...arguments_) => spawnSync(
+  process.execPath,
+  [resolve(repoRoot, 'scripts/check-package.mjs'), '--check-cjs-require', ...arguments_],
+  { cwd, encoding: 'utf8' },
+);
+test('CommonJS require checker accepts ESM package root and subpath exports', (t) => {
+  const directory = temporaryEsmPackage(t, {
+    'package.json': JSON.stringify({
+      name: 'esm-fixture',
+      type: 'module',
+      exports: {
+        '.': { import: './index.js', default: './index.js' },
+        './core': { import: './core.js', default: './core.js' },
+      },
+    }),
+    'index.js': 'export const rootExport = () => undefined;',
+    'core.js': 'export const coreExport = () => undefined;',
+  });
+  const result = runCjsRequireCheck(
+    directory,
+    'esm-fixture',
+    'rootExport',
+    'esm-fixture/core',
+    'coreExport',
+  );
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('browser closure checker recursively reports the clean visited closure', (t) => {
   const fixture = temporaryEsmClosure(t, {
     'index.js': "export * from './nested.js';",

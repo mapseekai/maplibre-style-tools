@@ -201,7 +201,10 @@ test('composes five Promise tools and executes each migration replacement behavi
   const tools = createMapLibreStyleTools({ getMap: () => new FakeMap().asMap(), imageLoader });
   imageLoaderUrls.length = 0;
   assert.deepEqual(Object.keys(tools), ['inspectStyle', 'applyStyleTransaction', 'applyStyleDocument', 'runMapCommand', 'queryMapFeatures']);
-  for (const tool of Object.values(tools)) { assert.equal(typeof tool.execute, 'function'); assert.ok(tool.execute({} as never) instanceof Promise); }
+  for (const tool of Object.values(tools)) {
+    assert.equal(typeof tool.execute, 'function');
+    assert.ok((tool.execute as (input: never) => Promise<unknown>)({} as never) instanceof Promise);
+  }
   assert.deepEqual(migrationRows.filter((row) => row.category === 'full').map((row) => row.legacyName), fullLegacyNames);
   assert.deepEqual(migrationRows.filter((row) => row.category === 'compact').map((row) => row.legacyName), compactLegacyNames);
   assert.deepEqual(migrationRows.filter((row) => row.category === 'retained').map((row) => row.legacyName), retainedNames);

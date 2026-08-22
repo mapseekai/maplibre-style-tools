@@ -24,6 +24,8 @@
 npm install maplibre-style-tools maplibre-gl
 ```
 
+本包仅发布 ESM,需要 Node.js 22.13 或更新版本。该版本或更高版本的 CommonJS 项目可通过 Node 的 `require(esm)` 支持直接使用 `require()` 加载;不发布 `.cjs` 产物。
+
 ## 本地安装
 
 先构建一次本包,然后从兄弟项目引用:
@@ -72,7 +74,7 @@ const result = await applyStyleTransaction.execute({
 - `maplibre-style-tools/bridge` 是浏览器安全的实时 MapLibre 客户端、协议、能力、哈希与资源策略 API。它不导出任何 Node WebSocket 服务器状态。
 
 `/ai` 与 `/mcp` 的声明图会有意加载它们所需的 Node 类型。如果不希望引入这层
-环境依赖,请直接引入 `/core`、`/maplibre`、`/capabilities` 或 `/bridge`。
+环境依赖,请直接引入根入口、`/core`、`/maplibre`、`/capabilities` 或 `/bridge`。
 
 ## 纯核心
 

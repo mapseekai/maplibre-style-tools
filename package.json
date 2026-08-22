@@ -30,9 +30,9 @@
       "default": "./dist/ai/index.js"
     },
     "./mcp": {
-      "types": "./dist/mcp/main.d.ts",
-      "import": "./dist/mcp/main.js",
-      "default": "./dist/mcp/main.js"
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js",
+      "default": "./dist/mcp/index.js"
     },
     "./bridge": {
       "types": "./dist/bridge/index.d.ts",
@@ -65,13 +65,15 @@
     "pretest:example:ai-chat": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/ai-chat-test-dist', { recursive: true, force: true });\"",
     "test:example:ai-chat": "pnpm run build && tsc -p examples/ai-chat/tsconfig.test.json && node --test .tmp/ai-chat-test-dist/src/providers.test.js",
     "pretest:example:bridge": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; rmSync('.tmp/example-test-dist', { recursive: true, force: true });\"",
-    "test:example:bridge": "pnpm run build && tsc -p examples/browser-bridge/tsconfig.test.json && node --test .tmp/example-test-dist/src/main.test.js",
+    "test:example:bridge": "pnpm run build && tsc -p examples/browser-bridge/tsconfig.test.json && node --test .tmp/example-test-dist/src/main.test.js .tmp/example-test-dist/e2e/mcp-harness.test.js",
     "build:example:bridge": "pnpm run example:typecheck && vite build --config examples/browser-bridge/vite.config.ts",
     "example:dev": "pnpm run build && pnpm run example:typecheck && vite --config examples/browser-bridge/vite.config.ts",
     "example:build": "pnpm run build && pnpm run build:example:bridge",
     "pretest:e2e:bridge": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; for (const path of ['.tmp/playwright-output/browser-bridge', '.tmp/playwright-report/browser-bridge']) rmSync(path, { recursive: true, force: true });\"",
     "typecheck:e2e:bridge": "tsc -p examples/browser-bridge/tsconfig.e2e.json",
     "test:e2e:bridge": "pnpm run build && pnpm run build:example:bridge && pnpm run typecheck:e2e:bridge && playwright test --config examples/browser-bridge/playwright.config.ts",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run test:example:ai-chat && pnpm run test:example:bridge && pnpm run check:package",
+    "verify:e2e": "pnpm run test:e2e:bridge",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "typecheck:browser": "tsc -p tsconfig.browser.json",
     "typecheck:mcp": "tsc -p tsconfig.mcp.json",
@@ -91,7 +93,7 @@
   },
   "dependencies": {
     "@maplibre/maplibre-gl-style-spec": "^26.2.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@types/geojson": "^7946.0.16",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^22.20.1",
@@ -100,6 +102,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@ai-sdk/anthropic": "^3.0.111",
+    "@ai-sdk/openai": "^3.0.99",
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.62.1",
     "@types/ws": "^8.18.1",
