@@ -18,6 +18,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The root typecheck consumes package self-references (./dist/*).
+      # Build first in a clean checkout so exports.test.ts resolves those
+      # declaration entry points.
+      - run: pnpm run build
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run test
