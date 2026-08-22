@@ -107,3 +107,16 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+# Repository-specific skill overrides
+
+- Existing repository architecture and contracts take precedence over generic skill defaults.
+- Preserve the current ESM-only `tsc -b` build unless the task explicitly requests a build-system migration.
+- Use the existing Node.js `node:test` infrastructure; do not introduce Vitest or Jest unless explicitly requested.
+- Preserve the ambient-type boundaries:
+  - `/core`: ES-only, no DOM or Node ambient types.
+  - `/maplibre` and browser `/bridge`: DOM allowed, Node types forbidden.
+  - `/mcp` and `/ai`: Node types allowed where required.
+- Treat package exports, capability schemas, result envelopes, bridge protocol messages, and public DTOs as compatibility contracts.
+- Generic skills must not change public exports, package formats, runtime requirements, or testing frameworks incidentally.
+- After changes, run the repository's existing typecheck, lint, test, package-contract, example, and relevant E2E verification commands.
