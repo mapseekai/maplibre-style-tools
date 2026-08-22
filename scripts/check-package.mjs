@@ -334,6 +334,7 @@ const packedModules = [
 const packedModuleExtensions = ['.d.ts', '.d.ts.map', '.js', '.js.map'];
 const exactPackedFiles = [
   'README.md',
+  'README.zh-CN.md',
   'package.json',
   ...packedModules.flatMap((module) =>
     packedModuleExtensions.map((extension) => `dist/${module}${extension}`)),

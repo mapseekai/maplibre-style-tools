@@ -1,5 +1,7 @@
 # maplibre-style-tools
 
+**English** | [简体中文](README.zh-CN.md) | [Changelog](CHANGELOG.md)
+
 AI-driven tools for inspecting and editing MapLibre GL styles.
 
 One transport-neutral capability layer (`/capabilities`) defines the five style
@@ -60,7 +62,7 @@ The package has seven supported entry points:
 - `maplibre-style-tools` contains the non-AI package exports.
 - `maplibre-style-tools/core` is the transport-neutral transaction, validation, GeoJSON, analysis, and discovery API. It requires neither DOM nor Node ambient types.
 - `maplibre-style-tools/maplibre` applies prepared transactions to MapLibre maps and exposes bounded live-map commands. It may use DOM types but does not load Node ambient types.
-- `maplibre-style-tools/capabilities` is the transport-neutral capability layer: the five capability executors, their strict input schemas, the capability registry, the result envelope, and the `StyleAuthority`/`RuntimeAuthority` interfaces each interface implements.
+- `maplibre-style-tools/capabilities` is the transport-neutral capability layer: the five capability executors, their strict input schemas, the capability registry, the result envelope, and the `StyleAuthority`/`RuntimeAuthority` interfaces each interface implements. It also exports `createOpenAiFunctionTools` and `createAnthropicTools`, which project the registry into OpenAI function-calling and Anthropic Messages tool schemas for direct LLM API integrations.
 - `maplibre-style-tools/ai` is the AI SDK interface: `createMapLibreStyleTools` wraps the capability registry as five AI SDK tools over an in-process map.
 - `maplibre-style-tools/mcp` is the MCP interface: the bounded server factory, transport runners, session store, live-bridge extension, and URI helpers. It exposes the same five capabilities plus session-management tools.
 - `maplibre-style-tools/bridge` is the browser-safe live MapLibre client, protocol, capability, hashing, and resource-policy API. It exports no Node WebSocket server state.
@@ -462,8 +464,8 @@ never replayed on the replacement connection.
 
 The server exposes the five shared capabilities plus three session-management
 tools. Capability tools take a strict `{ "target", "input" }` object: `input`
-is the capability's own strict input (identical to the `/ai` and CLI inputs),
-and `target` routes the style authority:
+uses the shared capability validation path (the same one used by `/ai` and the
+CLI), and `target` routes the style authority:
 
 - `{ "kind": "session", "sessionId": "...", "expectedRevision": 0 }` operates
   on a bounded in-memory document session with revision-checked commits.
@@ -473,16 +475,20 @@ and `target` routes the style authority:
 - `inspectStyle` actions `validateDocument`, `validateTransaction`, and
   `analyzeGeoJson` are authority-free; `target` may be omitted for them.
 
-| Tool | Description |
-| --- | --- |
-| `inspectStyle` | Inspect a style, its validated structure, and GeoJSON inputs without mutation. |
-| `applyStyleTransaction` | Apply one strict style transaction to the target authority. |
-| `applyStyleDocument` | Apply a validated style document or absolute style URL. Session targets replace the session style with revision checks. Live bridge targets do not support whole-document application. |
-| `runMapCommand` | Run a bounded runtime command on a live map target. Commands without a bridge command (`updateGeoJsonData`, `setSourceTileLodParams`, sprites) fail with `CAPABILITY_DENIED`. |
-| `queryMapFeatures` | Query bounded source or rendered features from a live map target. |
-| `openStyleSession` | Open one bounded in-memory session from inline Style JSON. |
-| `closeStyleSession` | Close one in-memory style session. |
-| `exportStyleSession` | Export the current or one retained revision of a session. |
+Bridge v2 exposes the complete five-tool capability surface for live map targets.
+Every tool returns the common `{ success, message, data | error }` envelope; the
+last column names the successful `data` shape.
+
+| Tool | Description | Required live-bridge capability | URL policy | Result type |
+| --- | --- | --- | --- | --- |
+| `inspectStyle` | Inspect a style, its validated structure, and GeoJSON inputs without mutation. | `style.read` for live-map reads; authority-free validation actions need no target. | None. | `InspectionProjection` |
+| `applyStyleTransaction` | Apply one strict, atomic style transaction to a session or live map. | `style.read` + `style.write` | None. | `StyleMutationReceipt` |
+| `applyStyleDocument` | Apply an inline Style document or an absolute Style URL. Sessions use revision checks; live maps apply the whole document through bridge v2. | `style.read` + `style.write`; URL sources additionally need `network.load`. | New or changed absolute resources must match the configured origin/prefix policy; relative Style resources are rejected. | `StyleMutationReceipt` |
+| `runMapCommand` | Run every bounded SDK runtime action on a live map: GeoJSON incremental update, source LOD, feature/global state, images, and sprites. | By action: `updateGeoJsonData` → `style.write`; source LOD/feature/global state → `runtime.state`; image/sprite listing → `style.read`; image/sprite mutation → `assets.write`; URL additions also need `network.load`. | `addImageFromUrl` and `addSprite` require an admitted absolute URL; `data:` and custom protocols require their explicit opt-ins. | `MapCommandReceipt` |
+| `queryMapFeatures` | Query bounded source or rendered features from a live map target. | `features.query` | None. | `FeatureQueryProjection` |
+| `openStyleSession` | Open one bounded in-memory style session from inline Style JSON. | Not a live-bridge tool. | None. | Session metadata |
+| `closeStyleSession` | Close one in-memory style session. | Not a live-bridge tool. | None. | Close acknowledgement |
+| `exportStyleSession` | Export the current or one retained revision of a session. | Not a live-bridge tool. | None. | Style document plus revision |
 
 Open a session, commit only against the expected revision, and export the same
 or a retained revision:
@@ -583,6 +589,22 @@ runner, tools, resources, and server metadata as the installed server. The
 fixture is repository-only and is excluded from the packed package. The default
 `maplibre-style-mcp` binary never contains or discovers these evaluation
 sessions.
+
+## Examples
+
+Two Vite examples exercise the package against a live in-browser map. Build the
+package first with `pnpm run build`.
+
+- `examples/browser-bridge` connects a MapLibre map to the MCP live bridge and
+  shows connection status. Run `pnpm run example:dev` and open
+  `http://127.0.0.1:5173/`.
+- `examples/ai-chat` is a Chinese-language chat assistant that drives the live
+  map through an LLM tool-calling loop over the five capabilities. It supports
+  both OpenAI-compatible (`/chat/completions`) and Anthropic Messages
+  (`/messages`) providers, with tool schemas generated by
+  `createOpenAiFunctionTools`/`createAnthropicTools` from `/capabilities`.
+  Run `pnpm run example:dev:ai-chat` and open `http://127.0.0.1:5174/`, then
+  paste an API key and ask in Chinese, for example "把海洋换成淡蓝色".
 
 ## Development
 
