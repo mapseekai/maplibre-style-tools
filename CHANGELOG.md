@@ -8,6 +8,16 @@ may occur in any version.
 
 ## [Unreleased]
 
+### Added
+
+- MIT license (`LICENSE` file and package.json `license` field).
+- npm installation instructions in both READMEs.
+
+### Fixed
+
+- READMEs no longer claim the package is unpublished; it has been on npm
+  since 0.1.0.
+
 ## [0.2.0] - 2026-08-22
 
 ### Added

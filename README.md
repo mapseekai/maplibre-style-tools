@@ -11,14 +11,19 @@ descriptions, and bounded result envelopes. Three thin interfaces expose the
 same capabilities: an AI SDK tool factory (`/ai`), an MCP server (`/mcp`), and
 the `maplibre-style` CLI. Each interface supplies its own style authority
 (in-process map, bounded document session, bridged live map, or style file);
-capability semantics are defined once in the core. It is currently maintained
-as a standalone local project and has not been published to npm.
+capability semantics are defined once in the core.
 
 ## Requirements
 
 - Node.js 22.13 or newer
 - `maplibre-gl` 6.3 or a compatible release
 - An AI SDK 6 tool consumer
+
+## Installation
+
+```bash
+npm install maplibre-style-tools maplibre-gl
+```
 
 ## Local installation
 

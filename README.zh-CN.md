@@ -10,13 +10,19 @@
 的结果信封。三个薄接口对外暴露同一组能力:AI SDK 工具工厂(`/ai`)、MCP
 服务器(`/mcp`)以及 `maplibre-style` CLI。每个接口提供自己的样式权威源
 (进程内地图、有界文档会话、桥接的实时地图或样式文件);能力语义只在核心中
-定义一次。本项目目前作为独立本地项目维护,尚未发布到 npm。
+定义一次。
 
 ## 环境要求
 
 - Node.js 22.13 或更新版本
 - `maplibre-gl` 6.3 或兼容版本
 - 一个 AI SDK 6 工具消费方
+
+## 安装
+
+```bash
+npm install maplibre-style-tools maplibre-gl
+```
 
 ## 本地安装
 

@@ -333,6 +333,7 @@ const packedModules = [
 ];
 const packedModuleExtensions = ['.d.ts', '.d.ts.map', '.js', '.js.map'];
 const exactPackedFiles = [
+  'LICENSE',
   'README.md',
   'README.zh-CN.md',
   'package.json',
