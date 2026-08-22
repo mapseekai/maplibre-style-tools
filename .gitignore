@@ -8,3 +8,4 @@ docs/superpowers/
 .worktrees/
 .agents/
 .codegraph/
+.claude/skills/gitnexus/
