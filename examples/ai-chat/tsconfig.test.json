@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "../../.tmp/ai-chat-test-dist",
+    "types": ["node"]
+  },
+  "include": [
+    "src/providers.ts",
+    "src/providers.test.ts"
+  ],
+  "exclude": []
+}

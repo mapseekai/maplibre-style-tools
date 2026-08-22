@@ -11,6 +11,12 @@
       <aside class="chat-pane" aria-label="AI chat">
         <h1>AI 地图样式助手</h1>
         <form id="settings" class="settings">
+          <label>Provider
+            <select data-testid="provider">
+              <option value="openai">OpenAI-compatible</option>
+              <option value="anthropic">Anthropic Messages</option>
+            </select>
+          </label>
           <label>Base URL
             <input data-testid="base-url" type="text" value="https://api.openai.com/v1" autocomplete="off" />
           </label>
