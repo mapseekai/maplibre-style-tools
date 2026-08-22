@@ -8,6 +8,8 @@ may occur in any version.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-22
+
 ### Added
 
 - `maplibre-style-tools/capabilities` now exports `createOpenAiFunctionTools`
@@ -85,5 +87,6 @@ Initial standalone release, extracted from the ai-style-editor project.
   `examples/ai-chat` (LLM tool-calling chat against a live map).
 - Read-only MCP Builder evaluation fixture under `evals/`.
 
-[Unreleased]: https://github.com/zwishing/maplibre-style-tools/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/zwishing/maplibre-style-tools/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/zwishing/maplibre-style-tools/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zwishing/maplibre-style-tools/releases/tag/v0.1.0
