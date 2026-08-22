@@ -268,6 +268,7 @@ const packedModules = [
   'capabilities/inspect',
   'capabilities/map-authority',
   'capabilities/mutate',
+  'capabilities/openai-tools',
   'capabilities/registry',
   'capabilities/runtime',
   'capabilities/schemas',

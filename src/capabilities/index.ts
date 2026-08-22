@@ -37,7 +37,17 @@ export type { MapAuthorityOptions } from './map-authority.js';
 export { capabilityRegistry } from './registry.js';
 export type { CapabilityName } from './registry.js';
 export {
+  createAnthropicTools,
+  createOpenAiFunctionTools,
+} from './openai-tools.js';
+export type {
+  AnthropicTool,
+  OpenAiFunctionParameters,
+  OpenAiFunctionTool,
+} from './openai-tools.js';
+export {
   applyStyleDocumentInputSchema,
+  applyStyleTransactionInputSchema,
   applyStyleTransactionToolInputSchema,
   inspectStyleInputSchema,
   queryMapFeaturesInputSchema,

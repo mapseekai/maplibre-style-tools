@@ -84,6 +84,13 @@ export const applyStyleTransactionInputSchema: z.ZodType<ApplyStyleTransactionIn
     diff: z.boolean().optional(),
   }).strict()) as z.ZodType<ApplyStyleTransactionInput>;
 
+export const applyStyleTransactionModelInputSchema: z.ZodType<ApplyStyleTransactionInput> =
+  descriptorSafeInputSchema(z.object({
+    transaction: nonEmptyTransactionSchema,
+    dryRun: z.boolean().optional(),
+    diff: z.boolean().optional(),
+  }).strict()) as z.ZodType<ApplyStyleTransactionInput>;
+
 export const applyStyleDocumentInputSchema: z.ZodType<ApplyStyleDocumentInput> =
   descriptorSafeInputSchema(z.object({
     source: z.discriminatedUnion('kind', [
@@ -147,4 +154,3 @@ export const queryMapFeaturesInputSchema: z.ZodType<QueryMapFeaturesInput> =
       ...featureProjectionShape,
     }).strict(),
   ])) as z.ZodType<QueryMapFeaturesInput>;
-
