@@ -6,7 +6,6 @@ dist/
 docs/superpowers/
 .superpowers/sdd/
 .worktrees/
-.agents/
 .codegraph/
 .claude/skills/gitnexus/
 .superpowers/
