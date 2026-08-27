@@ -84,18 +84,76 @@ const authorizationDenied = (): Extract<
 const readOnlyTool = (name: MapLibreWebMcpToolName): boolean =>
   name === 'inspectStyle' || name === 'queryMapFeatures';
 
-const invocationAction = (input: unknown): string | undefined => {
+const INSPECT_STYLE_ACTIONS = new Set([
+  'listLayers',
+  'listSources',
+  'getLayer',
+  'getSource',
+  'getRoot',
+  'getContext',
+  'inspectLayers',
+  'getLayerCount',
+  'validateDocument',
+  'validateCurrentMap',
+  'validateTransaction',
+  'analyzeGeoJson',
+  'listSourceLayers',
+]);
+
+const RUN_MAP_COMMAND_ACTIONS = new Set([
+  'updateGeoJsonData',
+  'setSourceTileLodParams',
+  'setFeatureState',
+  'removeFeatureState',
+  'setGlobalState',
+  'listImages',
+  'addImageFromUrl',
+  'removeImage',
+  'listSprites',
+  'addSprite',
+  'removeSprite',
+]);
+
+const MAX_INVOCATION_ACTION_LENGTH = 32;
+
+const invocationAction = (
+  name: MapLibreWebMcpToolName,
+  input: unknown,
+): string | undefined => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return undefined;
   try {
     const descriptor = Object.getOwnPropertyDescriptor(input, 'action');
-    return descriptor !== undefined
+    const action = descriptor !== undefined
       && 'value' in descriptor
       && typeof descriptor.value === 'string'
       ? descriptor.value
       : undefined;
+    if (action === undefined || action.length > MAX_INVOCATION_ACTION_LENGTH) return undefined;
+    if (name === 'inspectStyle' && INSPECT_STYLE_ACTIONS.has(action)) return action;
+    if (name === 'runMapCommand' && RUN_MAP_COMMAND_ACTIONS.has(action)) return action;
+    return undefined;
   } catch {
     return undefined;
   }
+};
+
+const throwIfAborted = (signal: AbortSignal): void => {
+  if (signal.aborted) throw signal.reason;
+};
+
+const awaitPreDispatch = async <T>(
+  value: T | PromiseLike<T>,
+  signal: AbortSignal,
+): Promise<T> => {
+  let result: T;
+  try {
+    result = await value;
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
+  }
+  throwIfAborted(signal);
+  return result;
 };
 
 const runtimeCapabilities = (allowMutations: boolean): readonly BridgeCapability[] => [
@@ -154,7 +212,7 @@ export function createWebMcpExecutionBoundary(
   const runtimeOptions = normalizedRuntimeOptions(options);
   let tail = Promise.resolve();
   let activeMap: MapLibreMap | null = null;
-  let runtimePromise: Promise<BrowserMapRuntime> | undefined;
+  let activeRuntime: BrowserMapRuntime | undefined;
   let closed = false;
 
   const emit = (event: WebMcpInvocationEvent): void => {
@@ -173,14 +231,16 @@ export function createWebMcpExecutionBoundary(
       if (closed) {
         throw new DOMException('WebMCP registration is closed.', 'AbortError');
       }
-      if (signal.aborted) throw signal.reason;
+      throwIfAborted(signal);
       return operation();
     });
     tail = run.then(() => undefined, () => undefined);
     return run;
   };
 
-  const resolveAuthority = async (): Promise<WebMcpMapAuthority | null> => {
+  const resolveAuthority = async (
+    signal: AbortSignal,
+  ): Promise<WebMcpMapAuthority | null> => {
     let map: MapLibreMap | null;
     try {
       map = options.getMap();
@@ -188,13 +248,17 @@ export function createWebMcpExecutionBoundary(
       return null;
     }
     if (map === null) return null;
-    if (map !== activeMap || runtimePromise === undefined) {
+    if (map !== activeMap || activeRuntime === undefined) {
+      const runtime = await awaitPreDispatch(
+        resolvedDependencies.createRuntime(map, runtimeOptions),
+        signal,
+      );
       activeMap = map;
-      runtimePromise = resolvedDependencies.createRuntime(map, runtimeOptions);
+      activeRuntime = runtime;
     }
-    const runtime = await runtimePromise;
-    await runtime.noteExternalStyle();
-    return new WebMcpMapAuthority(runtime, options.getContext);
+    throwIfAborted(signal);
+    await awaitPreDispatch(activeRuntime.noteExternalStyle(), signal);
+    return new WebMcpMapAuthority(activeRuntime, options.getContext);
   };
 
   const invoke = async (
@@ -203,7 +267,7 @@ export function createWebMcpExecutionBoundary(
     signal: AbortSignal,
   ): Promise<CapabilityResult<unknown>> => {
     const startedAt = resolvedDependencies.now();
-    const action = invocationAction(input);
+    const action = invocationAction(name, input);
     const identity = {
       toolName: name,
       ...(action === undefined ? {} : { action }),
@@ -218,12 +282,16 @@ export function createWebMcpExecutionBoundary(
       if (options.authorizeInvocation !== undefined) {
         let authorized = false;
         try {
-          authorized = await options.authorizeInvocation({
-            toolName: name,
-            input,
-            readOnly: readOnlyTool(name),
-          });
+          authorized = await awaitPreDispatch(
+            options.authorizeInvocation({
+              toolName: name,
+              input,
+              readOnly: readOnlyTool(name),
+            }),
+            signal,
+          );
         } catch {
+          throwIfAborted(signal);
           authorized = false;
         }
         if (!authorized) {
@@ -239,7 +307,8 @@ export function createWebMcpExecutionBoundary(
         }
       }
 
-      const authority = await resolveAuthority();
+      throwIfAborted(signal);
+      const authority = await awaitPreDispatch(resolveAuthority(signal), signal);
       const result = authority === null
         ? mapNotReady()
         : await resolvedDependencies.dispatchCapability(name, authority, input, signal);

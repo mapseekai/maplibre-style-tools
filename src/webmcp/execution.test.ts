@@ -611,3 +611,248 @@ test('projects unavailable and throwing map accessors as MAP_NOT_READY', async (
     });
   }
 });
+
+test('aborts before map access when cancellation occurs during authorization', async () => {
+  const map = {} as MapLibreMap;
+  const authorizationStarted = deferred<void>();
+  const releaseAuthorization = deferred<void>();
+  const controller = new AbortController();
+  const events: WebMcpInvocationEvent[] = [];
+  let mapAccesses = 0;
+  let runtimeCreations = 0;
+  let dispatches = 0;
+  const boundary = createWebMcpExecutionBoundary({
+    ...testOptions(() => {
+      mapAccesses += 1;
+      return map;
+    }),
+    authorizeInvocation: async () => {
+      authorizationStarted.resolve();
+      await releaseAuthorization.promise;
+      return true;
+    },
+    onInvocation: (event) => events.push(event),
+  }, {
+    createRuntime: async () => {
+      runtimeCreations += 1;
+      return runtime();
+    },
+    now: () => 11_000,
+    dispatchCapability: async () => {
+      dispatches += 1;
+      return { success: true, message: 'not reached', data: null } as const;
+    },
+  });
+
+  const invocation = boundary.execute(
+    'runMapCommand', { action: 'removeImage', imageId: 'marker' }, controller.signal,
+  );
+  await authorizationStarted.promise;
+  controller.abort();
+  releaseAuthorization.resolve();
+
+  await assert.rejects(invocation, { name: 'AbortError' });
+  assert.equal(mapAccesses, 0);
+  assert.equal(runtimeCreations, 0);
+  assert.equal(dispatches, 0);
+  assert.equal(events.at(-1)?.phase, 'aborted');
+});
+
+test('cancellation wins when authorization rejects after abort', async () => {
+  const map = {} as MapLibreMap;
+  const authorizationStarted = deferred<void>();
+  const releaseAuthorization = deferred<void>();
+  const controller = new AbortController();
+  let mapAccesses = 0;
+  const boundary = createWebMcpExecutionBoundary({
+    ...testOptions(() => {
+      mapAccesses += 1;
+      return map;
+    }),
+    authorizeInvocation: async () => {
+      authorizationStarted.resolve();
+      await releaseAuthorization.promise;
+      throw new Error('private authorization failure');
+    },
+  }, {
+    createRuntime: async () => runtime(),
+    now: () => 11_500,
+    dispatchCapability: async () => (
+      { success: true, message: 'not reached', data: null } as const
+    ),
+  });
+
+  const invocation = boundary.execute(
+    'inspectStyle', { action: 'getRoot' }, controller.signal,
+  );
+  await authorizationStarted.promise;
+  controller.abort();
+  releaseAuthorization.resolve();
+
+  await assert.rejects(invocation, { name: 'AbortError' });
+  assert.equal(mapAccesses, 0);
+});
+
+test('aborts before reconciliation when cancellation occurs during runtime creation', async () => {
+  const map = {} as MapLibreMap;
+  const creationStarted = deferred<void>();
+  const releaseCreation = deferred<void>();
+  const controller = new AbortController();
+  let reconciliations = 0;
+  let dispatches = 0;
+  const createdRuntime: BrowserMapRuntime = {
+    ...runtime(),
+    noteExternalStyle: async () => {
+      reconciliations += 1;
+      return {
+        revision: 0,
+        styleHash: 'a'.repeat(64),
+        style: executionStyle,
+      };
+    },
+  };
+  const boundary = createWebMcpExecutionBoundary(testOptions(() => map), {
+    createRuntime: async () => {
+      creationStarted.resolve();
+      await releaseCreation.promise;
+      return createdRuntime;
+    },
+    now: () => 12_000,
+    dispatchCapability: async () => {
+      dispatches += 1;
+      return { success: true, message: 'not reached', data: null } as const;
+    },
+  });
+
+  const invocation = boundary.execute(
+    'runMapCommand', { action: 'removeImage', imageId: 'marker' }, controller.signal,
+  );
+  await creationStarted.promise;
+  controller.abort();
+  releaseCreation.resolve();
+
+  await assert.rejects(invocation, { name: 'AbortError' });
+  assert.equal(reconciliations, 0);
+  assert.equal(dispatches, 0);
+});
+
+test('aborts before dispatch when cancellation occurs during external style reconciliation', async () => {
+  const map = {} as MapLibreMap;
+  const reconciliationStarted = deferred<void>();
+  const releaseReconciliation = deferred<void>();
+  const controller = new AbortController();
+  let dispatches = 0;
+  const reconcilingRuntime: BrowserMapRuntime = {
+    ...runtime(),
+    noteExternalStyle: async () => {
+      reconciliationStarted.resolve();
+      await releaseReconciliation.promise;
+      return {
+        revision: 0,
+        styleHash: 'a'.repeat(64),
+        style: executionStyle,
+      };
+    },
+  };
+  const boundary = createWebMcpExecutionBoundary(testOptions(() => map), {
+    createRuntime: async () => reconcilingRuntime,
+    now: () => 13_000,
+    dispatchCapability: async () => {
+      dispatches += 1;
+      return { success: true, message: 'not reached', data: null } as const;
+    },
+  });
+
+  const invocation = boundary.execute(
+    'runMapCommand', { action: 'removeImage', imageId: 'marker' }, controller.signal,
+  );
+  await reconciliationStarted.promise;
+  controller.abort();
+  releaseReconciliation.resolve();
+
+  await assert.rejects(invocation, { name: 'AbortError' });
+  assert.equal(dispatches, 0);
+});
+
+test('projects only recognized tool-specific actions into invocation events', async () => {
+  const map = {} as MapLibreMap;
+  const events: WebMcpInvocationEvent[] = [];
+  let getterRead = false;
+  const accessorInput = Object.defineProperty({}, 'action', {
+    enumerable: true,
+    get: () => {
+      getterRead = true;
+      return 'getRoot';
+    },
+  });
+  const boundary = createWebMcpExecutionBoundary({
+    ...testOptions(() => map),
+    onInvocation: (event) => events.push(event),
+  }, {
+    createRuntime: async () => runtime(),
+    now: () => 14_000,
+    dispatchCapability: async () => (
+      { success: true, message: 'ok', data: null } as const
+    ),
+  });
+
+  await boundary.execute(
+    'inspectStyle', { action: 'getRoot' }, new AbortController().signal,
+  );
+  await boundary.execute(
+    'inspectStyle', { action: 'private-sensitive-text' }, new AbortController().signal,
+  );
+  await boundary.execute(
+    'inspectStyle', { action: 'secret'.repeat(20_000) }, new AbortController().signal,
+  );
+  await boundary.execute(
+    'queryMapFeatures', { action: 'getRoot' }, new AbortController().signal,
+  );
+  await boundary.execute(
+    'inspectStyle', accessorInput, new AbortController().signal,
+  );
+  await boundary.execute(
+    'runMapCommand', { action: 'removeImage' }, new AbortController().signal,
+  );
+
+  assert.equal(getterRead, false);
+  assert.deepEqual(events
+    .filter((event) => event.phase === 'started')
+    .map((event) => event.action), [
+    'getRoot',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'removeImage',
+  ]);
+});
+
+test('retries runtime creation after a transient same-map failure', async () => {
+  const map = {} as MapLibreMap;
+  let creationAttempts = 0;
+  let dispatches = 0;
+  const boundary = createWebMcpExecutionBoundary(testOptions(() => map), {
+    createRuntime: async () => {
+      creationAttempts += 1;
+      if (creationAttempts === 1) throw new Error('transient runtime failure');
+      return runtime();
+    },
+    now: () => 15_000,
+    dispatchCapability: async () => {
+      dispatches += 1;
+      return { success: true, message: 'ok', data: null } as const;
+    },
+  });
+
+  await assert.rejects(boundary.execute(
+    'inspectStyle', { action: 'getRoot' }, new AbortController().signal,
+  ), /transient runtime failure/u);
+  const result = await boundary.execute(
+    'inspectStyle', { action: 'getRoot' }, new AbortController().signal,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(creationAttempts, 2);
+  assert.equal(dispatches, 1);
+});
