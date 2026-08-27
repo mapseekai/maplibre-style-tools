@@ -25,9 +25,10 @@ const candidate = (overrides: Partial<FeatureCandidate['feature']> = {}): Featur
 const roadCandidate = candidate({ featureId: 2, properties: { class: 'road', name: 'Main Street' } });
 const waterCandidate = candidate();
 
-test('normalizes exact bounds and exposes disabled scope reasons', () => {
+test('accepts the exact comment bounds and rejects empty or oversized drafts', () => {
   assert.deepEqual(normalizeCommentDraft(' x '), { ok: true, value: 'x' });
   assert.equal(normalizeCommentDraft('x'.repeat(1_000)).ok, true);
+  assert.equal(normalizeCommentDraft('').ok, false);
   assert.equal(normalizeCommentDraft('x'.repeat(1_001)).ok, false);
 
   const options = scopeOptionsFor(candidate({ featureId: undefined, properties: {} }));

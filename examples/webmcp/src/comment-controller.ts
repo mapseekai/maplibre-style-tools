@@ -38,6 +38,7 @@ export interface CommentModeControl {
   readonly element: HTMLElement;
   setEnabled(enabled: boolean, reason?: string): void;
   setActive(active: boolean): void;
+  focus(): void;
   destroy(): void;
 }
 
@@ -67,6 +68,7 @@ export const createCommentModeControl = (onToggle: () => void): CommentModeContr
     element,
     setEnabled(enabled, reason) { button.disabled = !enabled; button.title = enabled ? '' : reason ?? ''; },
     setActive(active) { button.setAttribute('aria-pressed', String(active)); },
+    focus() { button.focus(); },
     destroy() { button.removeEventListener('click', onToggle); element.remove(); },
   };
 };
@@ -85,8 +87,10 @@ export const createMapCommentController: CreateMapCommentController = (options) 
   };
   const toggle = (): void => {
     if (!enabled || destroyed) return;
+    const leavingCommentMode = state === 'comment-mode';
     if (state === 'drafting') { cancelDraft({ type: 'cancel' }); state = 'idle'; } else state = reduceCommentMode(state, { type: 'toggle' });
     render();
+    if (leavingCommentMode) control.focus();
   };
   const control = (options.createControl ?? createCommentModeControl)(toggle);
   const mapControl: IControl = { onAdd: () => control.element, onRemove: () => control.destroy() };
@@ -117,7 +121,12 @@ export const createMapCommentController: CreateMapCommentController = (options) 
     if (event.defaultPrevented || event.key !== 'Escape' || !enabled || destroyed) return;
     event.preventDefault();
     if (state === 'drafting') cancelDraft({ type: 'cancel' });
-    else { state = reduceCommentMode(state, { type: 'escape' }); render(); }
+    else {
+      const leavingCommentMode = state === 'comment-mode';
+      state = reduceCommentMode(state, { type: 'escape' });
+      render();
+      if (leavingCommentMode) control.focus();
+    }
   };
   if (typeof document !== 'undefined') document.addEventListener('keydown', onKeyDown);
   const destroy = (): void => {
