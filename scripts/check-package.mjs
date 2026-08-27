@@ -281,6 +281,38 @@ const assertMapLibreDeclarationsAreNodeFree = (files, packageRoot) => {
   }
 };
 
+const assertWebMcpDeclarationIsBrowserSafe = (file, text) => {
+  assertMapLibreDeclarationIsNodeFree(file, text);
+  assertion(!text.includes('webmcp-types'), `${file} leaks webmcp-types`);
+  const document = typescript.createSourceFile(file, text,
+    typescript.ScriptTarget.Latest, true);
+  const visit = (node) => {
+    const specifier = declarationSpecifier(node);
+    if (specifier !== undefined) {
+      assertion(
+        specifier !== 'ws'
+          && !specifier.startsWith('ws/')
+          && specifier !== '@modelcontextprotocol/sdk'
+          && !specifier.startsWith('@modelcontextprotocol/sdk/')
+          && specifier !== 'ai'
+          && !specifier.startsWith('ai/')
+          && !specifier.startsWith('@ai-sdk/'),
+        `${file} leaks forbidden browser declaration dependency ${specifier}`,
+      );
+    }
+    typescript.forEachChild(node, visit);
+  };
+  visit(document);
+};
+
+const assertWebMcpDeclarationsAreBrowserSafe = (files, packageRoot) => {
+  const declarations = files.filter((file) => file.startsWith('dist/webmcp/')
+    && file.endsWith('.d.ts'));
+  for (const file of declarations) {
+    assertWebMcpDeclarationIsBrowserSafe(file, source(join(packageRoot, file)));
+  }
+};
+
 const packedModules = [
   'adapters/maplibre/feature-query',
   'adapters/maplibre/geojson-diff',
@@ -363,6 +395,12 @@ const packedModules = [
   'mcp/tool-handlers',
   'mcp/types',
   'mcp/version.generated',
+  'webmcp/execution',
+  'webmcp/index',
+  'webmcp/register',
+  'webmcp/runtime-authority',
+  'webmcp/tool-definitions',
+  'webmcp/types',
 ];
 const packedModuleExtensions = ['.d.ts', '.d.ts.map', '.js', '.js.map'];
 const exactPackedFiles = [
@@ -949,6 +987,10 @@ import {
   connectMapLibreBridge,
   sha256CanonicalJson,
 } from 'maplibre-style-tools/bridge';
+import {
+  isWebMcpSupported,
+  registerMapLibreWebMcpTools,
+} from 'maplibre-style-tools/webmcp';
 
 assert.equal(typeof createMapLibreStyleTools, 'function');
 assert.equal(typeof finalizeStyleReplacement, 'function');
@@ -967,6 +1009,9 @@ assert.equal(typeof connectMapLibreBridge, 'function');
 assert.equal(BRIDGE_PROTOCOL_VERSION, 2);
 assert.equal(typeof canonicalizeJson, 'function');
 assert.equal(typeof sha256CanonicalJson, 'function');
+assert.equal(typeof isWebMcpSupported, 'function');
+assert.equal(typeof registerMapLibreWebMcpTools, 'function');
+assert.equal(isWebMcpSupported(), false);
 const finalized = finalizeStyleReplacement(
   { version: 8, sources: {}, layers: [] },
   { version: 8, sources: {}, layers: [], metadata: { owner: 'maps' } },
@@ -1031,6 +1076,20 @@ try {
     requireProductionModules: true,
   });
 
+  const webmcp = await import('maplibre-style-tools/webmcp');
+  assertion(typeof webmcp.isWebMcpSupported === 'function', 'WebMCP feature detection is missing');
+  assertion(typeof webmcp.registerMapLibreWebMcpTools === 'function', 'WebMCP registration is missing');
+  assertion(webmcp.isWebMcpSupported() === false, 'Node import must feature-detect unsupported WebMCP');
+  const webmcpClosure = assertBrowserClosure({
+    entry: join(root, 'dist/webmcp/index.js'),
+    packageRoot: root,
+    requireProductionModules: false,
+  });
+  assertion(webmcpClosure.includes('dist/webmcp/register.js'), 'WebMCP closure missed register');
+  assertion(webmcpClosure.includes('dist/bridge/browser-runtime.js'), 'WebMCP closure missed browser runtime');
+  assertion(!webmcpClosure.some((file) => file.startsWith('dist/mcp/') || file.startsWith('dist/ai/')),
+    'WebMCP closure reached a Node facade');
+
   const packOutput = command('npm', [
     'pack', '--json', '--pack-destination', packDirectory,
   ]);
@@ -1071,6 +1130,8 @@ try {
     'dist/mcp/stdio.js',
     'dist/bridge/index.js',
     'dist/bridge/index.d.ts',
+    'dist/webmcp/index.js',
+    'dist/webmcp/index.d.ts',
   ]) assertion(packedFiles.includes(required), `packed tarball is missing ${required}`);
   for (const file of packedFiles) {
     assertion(
@@ -1125,6 +1186,7 @@ try {
   ], 'only AI and MCP transport declarations may reference Node ambient types');
   assertCoreDeclarationsAreTransportNeutral(packedFiles, unpacked);
   assertMapLibreDeclarationsAreNodeFree(packedFiles, unpacked);
+  assertWebMcpDeclarationsAreBrowserSafe(packedFiles, unpacked);
 
   writeFileSync(join(consumer, 'package.json'), '{\n  "private": true,\n  "type": "module"\n}\n');
   command('npm', [
@@ -1184,6 +1246,11 @@ try {
       types: './dist/bridge/index.d.ts',
       import: './dist/bridge/index.js',
       default: './dist/bridge/index.js',
+    },
+    './webmcp': {
+      types: './dist/webmcp/index.d.ts',
+      import: './dist/webmcp/index.js',
+      default: './dist/webmcp/index.js',
     },
   });
   // These entrypoints reach MapLibre only through type-only imports, so this

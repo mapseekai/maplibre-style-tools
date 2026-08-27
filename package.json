@@ -43,6 +43,11 @@
       "import": "./dist/bridge/index.js",
       "default": "./dist/bridge/index.js"
     },
+    "./webmcp": {
+      "types": "./dist/webmcp/index.d.ts",
+      "import": "./dist/webmcp/index.js",
+      "default": "./dist/webmcp/index.js"
+    },
     "./capabilities": {
       "types": "./dist/capabilities/index.d.ts",
       "import": "./dist/capabilities/index.js",
