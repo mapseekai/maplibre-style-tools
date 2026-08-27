@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -44,6 +45,20 @@ const builtinSpecifiers = new Set([
   ...builtinModules.map((name) => `node:${name}`),
 ]);
 
+const isForbiddenWebMcpRuntimeSpecifier = (specifier) =>
+  specifier === 'webmcp-types'
+  || specifier === '@modelcontextprotocol/sdk'
+  || specifier.startsWith('@modelcontextprotocol/sdk/')
+  || specifier === 'ai'
+  || specifier.startsWith('ai/')
+  || specifier.startsWith('@ai-sdk/');
+
+const isForbiddenWebMcpRuntimeModule = (file) =>
+  file.startsWith('dist/mcp/')
+  || file.startsWith('dist/ai/')
+  || file === 'dist/bridge/server.js'
+  || file === 'dist/bridge/registry.js';
+
 const isInside = (parent, candidate) => {
   const child = relative(parent, candidate);
   return child === '' || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child));
@@ -53,6 +68,7 @@ const assertBrowserClosure = ({
   entry,
   packageRoot,
   requireProductionModules,
+  forbidWebMcpRuntime,
 }) => {
   const canonicalPackageRoot = realpathSync(packageRoot);
   const canonicalEntry = realpathSync(entry);
@@ -67,6 +83,11 @@ const assertBrowserClosure = ({
     if (visited.has(canonicalFile)) return;
     assertion(statSync(canonicalFile).isFile(),
       `browser closure edge is not a file: ${file}`);
+    const packageFile = relative(canonicalPackageRoot, canonicalFile).split(sep).join('/');
+    if (forbidWebMcpRuntime) {
+      assertion(!isForbiddenWebMcpRuntimeModule(packageFile),
+        `${packageFile} is a forbidden WebMCP browser module`);
+    }
     visited.add(canonicalFile);
     const document = typescript.createSourceFile(
       canonicalFile,
@@ -81,6 +102,10 @@ const assertBrowserClosure = ({
         `${relative(canonicalPackageRoot, canonicalFile)} imports Node builtin ${specifier}`);
       assertion(specifier !== 'ws' && !specifier.startsWith('ws/'),
         `${relative(canonicalPackageRoot, canonicalFile)} imports forbidden browser dependency ${specifier}`);
+      if (forbidWebMcpRuntime) {
+        assertion(!isForbiddenWebMcpRuntimeSpecifier(specifier),
+          `${relative(canonicalPackageRoot, canonicalFile)} imports forbidden WebMCP browser dependency ${specifier}`);
+      }
       if (!specifier.startsWith('.')) return;
       const target = resolve(dirname(canonicalFile), specifier);
       assertion(existsSync(target),
@@ -118,6 +143,37 @@ const assertBrowserClosure = ({
   }
   return files;
 };
+
+const webMcpClosureFixture = mkdtempSync(join(tmpdir(), 'maplibre-style-tools-webmcp-closure-'));
+try {
+  const entry = join(webMcpClosureFixture, 'dist/webmcp/index.js');
+  mkdirSync(dirname(entry), { recursive: true });
+  for (const [name, specifier] of [
+    ['mcp-sdk', '@modelcontextprotocol/sdk'],
+    ['ai', 'ai'],
+    ['ai-sdk', '@ai-sdk/openai'],
+    ['bridge-server', '../bridge/server.js'],
+  ]) {
+    if (specifier.startsWith('.')) {
+      const server = join(webMcpClosureFixture, 'dist/bridge/server.js');
+      mkdirSync(dirname(server), { recursive: true });
+      writeFileSync(server, 'export {};\n');
+    }
+    writeFileSync(entry, `import ${JSON.stringify(specifier)};\n`);
+    assert.throws(
+      () => assertBrowserClosure({
+        entry,
+        packageRoot: webMcpClosureFixture,
+        requireProductionModules: false,
+        forbidWebMcpRuntime: true,
+      }),
+      /forbidden WebMCP browser dependency|forbidden WebMCP browser module/,
+      `WebMCP closure must reject ${name}`,
+    );
+  }
+} finally {
+  rmSync(webMcpClosureFixture, { recursive: true, force: true });
+}
 
 const assertCjsRequireExports = (cwd, expectedExports) => {
   const smoke = `const assert = require('node:assert/strict');
@@ -1084,6 +1140,7 @@ try {
     entry: join(root, 'dist/webmcp/index.js'),
     packageRoot: root,
     requireProductionModules: false,
+    forbidWebMcpRuntime: true,
   });
   assertion(webmcpClosure.includes('dist/webmcp/register.js'), 'WebMCP closure missed register');
   assertion(webmcpClosure.includes('dist/bridge/browser-runtime.js'), 'WebMCP closure missed browser runtime');
