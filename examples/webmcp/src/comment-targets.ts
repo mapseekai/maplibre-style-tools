@@ -23,6 +23,10 @@ const MAX_PROPERTIES = 20;
 const MAX_PROPERTY_NAME_LENGTH = 80;
 const MAX_STRING_LENGTH = 240;
 
+export const isBoundedIdentity = (value: unknown, maximumLength: number): value is string => typeof value === 'string'
+  && value.length > 0
+  && value.length <= maximumLength;
+
 const isScalar = (value: unknown): value is Scalar => value === null
   || typeof value === 'string'
   || typeof value === 'boolean'
@@ -30,13 +34,16 @@ const isScalar = (value: unknown): value is Scalar => value === null
 
 const boundedString = (value: string, length = MAX_STRING_LENGTH): string => value.slice(0, length);
 
-const requiredIdentifier = (value: unknown, name: string): string => {
-  if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${name} must be a non-empty identifier.`);
-  return boundedString(value.trim(), MAX_PROPERTY_NAME_LENGTH);
+const requiredIdentifier = (value: unknown, name: string, maximumLength = MAX_PROPERTY_NAME_LENGTH): string => {
+  if (isBoundedIdentity(value, maximumLength)) return value;
+  if (typeof value !== 'string' || value.length === 0) throw new TypeError(`${name} must be a non-empty identifier.`);
+  if (value.length > maximumLength) throw new RangeError(`${name} must not exceed ${maximumLength} characters.`);
+  throw new TypeError(`${name} must be a string identifier.`);
 };
 
 const stableFeatureId = (value: unknown): string | number | undefined => {
-  if (typeof value === 'string') return value.trim() === '' ? undefined : boundedString(value);
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') return requiredIdentifier(value, 'Feature ID', MAX_STRING_LENGTH);
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 };
 
@@ -45,9 +52,8 @@ const frozenFeature = (feature: FeatureReference): FeatureReference => {
   for (const [name, value] of Object.entries(feature.properties ?? {})) {
     if (Object.keys(properties).length === MAX_PROPERTIES) break;
     if (!isScalar(value)) continue;
-    const propertyName = boundedString(name, MAX_PROPERTY_NAME_LENGTH);
-    if (propertyName === '') continue;
-    properties[propertyName] = typeof value === 'string' ? boundedString(value) : value;
+    if (name.length === 0 || name.length > MAX_PROPERTY_NAME_LENGTH) continue;
+    properties[name] = typeof value === 'string' ? boundedString(value) : value;
   }
 
   const longitude = feature.lngLat?.[0];

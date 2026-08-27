@@ -1,6 +1,6 @@
 import type { Map as MapLibreMap, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
 
-import type { FeatureReference } from './comment-targets.js';
+import { isBoundedIdentity, type FeatureReference } from './comment-targets.js';
 
 type Scalar = string | number | boolean | null;
 
@@ -22,8 +22,8 @@ const projectProperties = (properties: unknown): Readonly<Record<string, Scalar>
   for (const [name, value] of Object.entries(properties)) {
     if (Object.keys(result).length === MAX_PROPERTIES) break;
     if (!isScalar(value)) continue;
-    const propertyName = bounded(name, MAX_PROPERTY_NAME_LENGTH);
-    if (propertyName !== '') result[propertyName] = typeof value === 'string' ? bounded(value, MAX_STRING_LENGTH) : value;
+    if (name.length === 0 || name.length > MAX_PROPERTY_NAME_LENGTH) continue;
+    result[name] = typeof value === 'string' ? bounded(value, MAX_STRING_LENGTH) : value;
   }
   return Object.freeze(result);
 };
@@ -31,16 +31,17 @@ const projectProperties = (properties: unknown): Readonly<Record<string, Scalar>
 const projectFeature = (feature: MapGeoJSONFeature, lngLat: readonly [number, number]): FeatureReference | undefined => {
   const layerId = feature.layer?.id;
   const sourceId = feature.source;
-  if (typeof layerId !== 'string' || layerId === '' || typeof sourceId !== 'string' || sourceId === '') return undefined;
-  const featureId = typeof feature.id === 'string'
-    ? (feature.id === '' ? undefined : bounded(feature.id, MAX_STRING_LENGTH))
+  if (!isBoundedIdentity(layerId, MAX_PROPERTY_NAME_LENGTH) || !isBoundedIdentity(sourceId, MAX_PROPERTY_NAME_LENGTH)) return undefined;
+  if (feature.sourceLayer !== undefined && !isBoundedIdentity(feature.sourceLayer, MAX_PROPERTY_NAME_LENGTH)) return undefined;
+  const featureId = isBoundedIdentity(feature.id, MAX_STRING_LENGTH)
+    ? feature.id
     : typeof feature.id === 'number' && Number.isFinite(feature.id) ? feature.id : undefined;
-  const sourceLayer = typeof feature.sourceLayer === 'string' && feature.sourceLayer !== ''
-    ? bounded(feature.sourceLayer, MAX_PROPERTY_NAME_LENGTH)
-    : undefined;
+  const sourceLayer = feature.sourceLayer === undefined
+    ? undefined
+    : feature.sourceLayer;
   return Object.freeze({
-    layerId: bounded(layerId, MAX_PROPERTY_NAME_LENGTH),
-    sourceId: bounded(sourceId, MAX_PROPERTY_NAME_LENGTH),
+    layerId,
+    sourceId,
     ...(sourceLayer === undefined ? {} : { sourceLayer }),
     ...(featureId === undefined ? {} : { featureId }),
     lngLat: Object.freeze([lngLat[0], lngLat[1]]) as readonly [number, number],

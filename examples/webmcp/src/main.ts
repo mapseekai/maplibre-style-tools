@@ -24,6 +24,18 @@ export function renderWebMcpSupport(
     : 'Site tools unavailable';
 }
 
+export const addCommentTargetSafely = (
+  add: () => MapCommentTarget,
+  onError: (message: string) => void,
+): MapCommentTarget | undefined => {
+  try {
+    return add();
+  } catch {
+    onError('Unable to create this comment target. Choose another target and try again.');
+    return undefined;
+  }
+};
+
 const requireElement = <ElementType extends HTMLElement>(testId: string): ElementType => {
   const element = document.querySelector(`[data-testid="${testId}"]`);
   if (!(element instanceof HTMLElement)) throw new Error(`Missing WebMCP example element: ${testId}`);
@@ -221,16 +233,17 @@ const startWebMcpExample = async (): Promise<void> => {
   scope.addEventListener('change', renderControls);
   selector.addEventListener('change', renderControls);
   createTarget.addEventListener('click', () => {
-    if (currentFeature === undefined) return;
-    const target = scope.value === 'feature' && currentFeature.featureId !== undefined
-      ? targets.add({ scope: 'feature', feature: currentFeature as FeatureReference & { readonly featureId: string | number } })
+    const selectedFeature = currentFeature;
+    if (selectedFeature === undefined) return;
+    const target = addCommentTargetSafely(() => scope.value === 'feature' && selectedFeature.featureId !== undefined
+      ? targets.add({ scope: 'feature', feature: selectedFeature as FeatureReference & { readonly featureId: string | number } })
       : scope.value === 'property-class'
         ? (() => {
-          const value = currentFeature.properties[selector.value];
-          if (value === undefined) return undefined;
-          return targets.add({ scope: 'property-class', feature: currentFeature, selector: { property: selector.value, value } });
+          const value = selectedFeature.properties[selector.value];
+          if (value === undefined) throw new TypeError('The selected property is unavailable.');
+          return targets.add({ scope: 'property-class', feature: selectedFeature, selector: { property: selector.value, value } });
         })()
-        : targets.add({ scope: 'layer', feature: currentFeature });
+        : targets.add({ scope: 'layer', feature: selectedFeature }), (message) => { targetStatus.textContent = message; });
     if (target === undefined) return;
     renderTarget(target);
     targetStatus.textContent = `Created unsubmitted comment target ${target.selectionId}.`;
