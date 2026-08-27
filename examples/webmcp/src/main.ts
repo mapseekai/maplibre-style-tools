@@ -12,6 +12,19 @@ import { PendingMapCommentStore } from './comment-targets.js';
 
 const DEMO_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
 
+type StyleLoadSource = {
+  on(event: 'style.load', listener: () => void): unknown;
+  isStyleLoaded(): boolean | void;
+};
+
+export const enableCommentControllerForStyleLoad = (
+  map: StyleLoadSource,
+  onStyleLoad: () => void,
+): void => {
+  map.on('style.load', onStyleLoad);
+  if (map.isStyleLoaded() === true) onStyleLoad();
+};
+
 export function renderWebMcpSupport(host: HTMLElement, registration: MapLibreWebMcpRegistration, toolCount = registration.toolNames.length, supported = registration.supported): void {
   host.textContent = supported ? `Site tools available (${toolCount})` : 'Site tools unavailable · local preview';
 }
@@ -94,7 +107,7 @@ const startWebMcpExample = async (): Promise<void> => {
   };
   const onStyleData = (): void => { void updateMapDetails(); };
   const onError = (): void => { if (!loaded && !map.isStyleLoaded()) { error.hidden = false; controller.setEnabled(false, 'Map is loading.'); } };
-  map.on('style.load', onStyleLoad); map.on('styledata', onStyleData); map.on('error', onError);
+  enableCommentControllerForStyleLoad(map, onStyleLoad); map.on('styledata', onStyleData); map.on('error', onError);
   retry.addEventListener('click', () => { error.hidden = true; controller.setEnabled(false, 'Map is loading.'); map.setStyle(DEMO_STYLE_URL); }, { signal: pageLifetime.signal });
   reset.addEventListener('click', () => { activity.clear(); controller.clear(); controller.setEnabled(false, 'Map is loading.'); map.setStyle(DEMO_STYLE_URL); }, { signal: pageLifetime.signal });
   window.addEventListener('pagehide', () => pageLifetime.abort(), { once: true, signal: pageLifetime.signal });

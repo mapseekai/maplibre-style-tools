@@ -6,12 +6,26 @@ import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
 import { projectInvocationEvent } from './activity-log.js';
 import { PendingMapCommentStore, type FeatureReference } from './comment-targets.js';
 import {
+  enableCommentControllerForStyleLoad,
   createWebMcpExampleLifetimes,
   registerCoreWebMcpToolsSafely,
   registerMapSelectionConsumptionTool,
   registerMapSelectionConsumptionToolSafely,
   renderWebMcpSupport,
 } from './main.js';
+
+test('enables the comment controller when the style was loaded before listener registration', () => {
+  let listener: (() => void) | undefined;
+  let calls = 0;
+  enableCommentControllerForStyleLoad({
+    on(_event: 'style.load', nextListener: () => void) { listener = nextListener; },
+    isStyleLoaded: () => true,
+  }, () => { calls += 1; });
+
+  assert.equal(calls, 1);
+  listener?.();
+  assert.equal(calls, 2);
+});
 
 const selectionFeature = {
   layerId: 'places-fill',
