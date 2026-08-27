@@ -68,6 +68,17 @@ test('accepts exact bounds and rejects comments outside them', () => {
   assert.throws(() => store.add({ comment: 'x'.repeat(1_001), scope: 'layer', feature: mutableFeature() }), /1,000/u);
 });
 
+test('accepts selection IDs through 128 characters and rejects 129', () => {
+  const shortest = 'a';
+  const longest = 'b'.repeat(128);
+  const tooLong = 'c'.repeat(129);
+  const store = createStore([shortest, longest, tooLong]);
+
+  assert.equal(store.add({ comment: 'One', scope: 'layer', feature: mutableFeature() }).selectionId, shortest);
+  assert.equal(store.add({ comment: 'Two', scope: 'layer', feature: mutableFeature() }).selectionId, longest);
+  assert.throws(() => store.add({ comment: 'Three', scope: 'layer', feature: mutableFeature() }), /128/u);
+});
+
 test('rejects capacity without evicting or reusing an issued id', () => {
   const store = createStore(['map-selection-a', 'map-selection-b', 'map-selection-a'], 2);
   const first = store.add({ comment: 'One', scope: 'layer', feature: mutableFeature() });

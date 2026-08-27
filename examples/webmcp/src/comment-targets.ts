@@ -18,6 +18,8 @@ export type PendingMapComment = PendingMapCommentInput & { readonly selectionId:
 
 const MAX_PROPERTIES = 20;
 const MAX_PROPERTY_NAME_LENGTH = 80;
+const MAX_SELECTION_ID_LENGTH = 128;
+
 const MAX_STRING_LENGTH = 240;
 
 export const isBoundedIdentity = (value: unknown, maximumLength: number): value is string => typeof value === 'string'
@@ -135,7 +137,7 @@ export class PendingMapCommentStore {
     if (this.#comments.size >= this.#capacity) {
       throw new RangeError('Pending map comment capacity has been reached.');
     }
-    const selectionId = requiredIdentifier(this.#idFactory(), 'Selection ID');
+    const selectionId = requiredIdentifier(this.#idFactory(), 'Selection ID', MAX_SELECTION_ID_LENGTH);
     if (this.#issuedIds.has(selectionId)) throw new Error(`Pending map comment ID already issued: ${selectionId}`);
     const comment = frozenComment(selectionId, input);
     this.#issuedIds.add(selectionId);
