@@ -113,6 +113,20 @@ export const createWebMcpExampleLifetimes = (): {
   return { page, tools };
 };
 
+export const registerCoreWebMcpToolsSafely = async (
+  register: () => Promise<MapLibreWebMcpRegistration>,
+  support: HTMLElement,
+  toolsLifetime: AbortController,
+): Promise<MapLibreWebMcpRegistration | undefined> => {
+  try {
+    return await register();
+  } catch {
+    toolsLifetime.abort();
+    support.textContent = 'Site tools failed to register';
+    return undefined;
+  }
+};
+
 export const registerMapSelectionConsumptionToolSafely = async (
   modelContext: ModelContextToolRegistrar,
   store: CommentTargetStore,
@@ -374,17 +388,26 @@ const startWebMcpExample = async (): Promise<void> => {
     targets.clear();
     map.off('click', onMapClick);
   }, { once: true });
-  const registration = await registerMapLibreWebMcpTools({
-    getMap: (): MapLibreMap => map,
-    allowMutations: true,
-    signal: toolsLifetime.signal,
-    resourcePolicy: {
-      baseUrl: document.baseURI,
-      allowedResourceOrigins: [location.origin, 'https://demotiles.maplibre.org'],
-    },
-    authorizeInvocation: () => true,
-    onInvocation: (event) => activity.append(event),
-  });
+  const registration = await registerCoreWebMcpToolsSafely(
+    () => registerMapLibreWebMcpTools({
+      getMap: (): MapLibreMap => map,
+      allowMutations: true,
+      signal: toolsLifetime.signal,
+      resourcePolicy: {
+        baseUrl: document.baseURI,
+        allowedResourceOrigins: [location.origin, 'https://demotiles.maplibre.org'],
+      },
+      authorizeInvocation: () => true,
+      onInvocation: (event) => activity.append(event),
+    }),
+    support,
+    toolsLifetime,
+  );
+  if (registration === undefined) {
+    renderToolGroups(registeredTools, []);
+    await updateMapDetails();
+    return;
+  }
   let supported = registration.supported;
   let toolNames: readonly string[] = registration.toolNames;
   if (registration.supported) {

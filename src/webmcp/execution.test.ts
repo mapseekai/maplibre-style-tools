@@ -466,6 +466,47 @@ test('propagates active cancellation and emits an aborted event', async () => {
   ]);
 });
 
+test('rejects cancellation when dispatch resolves with a timeout failure', async () => {
+  const map = {} as MapLibreMap;
+  const controller = new AbortController();
+  const reason = new DOMException('caller cancelled', 'AbortError');
+  const events: WebMcpInvocationEvent[] = [];
+  const times = [5_100, 5_113];
+  const boundary = createWebMcpExecutionBoundary({
+    ...testOptions(() => map),
+    onInvocation: (event) => events.push(event),
+  }, {
+    createRuntime: async () => runtime(),
+    now: () => times.shift() ?? 5_113,
+    dispatchCapability: async () => {
+      controller.abort(reason);
+      return {
+        success: false,
+        message: 'Browser map command timed out.',
+        error: createStyleToolError('TIMEOUT', 'Browser map command timed out.'),
+      };
+    },
+  });
+
+  await assert.rejects(boundary.execute(
+    'inspectStyle', { action: 'getRoot' }, controller.signal,
+  ), (error: unknown) => error === reason);
+  assert.deepEqual(events, [
+    {
+      phase: 'started',
+      toolName: 'inspectStyle',
+      action: 'getRoot',
+      startedAt: 5_100,
+    },
+    {
+      phase: 'aborted',
+      toolName: 'inspectStyle',
+      action: 'getRoot',
+      durationMs: 13,
+    },
+  ]);
+});
+
 test('isolates invocation observers from tool execution', async () => {
   const map = {} as MapLibreMap;
   let dispatches = 0;

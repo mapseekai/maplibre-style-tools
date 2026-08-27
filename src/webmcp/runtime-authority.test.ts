@@ -70,6 +70,23 @@ test('adds fresh revision guards to transactions', async () => {
   });
 });
 
+test('returns an aborted mutation failure without dispatching pre-aborted work', async () => {
+  const runtime = fakeRuntime({ style: baseStyle });
+  const controller = new AbortController();
+  controller.abort();
+
+  const result = await new WebMcpMapAuthority(runtime).applyTransaction(transaction, {
+    diff: true,
+    signal: controller.signal,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'unavailable');
+  assert.equal(result.error?.code, 'TIMEOUT');
+  assert.deepEqual(result.error?.details, { reason: 'aborted' });
+  assert.deepEqual(runtime.commands, []);
+});
+
 const commandRuntime = (
   resultFor: (command: BridgeCommand) => unknown,
 ): RecordedRuntime => {
@@ -84,6 +101,131 @@ const commandRuntime = (
     },
   };
 };
+
+const fullTransactionResult = (overrides: Record<string, unknown> = {}) => ({
+  type: 'transaction',
+  detail: 'full',
+  revision: 1,
+  styleHash: 'a'.repeat(64),
+  applied: true,
+  noOp: false,
+  changedLayerIds: [],
+  changedSourceIds: [],
+  warnings: [],
+  ...overrides,
+});
+
+test('rejects a mutation receipt that is not a full result', async () => {
+  const runtime = commandRuntime(() => ({
+    type: 'transaction',
+    detail: 'receipt',
+    revision: 1,
+    styleHash: 'a'.repeat(64),
+    applied: true,
+    noOp: false,
+  }));
+
+  const result = await new WebMcpMapAuthority(runtime).applyDocument(
+    'https://styles.example/map.json',
+    { diff: false },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'unavailable');
+  assert.equal(result.error?.code, 'INTERNAL');
+  assert.equal(result.error?.message, 'WebMCP runtime did not return a full transaction result.');
+});
+
+test('rejects a full mutation result that omits a requested diff', async () => {
+  const runtime = commandRuntime(() => fullTransactionResult({
+    style: baseStyle,
+    omitted: { diff: true },
+  }));
+
+  const result = await new WebMcpMapAuthority(runtime).applyDocument(
+    'https://styles.example/map.json',
+    { diff: true },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'unavailable');
+  assert.equal(result.error?.code, 'INTERNAL');
+  assert.equal(result.error?.message, 'WebMCP full transaction result omitted the requested diff.');
+});
+
+test('uses a verified local projection when the runtime omits its Style', async () => {
+  const runtime = commandRuntime(() => fullTransactionResult({
+    styleHash: '517154694405f4f430d68d373e42ac03a1cb6d701ab04521df4f56c8e3f89218',
+    diff: [],
+    omitted: { style: true },
+  }));
+
+  const result = await new WebMcpMapAuthority(runtime).applyTransaction(transaction, {
+    diff: true,
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    style: { ...baseStyle, name: 'Updated' },
+    styleAuthority: 'current',
+    applied: true,
+    changedLayers: [],
+    changedSources: [],
+    diff: [],
+    warnings: [],
+  });
+});
+
+test('rejects a local projection whose hash does not match the runtime', async () => {
+  const runtime = commandRuntime(() => fullTransactionResult({
+    styleHash: 'f'.repeat(64),
+    diff: [],
+    omitted: { style: true },
+  }));
+
+  const result = await new WebMcpMapAuthority(runtime).applyTransaction(transaction, {
+    diff: true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'unavailable');
+  assert.equal(result.error?.code, 'INTERNAL');
+  assert.equal(
+    result.error?.message,
+    'Projected Style hash does not match the WebMCP runtime transaction result.',
+  );
+});
+
+test('contains a late local projection hash failure inside the authority', async () => {
+  const projectedStyle = new Proxy(baseStyle, {
+    ownKeys: () => { throw new Error('private projection failure'); },
+  });
+  const runtime: BrowserMapRuntime = {
+    snapshot: () => ({
+      revision: 0,
+      styleHash: 'a'.repeat(64),
+      style: baseStyle,
+    }),
+    noteExternalStyle: async () => ({
+      revision: 0,
+      styleHash: 'a'.repeat(64),
+      style: baseStyle,
+    }),
+    execute: async <C extends BridgeCommand>(): Promise<BridgeResultFor<C>> =>
+      fullTransactionResult({
+        omitted: { style: true },
+      }) as unknown as BridgeResultFor<C>,
+  };
+
+  const result = await new WebMcpMapAuthority(runtime).applyDocument(projectedStyle, {
+    diff: false,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'unavailable');
+  assert.equal(result.error?.code, 'INTERNAL');
+  assert.equal(result.error?.message, 'WebMCP map command failed.');
+});
 
 test('maps every runtime command to its browser command', async () => {
   const runtime = commandRuntime((command) => {

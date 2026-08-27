@@ -31,7 +31,12 @@ const normalizeExposedTo = (
     } catch {
       throw new TypeError('WebMCP exposedTo entries must be secure origins.');
     }
-    if (url.protocol !== 'https:' || url.origin !== value) {
+    const loopbackHttp = url.protocol === 'http:' && (
+      url.hostname === 'localhost'
+      || /^127(?:\.\d{1,3}){3}$/u.test(url.hostname)
+      || url.hostname === '[::1]'
+    );
+    if ((url.protocol !== 'https:' && !loopbackHttp) || url.origin !== value) {
       throw new TypeError('WebMCP exposedTo entries must be secure origins.');
     }
     return url.origin;

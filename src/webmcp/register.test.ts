@@ -144,6 +144,47 @@ test('rejects insecure exposedTo origins before registering tools', async () => 
   assert.deepEqual([...context.tools.keys()], []);
 });
 
+test('accepts origin-only HTTPS and loopback HTTP exposedTo origins', async () => {
+  for (const origin of [
+    'https://client.example',
+    'http://localhost',
+    'http://127.42.0.1',
+    'http://[::1]',
+  ]) {
+    const context = new FakeModelContext();
+    const registration = await registerMapLibreWebMcpTools(registrationOptions(context, {
+      exposedTo: [origin],
+    }));
+
+    assert.deepEqual(context.registrations[0]?.options.exposedTo, [origin]);
+    registration.close();
+  }
+});
+
+test('rejects unsafe HTTP and non-origin exposedTo entries', async () => {
+  for (const exposedTo of [
+    'http://client.example',
+    'http://192.168.1.1',
+    'https://user@client.example',
+    'https://client.example/',
+    'https://client.example/path',
+    'https://client.example?scope=map',
+    'https://client.example#map',
+    'data:text/plain,client',
+    'client.example',
+  ]) {
+    const context = new FakeModelContext();
+
+    await assert.rejects(
+      registerMapLibreWebMcpTools(registrationOptions(context, {
+        exposedTo: [exposedTo],
+      })),
+      TypeError,
+    );
+    assert.deepEqual([...context.tools.keys()], []);
+  }
+});
+
 test('rejects an already-aborted registration signal with its reason', async () => {
   const context = new FakeModelContext();
   const controller = new AbortController();

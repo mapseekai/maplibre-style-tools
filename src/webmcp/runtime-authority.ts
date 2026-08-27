@@ -247,7 +247,7 @@ export class WebMcpMapAuthority implements StyleAuthority, RuntimeAuthority {
       if (options.diff && result.diff === undefined) {
         return unavailable(createStyleToolError('INTERNAL', 'WebMCP full transaction result omitted the requested diff.'));
       }
-      return this.projectMutationSuccess(result, projectedStyle, options.diff);
+      return await this.projectMutationSuccess(result, projectedStyle, options.diff);
     } catch (error) {
       return currentFailure(error);
     }

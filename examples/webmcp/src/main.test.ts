@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
+
 import { projectInvocationEvent } from './activity-log.js';
 import { CommentTargetStore, type FeatureReference } from './comment-targets.js';
 import {
   addCommentTargetSafely,
   createWebMcpExampleLifetimes,
+  registerCoreWebMcpToolsSafely,
   registerMapSelectionConsumptionTool,
   registerMapSelectionConsumptionToolSafely,
   renderWebMcpSupport,
@@ -133,4 +136,48 @@ test('keeps reset and picker active when custom registration removes core tools'
   assert.equal(pickerCalls, 1);
   lifetimes.page.abort();
   assert.equal(lifetimes.tools.signal.aborted, true);
+});
+
+test('keeps page UI handlers active when core tool registration fails', async () => {
+  const lifetimes = createWebMcpExampleLifetimes();
+  const calls = { map: 0, picker: 0, reset: 0 };
+  const map = new EventTarget();
+  const picker = new EventTarget();
+  const reset = new EventTarget();
+  map.addEventListener('click', () => { calls.map += 1; }, { signal: lifetimes.page.signal });
+  picker.addEventListener('click', () => { calls.picker += 1; }, { signal: lifetimes.page.signal });
+  reset.addEventListener('click', () => { calls.reset += 1; }, { signal: lifetimes.page.signal });
+  const support = { textContent: 'Checking WebMCP support…' } as unknown as HTMLElement;
+  let registrationAttempts = 0;
+  const documentValue = {
+    baseURI: 'https://map.example/app/',
+    location: { origin: 'https://map.example' },
+    modelContext: {
+      registerTool: async () => {
+        registrationAttempts += 1;
+        throw new Error('private registration failure');
+      },
+    },
+  } as unknown as Document;
+
+  const registration = await registerCoreWebMcpToolsSafely(
+    () => registerMapLibreWebMcpTools({
+      getMap: () => null,
+      document: documentValue,
+      signal: lifetimes.tools.signal,
+    }),
+    support,
+    lifetimes.tools,
+  );
+
+  assert.equal(registration, undefined);
+  assert.equal(registrationAttempts, 1);
+  assert.equal(support.textContent, 'Site tools failed to register');
+  assert.equal(support.textContent.includes('private'), false);
+  assert.equal(lifetimes.tools.signal.aborted, true);
+  assert.equal(lifetimes.page.signal.aborted, false);
+  map.dispatchEvent(new Event('click'));
+  picker.dispatchEvent(new Event('click'));
+  reset.dispatchEvent(new Event('click'));
+  assert.deepEqual(calls, { map: 1, picker: 1, reset: 1 });
 });

@@ -312,6 +312,7 @@ export function createWebMcpExecutionBoundary(
       const result = authority === null
         ? mapNotReady()
         : await resolvedDependencies.dispatchCapability(name, authority, input, signal);
+      throwIfAborted(signal);
       if (result.success) {
         emit({
           phase: 'succeeded',
