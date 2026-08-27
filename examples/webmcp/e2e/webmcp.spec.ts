@@ -67,8 +67,12 @@ const selectCentralLake = async (page: Page): Promise<void> => {
   const map = page.getByTestId('map');
   const box = await map.boundingBox();
   if (box === null) throw new Error('map has no visible bounds');
-  await map.click({ position: { x: box.width / 2, y: box.height / 2 } });
-  await page.getByRole('button', { name: 'places-fill · Central Lake' }).first().click();
+  const candidate = page.getByRole('button', { name: 'places-fill · Central Lake' }).first();
+  await expect.poll(async () => {
+    await map.click({ position: { x: box.width / 2, y: box.height / 2 } });
+    return candidate.isVisible();
+  }).toBe(true);
+  await candidate.click();
   await expect(page.getByTestId('comment-target-status')).toContainText('Central Lake');
 };
 
