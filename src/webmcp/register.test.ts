@@ -48,6 +48,34 @@ const registrationOptions = (
   ...overrides,
 });
 
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
+class DeferredFirstRegistrationContext implements WebMcpModelContextLike {
+  readonly tools = new Map<string, WebMcpToolDefinitionLike>();
+  readonly firstStarted = deferred<void>();
+  readonly firstFinished = deferred<void>();
+  calls = 0;
+
+  async registerTool(
+    tool: WebMcpToolDefinitionLike,
+    options: { readonly exposedTo?: readonly string[]; readonly signal?: AbortSignal } = {},
+  ): Promise<void> {
+    this.calls += 1;
+    this.tools.set(tool.name, tool);
+    options.signal?.addEventListener('abort', () => this.tools.delete(tool.name), { once: true });
+    if (this.calls === 1) {
+      this.firstStarted.resolve();
+      await this.firstFinished.promise;
+    }
+  }
+}
+
 test('reports unsupported WebMCP without reading a global document', async () => {
   assert.equal(isWebMcpSupported(documentWith()), false);
   assert.equal(isWebMcpSupported(), false);
@@ -164,4 +192,21 @@ test('external abort closes the registration and close is idempotent', async () 
     async () => { await firstTool.execute({}, { signal: new AbortController().signal }); },
     { name: 'AbortError' },
   );
+});
+
+test('rejects an external abort received during pending registration', async () => {
+  const context = new DeferredFirstRegistrationContext();
+  const controller = new AbortController();
+  const reason = new DOMException('caller cancelled', 'AbortError');
+  const registration = registerMapLibreWebMcpTools(registrationOptions(context, {
+    signal: controller.signal,
+  }));
+
+  await context.firstStarted.promise;
+  controller.abort(reason);
+  context.firstFinished.resolve();
+
+  await assert.rejects(registration, (error: unknown) => error === reason);
+  assert.equal(context.calls, 1);
+  assert.deepEqual([...context.tools.keys()], []);
 });

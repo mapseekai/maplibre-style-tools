@@ -77,15 +77,23 @@ export async function registerMapLibreWebMcpTools(
 
   options.signal?.addEventListener('abort', close, { once: true });
 
+  const throwIfClosed = (): void => {
+    if (!closed && !controller.signal.aborted) return;
+    throw options.signal?.aborted ? options.signal.reason : controller.signal.reason;
+  };
+
   try {
     for (const tool of tools) {
+      throwIfClosed();
       await modelContext.registerTool(tool, {
         signal: controller.signal,
         ...(exposedTo === undefined ? {} : { exposedTo: [...exposedTo] }),
       });
+      throwIfClosed();
     }
   } catch (error) {
     close();
+    if (options.signal?.aborted) throw options.signal.reason;
     throw error;
   }
 
