@@ -66,9 +66,9 @@ or reload is stale: consumption safely returns `NOT_FOUND`; remove the stale
 native composer tag manually and submit only current tags.
 
 Native tag creation and submission remain manual acceptance checks because
-there is no public composer automation API. Behavioral verification uses
-headless Chromium for the page-owned flow and native-plugin manual acceptance
-for this handoff; it does not use Playwright runtime automation.
+there is no public composer automation API. Verify the page-owned flow with
+headless Chromium and verify the tag handoff manually in the native plugin
+environment; do not use Playwright runtime automation.
 
 See the [WebMCP draft](https://webmachinelearning.github.io/webmcp/) and the
 [OpenAI Site tools guide](https://help.openai.com/en/articles/20001423-using-site-tools-in-the-chatgpt-desktop-app).
