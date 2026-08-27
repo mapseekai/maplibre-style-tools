@@ -353,6 +353,66 @@ test('destroys a populated store through marker removal before listener teardown
   calls.length = 0;
 
   controller.destroy();
+  controller.destroy();
+
+  assert.deepEqual(calls, [
+    'highlight.clear:draft',
+    'store.remove',
+    'markers.remove',
+    'highlight.clearAll',
+    'map.off',
+    'map.removeControl',
+    'control.destroy',
+  ]);
+});
+
+test('aborts a populated store once before listener teardown and makes destroy a no-op', () => {
+  const calls: string[] = [];
+  const markers: PendingCommentMarkerView = {
+    add() {}, remove() { calls.push('markers.remove'); }, clear() {}, destroy() {},
+  };
+  const store = new PendingMapCommentStore({
+    capacity: 1,
+    idFactory: () => 'selection-id',
+    onRemove(comment) { calls.push('store.remove'); markers.remove(comment.selectionId); },
+  });
+  store.add({
+    comment: 'Abort me cleanly',
+    scope: 'layer',
+    feature: { layerId: 'places', sourceId: 'source', lngLat: [0, 0], properties: {} },
+  });
+  const map = {
+    addControl() { calls.push('map.addControl'); },
+    removeControl() { calls.push('map.removeControl'); },
+    on() { calls.push('map.on'); },
+    off() { calls.push('map.off'); },
+  } as unknown as MapLibreMap;
+  const lifetime = new AbortController();
+  const controller = createMapCommentController({
+    map,
+    store,
+    markers,
+    highlight: {
+      show() {},
+      clear(scope) { calls.push(`highlight.clear:${scope}`); },
+      clearAll() { calls.push('highlight.clearAll'); },
+      restore() {},
+      destroy() {},
+    },
+    status: { textContent: '' } as HTMLElement,
+    signal: lifetime.signal,
+    createControl: () => ({
+      element: {} as HTMLElement,
+      setEnabled() {},
+      setActive() {},
+      focus() {},
+      destroy() { calls.push('control.destroy'); },
+    }),
+  });
+  calls.length = 0;
+
+  lifetime.abort();
+  controller.destroy();
 
   assert.deepEqual(calls, [
     'highlight.clear:draft',
