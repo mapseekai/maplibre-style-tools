@@ -7,17 +7,14 @@ export interface FeatureReference {
   readonly properties: Readonly<Record<string, string | number | boolean | null>>;
 }
 
-type Scalar = string | number | boolean | null;
+export type Scalar = string | number | boolean | null;
 
-export type MapCommentTargetInput =
-  | { readonly scope: 'feature'; readonly feature: FeatureReference & { readonly featureId: string | number } }
-  | { readonly scope: 'property-class'; readonly feature: FeatureReference; readonly selector: { readonly property: string; readonly value: Scalar } }
-  | { readonly scope: 'layer'; readonly feature: FeatureReference };
+export type PendingMapCommentInput =
+  | { readonly comment: string; readonly scope: 'feature'; readonly feature: FeatureReference & { readonly featureId: string | number } }
+  | { readonly comment: string; readonly scope: 'property-class'; readonly feature: FeatureReference; readonly selector: { readonly property: string; readonly value: Scalar } }
+  | { readonly comment: string; readonly scope: 'layer'; readonly feature: FeatureReference };
 
-export type MapCommentTarget =
-  | { readonly selectionId: string; readonly scope: 'feature'; readonly feature: FeatureReference & { readonly featureId: string | number } }
-  | { readonly selectionId: string; readonly scope: 'property-class'; readonly feature: FeatureReference; readonly selector: { readonly property: string; readonly value: Scalar } }
-  | { readonly selectionId: string; readonly scope: 'layer'; readonly feature: FeatureReference };
+export type PendingMapComment = PendingMapCommentInput & { readonly selectionId: string };
 
 const MAX_PROPERTIES = 20;
 const MAX_PROPERTY_NAME_LENGTH = 80;
@@ -33,6 +30,14 @@ const isScalar = (value: unknown): value is Scalar => value === null
   || (typeof value === 'number' && Number.isFinite(value));
 
 const boundedString = (value: string, length = MAX_STRING_LENGTH): string => value.slice(0, length);
+
+const boundedComment = (value: unknown): string => {
+  if (typeof value !== 'string') throw new TypeError('Comment must be a string.');
+  const trimmed = value.trim();
+  if (trimmed.length === 0) throw new TypeError('Comment must be non-empty.');
+  if (trimmed.length > 1_000) throw new RangeError('Comment must not exceed 1,000 characters.');
+  return trimmed;
+};
 
 const requiredIdentifier = (value: unknown, name: string, maximumLength = MAX_PROPERTY_NAME_LENGTH): string => {
   if (isBoundedIdentity(value, maximumLength)) return value;
@@ -73,11 +78,13 @@ const frozenFeature = (feature: FeatureReference): FeatureReference => {
   });
 };
 
-const frozenTarget = (selectionId: string, input: MapCommentTargetInput): MapCommentTarget => {
+const frozenComment = (selectionId: string, input: PendingMapCommentInput): PendingMapComment => {
+  const comment = boundedComment(input.comment);
   const feature = frozenFeature(input.feature);
   if (input.scope === 'feature') {
     if (feature.featureId === undefined) throw new TypeError('Feature scope requires a stable feature ID.');
     return Object.freeze({
+      comment,
       selectionId,
       scope: 'feature' as const,
       feature: Object.freeze({ ...feature, featureId: feature.featureId }),
@@ -87,6 +94,7 @@ const frozenTarget = (selectionId: string, input: MapCommentTargetInput): MapCom
     const property = requiredIdentifier(input.selector?.property, 'Property selector');
     if (!isScalar(input.selector?.value)) throw new TypeError('Property selector value must be scalar.');
     return Object.freeze({
+      comment,
       selectionId,
       scope: 'property-class' as const,
       feature,
@@ -96,19 +104,20 @@ const frozenTarget = (selectionId: string, input: MapCommentTargetInput): MapCom
       }),
     });
   }
-  return Object.freeze({ selectionId, scope: 'layer' as const, feature });
+  return Object.freeze({ comment, selectionId, scope: 'layer' as const, feature });
 };
 
-export class CommentTargetStore {
+export class PendingMapCommentStore {
   readonly #capacity: number;
   readonly #idFactory: () => string;
-  readonly #onRemove?: (target: MapCommentTarget) => void;
-  readonly #targets = new Map<string, MapCommentTarget>();
+  readonly #onRemove?: (comment: PendingMapComment) => void;
+  readonly #comments = new Map<string, PendingMapComment>();
+  readonly #issuedIds = new Set<string>();
 
   constructor(options: {
     capacity: number;
     idFactory(): string;
-    onRemove?(target: MapCommentTarget): void;
+    onRemove?(comment: PendingMapComment): void;
   }) {
     if (!Number.isInteger(options.capacity) || options.capacity < 1 || options.capacity > MAX_PROPERTIES) {
       throw new RangeError(`Comment target capacity must be an integer between 1 and ${MAX_PROPERTIES}.`);
@@ -119,27 +128,26 @@ export class CommentTargetStore {
   }
 
   get size(): number {
-    return this.#targets.size;
+    return this.#comments.size;
   }
 
-  add(input: MapCommentTargetInput): MapCommentTarget {
-    const selectionId = requiredIdentifier(this.#idFactory(), 'Selection ID');
-    if (this.#targets.has(selectionId)) throw new Error(`Comment target ID already exists: ${selectionId}`);
-    const target = frozenTarget(selectionId, input);
-    this.#targets.set(selectionId, target);
-    while (this.#targets.size > this.#capacity) {
-      const oldest = this.#targets.values().next().value as MapCommentTarget | undefined;
-      if (oldest === undefined) break;
-      this.remove(oldest.selectionId);
+  add(input: PendingMapCommentInput): PendingMapComment {
+    if (this.#comments.size >= this.#capacity) {
+      throw new RangeError('Pending map comment capacity has been reached.');
     }
-    return target;
+    const selectionId = requiredIdentifier(this.#idFactory(), 'Selection ID');
+    if (this.#issuedIds.has(selectionId)) throw new Error(`Pending map comment ID already issued: ${selectionId}`);
+    const comment = frozenComment(selectionId, input);
+    this.#issuedIds.add(selectionId);
+    this.#comments.set(selectionId, comment);
+    return comment;
   }
 
-  get(selectionId: string): MapCommentTarget | undefined {
-    return this.#targets.get(selectionId);
+  get(selectionId: string): PendingMapComment | undefined {
+    return this.#comments.get(selectionId);
   }
 
-  consumeMany(selectionIds: readonly string[]): readonly MapCommentTarget[] {
+  consumeMany(selectionIds: readonly string[]): readonly PendingMapComment[] {
     if (!Array.isArray(selectionIds) || selectionIds.length < 1 || selectionIds.length > MAX_PROPERTIES) {
       throw new TypeError(`Selection context IDs must contain between 1 and ${MAX_PROPERTIES} items.`);
     }
@@ -151,24 +159,24 @@ export class CommentTargetStore {
       if (seen.has(selectionId)) throw new TypeError('Selection context IDs must be unique.');
       seen.add(selectionId);
     }
-    const targets = selectionIds.map((selectionId) => {
-      const target = this.#targets.get(selectionId);
-      if (target === undefined) throw new TypeError('A referenced selection context is unknown.');
-      return frozenTarget(selectionId, target);
+    const comments = selectionIds.map((selectionId) => {
+      const comment = this.#comments.get(selectionId);
+      if (comment === undefined) throw new TypeError('A referenced selection context is unknown.');
+      return comment;
     });
     for (const selectionId of selectionIds) this.remove(selectionId);
-    return Object.freeze(targets);
+    return Object.freeze(comments);
   }
 
   remove(selectionId: string): boolean {
-    const target = this.#targets.get(selectionId);
-    if (target === undefined) return false;
-    this.#targets.delete(selectionId);
-    this.#onRemove?.(target);
+    const comment = this.#comments.get(selectionId);
+    if (comment === undefined) return false;
+    this.#comments.delete(selectionId);
+    this.#onRemove?.(comment);
     return true;
   }
 
   clear(): void {
-    for (const selectionId of [...this.#targets.keys()]) this.remove(selectionId);
+    for (const selectionId of [...this.#comments.keys()]) this.remove(selectionId);
   }
 }

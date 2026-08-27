@@ -2,37 +2,43 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  CommentTargetStore,
+  PendingMapCommentStore,
   type FeatureReference,
-  type MapCommentTargetInput,
-  type MapCommentTarget,
+  type PendingMapComment,
+  type PendingMapCommentInput,
 } from './comment-targets.js';
 
-let nextId = 0;
-const idFactory = () => `map-selection-${++nextId}`;
-const feature = {
+const mutableFeature = () => ({
   layerId: 'places-fill',
   sourceId: 'places',
   featureId: 1,
-  lngLat: [0, 0] as const,
-  properties: { class: 'park', name: 'original' },
-} satisfies FeatureReference;
+  lngLat: [0, 0] as [number, number],
+  properties: { class: 'park', name: 'original' } as Record<string, string>,
+});
+
+const feature = mutableFeature() satisfies FeatureReference;
 const withoutId = { ...feature, featureId: undefined };
-const featureTarget = { scope: 'feature' as const, feature };
-const layerTarget = { scope: 'layer' as const, feature };
+const featureTarget = { comment: 'Feature comment', scope: 'feature' as const, feature };
+const layerTarget = { comment: 'Layer comment', scope: 'layer' as const, feature };
 const createStore = (
+  ids: string[] = ['map-selection-a', 'map-selection-b', 'map-selection-c'],
   capacity = 20,
-  onRemove?: (target: MapCommentTarget) => void,
-) => new CommentTargetStore({ capacity, idFactory, onRemove });
+  onRemove?: (comment: PendingMapComment) => void,
+) => new PendingMapCommentStore({
+  capacity,
+  idFactory: () => ids.shift() ?? 'map-selection-exhausted',
+  onRemove,
+});
 
 test('feature scope requires a stable feature id', () => {
   const store = createStore();
-  assert.throws(() => store.add({ scope: 'feature', feature: withoutId } as unknown as MapCommentTargetInput), /feature ID/u);
+  assert.throws(() => store.add({ comment: 'Feature comment', scope: 'feature', feature: withoutId } as unknown as PendingMapCommentInput), /feature ID/u);
 });
 
 test('property class accepts only scalar properties', () => {
   const store = createStore();
   assert.throws(() => store.add({
+    comment: 'Property comment',
     scope: 'property-class',
     feature,
     selector: {
@@ -42,26 +48,41 @@ test('property class accepts only scalar properties', () => {
   }), /scalar/u);
 });
 
-test('created targets are immutable snapshots', () => {
-  const store = createStore();
-  const mutableFeature = structuredClone(feature);
-  const target = store.add({ scope: 'layer', feature: mutableFeature });
-  mutableFeature.properties.name = 'changed';
-  assert.equal(target.feature.properties.name, 'original');
-  assert.throws(() => { (target as { scope: string }).scope = 'feature'; });
+test('stores trimmed comments and immutable feature snapshots', () => {
+  const feature = mutableFeature();
+  const pending = createStore().add({
+    comment: '  Make this layer quieter.  ', scope: 'layer', feature,
+  });
+  feature.properties.name = 'changed';
+
+  assert.equal(pending.comment, 'Make this layer quieter.');
+  assert.equal(pending.feature.properties.name, 'original');
+  assert.throws(() => { (pending as { comment: string }).comment = 'changed'; });
 });
 
-test('capacity evicts the oldest unconsumed target', () => {
-  const store = createStore(2);
-  const first = store.add(layerTarget);
-  store.add(layerTarget);
-  store.add(layerTarget);
-  assert.equal(store.get(first.selectionId), undefined);
+test('accepts exact bounds and rejects comments outside them', () => {
+  const store = createStore();
+  assert.equal(store.add({ comment: 'x', scope: 'layer', feature: mutableFeature() }).comment, 'x');
+  assert.equal(store.add({ comment: 'x'.repeat(1_000), scope: 'layer', feature: mutableFeature() }).comment.length, 1_000);
+  assert.throws(() => store.add({ comment: '   ', scope: 'layer', feature: mutableFeature() }), /non-empty/u);
+  assert.throws(() => store.add({ comment: 'x'.repeat(1_001), scope: 'layer', feature: mutableFeature() }), /1,000/u);
+});
+
+test('rejects capacity without evicting or reusing an issued id', () => {
+  const store = createStore(['map-selection-a', 'map-selection-b', 'map-selection-a'], 2);
+  const first = store.add({ comment: 'One', scope: 'layer', feature: mutableFeature() });
+  store.add({ comment: 'Two', scope: 'layer', feature: mutableFeature() });
+  assert.throws(() => store.add({ comment: 'Three', scope: 'layer', feature: mutableFeature() }), /capacity/u);
+  assert.equal(store.get(first.selectionId), first);
+
+  store.remove('map-selection-a');
+  assert.throws(() => store.add({ comment: 'Reused', scope: 'layer', feature: mutableFeature() }), /already issued/u);
 });
 
 test('preserves exact whitespace-bearing layer, source, source-layer, and property identities', () => {
   const store = createStore();
   const target = store.add({
+    comment: 'Identity comment',
     scope: 'property-class',
     feature: {
       ...feature,
@@ -85,6 +106,7 @@ test('preserves exact whitespace-bearing layer, source, source-layer, and proper
 test('feature scope accepts a whitespace-only stable feature id', () => {
   const store = createStore();
   const target = store.add({
+    comment: 'Feature comment',
     scope: 'feature',
     feature: { ...feature, featureId: '   ' },
   });
@@ -94,7 +116,7 @@ test('feature scope accepts a whitespace-only stable feature id', () => {
 
 test('consumeMany returns contexts and removes their UI state atomically', () => {
   let removed = 0;
-  const store = createStore(20, () => { removed += 1; });
+  const store = createStore(undefined, 20, () => { removed += 1; });
   const one = store.add(featureTarget);
   const two = store.add(layerTarget);
 
@@ -106,9 +128,17 @@ test('consumeMany returns contexts and removes their UI state atomically', () =>
 });
 
 test('consumeMany rejects duplicate or unknown ids without deleting any target', () => {
-  const store = createStore();
+  let removed = 0;
+  const store = createStore(undefined, 20, () => { removed += 1; });
   const one = store.add(featureTarget);
+  const two = store.add(layerTarget);
 
   assert.throws(() => store.consumeMany([one.selectionId, 'unknown']), /unknown/u);
-  assert.equal(store.get(one.selectionId)?.selectionId, one.selectionId);
+  assert.equal(store.get(one.selectionId), one);
+  assert.equal(store.get(two.selectionId), two);
+  assert.equal(removed, 0);
+  assert.throws(() => store.consumeMany([one.selectionId, one.selectionId]), /unique/u);
+  assert.equal(store.get(one.selectionId), one);
+  assert.equal(store.get(two.selectionId), two);
+  assert.equal(removed, 0);
 });

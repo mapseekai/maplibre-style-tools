@@ -4,7 +4,7 @@ import test from 'node:test';
 import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
 
 import { projectInvocationEvent } from './activity-log.js';
-import { CommentTargetStore, type FeatureReference } from './comment-targets.js';
+import { PendingMapCommentStore, type FeatureReference } from './comment-targets.js';
 import {
   addCommentTargetSafely,
   createWebMcpExampleLifetimes,
@@ -77,13 +77,13 @@ test('reports a bounded safe message when target creation fails', () => {
 test('registers and executes the one-shot selection consumption tool', async () => {
   let nextId = 0;
   let removed = 0;
-  const store = new CommentTargetStore({
+  const store = new PendingMapCommentStore({
     capacity: 20,
     idFactory: () => `map-selection-${++nextId}`,
     onRemove: () => { removed += 1; },
   });
-  const feature = store.add({ scope: 'feature', feature: selectionFeature });
-  const layer = store.add({ scope: 'layer', feature: selectionFeature });
+  const feature = store.add({ comment: 'Feature comment', scope: 'feature', feature: selectionFeature });
+  const layer = store.add({ comment: 'Layer comment', scope: 'layer', feature: selectionFeature });
   let tool: RegisteredTool | undefined;
   const modelContext = {
     registerTool: async (nextTool: RegisteredTool) => { tool = nextTool; },
@@ -120,7 +120,7 @@ test('keeps reset and picker active when custom registration removes core tools'
   let pickerCalls = 0;
   const picker = new EventTarget();
   picker.addEventListener('click', () => { pickerCalls += 1; }, { signal: lifetimes.page.signal });
-  const store = new CommentTargetStore({ capacity: 20, idFactory: () => 'map-selection-1' });
+  const store = new PendingMapCommentStore({ capacity: 20, idFactory: () => 'map-selection-1' });
   const modelContext = {
     registerTool: async () => { throw new Error('custom registration failed'); },
   };

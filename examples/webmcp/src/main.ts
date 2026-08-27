@@ -9,9 +9,9 @@ import { z } from 'zod';
 
 import { createActivityLog } from './activity-log.js';
 import {
-  CommentTargetStore,
+  PendingMapCommentStore,
   type FeatureReference,
-  type MapCommentTarget,
+  type PendingMapComment,
 } from './comment-targets.js';
 import { createDemoStyle } from './demo-style.js';
 import { featureLabel, pickRenderedFeatures } from './feature-picker.js';
@@ -28,9 +28,9 @@ export function renderWebMcpSupport(
 }
 
 export const addCommentTargetSafely = (
-  add: () => MapCommentTarget,
+  add: () => PendingMapComment,
   onError: (message: string) => void,
-): MapCommentTarget | undefined => {
+): PendingMapComment | undefined => {
   try {
     return add();
   } catch {
@@ -60,7 +60,7 @@ const consumeSelectionIdsSchema = z.strictObject({
 
 export const registerMapSelectionConsumptionTool = async (
   modelContext: ModelContextToolRegistrar,
-  store: CommentTargetStore,
+  store: PendingMapCommentStore,
   signal: AbortSignal,
 ): Promise<void> => modelContext.registerTool({
   name: 'consumeMapSelectionContexts',
@@ -129,7 +129,7 @@ export const registerCoreWebMcpToolsSafely = async (
 
 export const registerMapSelectionConsumptionToolSafely = async (
   modelContext: ModelContextToolRegistrar,
-  store: CommentTargetStore,
+  store: PendingMapCommentStore,
   toolsLifetime: AbortController,
 ): Promise<boolean> => {
   try {
@@ -159,7 +159,7 @@ const renderToolGroups = (host: HTMLElement, toolNames: readonly string[]): void
   ]));
 };
 
-const targetScopeLabel = (target: MapCommentTarget): string => {
+const targetScopeLabel = (target: PendingMapComment): string => {
   if (target.scope === 'feature') return 'Single feature';
   if (target.scope === 'property-class') return 'Matching property value in this layer';
   return 'All features in this layer';
@@ -170,7 +170,7 @@ const targetLocation = (feature: FeatureReference): string => `${feature.lngLat[
 const targetProperties = (feature: FeatureReference): string => Object.entries(feature.properties)
   .map(([name, value]) => `${name}=${String(value)}`).join(', ') || 'none';
 
-const targetArticle = (target: MapCommentTarget, onRemove: () => void): HTMLElement => {
+const targetArticle = (target: PendingMapComment, onRemove: () => void): HTMLElement => {
   const article = document.createElement('article');
   article.className = 'comment-target-card';
   article.dataset.testid = 'comment-target-card';
@@ -238,7 +238,7 @@ const startWebMcpExample = async (): Promise<void> => {
   controls.className = 'comment-target-controls';
   const scope = document.createElement('select');
   scope.setAttribute('aria-label', 'Comment target scope');
-  const addScopeOption = (value: MapCommentTarget['scope'], text: string): HTMLOptionElement => {
+  const addScopeOption = (value: PendingMapComment['scope'], text: string): HTMLOptionElement => {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = text;
@@ -259,13 +259,13 @@ const startWebMcpExample = async (): Promise<void> => {
   targetHost.replaceChildren(...(targetTitle === null ? [] : [targetTitle]), targetStatus, candidateHost, controls, targetCards);
 
   const markers = new globalThis.Map<string, MapLibreMarker>();
-  const removeTargetVisuals = (target: MapCommentTarget): void => {
+  const removeTargetVisuals = (target: PendingMapComment): void => {
     markers.get(target.selectionId)?.remove();
     markers.delete(target.selectionId);
     targetCards.querySelector(`[data-selection-id="${CSS.escape(target.selectionId)}"]`)?.remove();
   };
   let targetId = 0;
-  const targets = new CommentTargetStore({
+  const targets = new PendingMapCommentStore({
     capacity: 20,
     idFactory: () => `map-selection-${++targetId}`,
     onRemove: removeTargetVisuals,
@@ -325,7 +325,7 @@ const startWebMcpExample = async (): Promise<void> => {
     selector.replaceChildren();
     renderControls();
   };
-  const renderTarget = (target: MapCommentTarget): void => {
+  const renderTarget = (target: PendingMapComment): void => {
     const markerElement = document.createElement('div');
     markerElement.className = 'comment-target-marker';
     markerElement.textContent = target.selectionId;
@@ -342,14 +342,14 @@ const startWebMcpExample = async (): Promise<void> => {
     const selectedFeature = currentFeature;
     if (selectedFeature === undefined) return;
     const target = addCommentTargetSafely(() => scope.value === 'feature' && selectedFeature.featureId !== undefined
-      ? targets.add({ scope: 'feature', feature: selectedFeature as FeatureReference & { readonly featureId: string | number } })
+      ? targets.add({ comment: 'Pending map comment.', scope: 'feature', feature: selectedFeature as FeatureReference & { readonly featureId: string | number } })
       : scope.value === 'property-class'
         ? (() => {
           const value = selectedFeature.properties[selector.value];
           if (value === undefined) throw new TypeError('The selected property is unavailable.');
-          return targets.add({ scope: 'property-class', feature: selectedFeature, selector: { property: selector.value, value } });
+          return targets.add({ comment: 'Pending map comment.', scope: 'property-class', feature: selectedFeature, selector: { property: selector.value, value } });
         })()
-        : targets.add({ scope: 'layer', feature: selectedFeature }), (message) => { targetStatus.textContent = message; });
+        : targets.add({ comment: 'Pending map comment.', scope: 'layer', feature: selectedFeature }), (message) => { targetStatus.textContent = message; });
     if (target === undefined) return;
     renderTarget(target);
     targetStatus.textContent = `Created unsubmitted comment target ${target.selectionId}.`;
