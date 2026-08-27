@@ -14,7 +14,8 @@
     "src/bridge/outbound.ts",
     "src/bridge/resource-policy.ts",
     "src/bridge/browser-runtime.ts",
-    "src/adapters/maplibre/**/*.ts"
+    "src/adapters/maplibre/**/*.ts",
+    "src/webmcp/**/*.ts"
   ],
   "exclude": [
     "src/**/*.test.ts",
