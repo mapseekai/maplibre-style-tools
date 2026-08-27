@@ -111,7 +111,6 @@ export const pickRenderedFeatures = (
     truncated: false,
   });
 };
-
 export const propertyOptionsFor = (
   feature: FeatureReference,
 ): readonly { readonly property: string; readonly value: Scalar; readonly label: string }[] => Object.freeze(
