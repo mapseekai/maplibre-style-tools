@@ -65,3 +65,8 @@ export type WebMcpToolExecutor = (
   input: unknown,
   signal: AbortSignal,
 ) => Promise<CapabilityResult<unknown>>;
+
+export interface WebMcpExecutionBoundary {
+  readonly execute: WebMcpToolExecutor;
+  close(): void;
+}
