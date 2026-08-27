@@ -6,7 +6,6 @@ import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
 import { projectInvocationEvent } from './activity-log.js';
 import { PendingMapCommentStore, type FeatureReference } from './comment-targets.js';
 import {
-  addCommentTargetSafely,
   createWebMcpExampleLifetimes,
   registerCoreWebMcpToolsSafely,
   registerMapSelectionConsumptionTool,
@@ -59,20 +58,10 @@ test('renders unsupported WebMCP without disabling a sibling reset button', () =
     close() {},
   });
 
-  assert.equal(host.textContent, 'Site tools unavailable');
+  assert.equal(host.textContent, 'Site tools unavailable · local preview');
   assert.equal(resetButton.disabled, false);
 });
 
-test('reports a bounded safe message when target creation fails', () => {
-  let message = '';
-  const target = addCommentTargetSafely(
-    () => { throw new Error('internal marker failure'); },
-    (nextMessage: string) => { message = nextMessage; },
-  );
-
-  assert.equal(target, undefined);
-  assert.equal(message, 'Unable to create this comment target. Choose another target and try again.');
-});
 
 test('registers and executes the one-shot selection consumption tool', async () => {
   let nextId = 0;

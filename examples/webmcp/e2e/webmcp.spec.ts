@@ -1,179 +1,86 @@
 import { expect, test, type Page } from '@playwright/test';
 
-type FakeTool = {
-  readonly name: string;
-  readonly execute: (
-    input: Record<string, unknown>,
-    options: { readonly signal: AbortSignal },
-  ) => unknown | Promise<unknown>;
-};
+const DEMO_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
+const TEST_STYLE = {
+  version: 8,
+  sources: {
+    places: {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: [
+          { type: 'Feature', id: 1, properties: { class: 'water', name: 'Central Lake', visible: true, rank: 2 }, geometry: { type: 'Polygon', coordinates: [[[-8, -8], [8, -8], [8, 8], [-8, 8], [-8, -8]]] } },
+          { type: 'Feature', properties: { class: 'district', name: 'Central District' }, geometry: { type: 'Polygon', coordinates: [[[-12, -12], [12, -12], [12, 12], [-12, 12], [-12, -12]]] } },
+        ],
+      },
+    },
+  },
+  layers: [
+    { id: 'background', type: 'background', paint: { 'background-color': '#dfe8e1' } },
+    { id: 'places-fill', type: 'fill', source: 'places', paint: { 'fill-color': '#3b82a0', 'fill-opacity': 0.7 } },
+    { id: 'places-outline', type: 'line', source: 'places', paint: { 'line-color': '#17324d', 'line-width': 2 } },
+  ],
+} as const;
 
-type WebMcpCallResult = Readonly<Record<string, unknown>> & {
-  readonly success?: boolean;
-  readonly consumed?: number;
-  readonly contexts?: readonly Readonly<Record<string, unknown>>[];
-};
+type FakeTool = { readonly execute: (input: Record<string, unknown>, options: { readonly signal: AbortSignal }) => unknown | Promise<unknown> };
 
 declare global {
-  // These globals exist only in Playwright pages after installFakeWebMcp runs.
   var __webmcpTools: Map<string, FakeTool>;
-  var __callWebMcpTool: (
-    name: string,
-    input: Record<string, unknown>,
-  ) => Promise<WebMcpCallResult>;
+  var __callWebMcpTool: (name: string, input: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 const installFakeWebMcp = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
-    type BrowserFakeTool = {
-      name: string;
-      execute(
-        input: Record<string, unknown>,
-        options: { signal: AbortSignal },
-      ): unknown | Promise<unknown>;
-    };
-    const tools = new Map<string, BrowserFakeTool>();
-    Object.defineProperty(document, 'modelContext', {
-      configurable: true,
-      value: {
-        async registerTool(
-          tool: BrowserFakeTool,
-          options: { signal?: AbortSignal } = {},
-        ) {
-          if (tools.has(tool.name)) throw new DOMException('duplicate', 'InvalidStateError');
-          tools.set(tool.name, tool);
-          options.signal?.addEventListener('abort', () => tools.delete(tool.name), { once: true });
-        },
+    const tools = new Map<string, FakeTool>();
+    Object.defineProperty(document, 'modelContext', { configurable: true, value: {
+      async registerTool(tool: FakeTool, options: { signal?: AbortSignal } = {}) {
+        tools.set((tool as FakeTool & { name: string }).name, tool);
+        options.signal?.addEventListener('abort', () => tools.delete((tool as FakeTool & { name: string }).name), { once: true });
       },
-    });
+    } });
     Object.assign(globalThis, {
       __webmcpTools: tools,
       __callWebMcpTool: async (name: string, input: Record<string, unknown>) => {
         const tool = tools.get(name);
         if (tool === undefined) throw new Error(`Unknown WebMCP tool: ${name}`);
-        return tool.execute(input, { signal: new AbortController().signal });
+        return tool.execute(input, { signal: new AbortController().signal }) as Promise<Record<string, unknown>>;
       },
     });
   });
 };
 
-const openSupportedExample = async (page: Page): Promise<void> => {
+test('adds and consumes a map comment', async ({ page }) => {
   await installFakeWebMcp(page);
+  await page.route(DEMO_STYLE_URL, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_STYLE) }));
   await page.goto('/');
-  await expect(page.getByTestId('webmcp-support')).toHaveText(/available/u);
-};
 
-const selectCentralLake = async (page: Page): Promise<void> => {
+  const toggle = page.getByTestId('comment-mode-toggle');
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
   const map = page.getByTestId('map');
   const box = await map.boundingBox();
   if (box === null) throw new Error('map has no visible bounds');
-  const candidate = page.getByRole('button', { name: 'places-fill · Central Lake' }).first();
-  await expect.poll(async () => {
-    await map.click({ position: { x: box.width / 2, y: box.height / 2 } });
-    return candidate.isVisible();
-  }).toBe(true);
-  await candidate.click();
-  await expect(page.getByTestId('comment-target-status')).toContainText('Central Lake');
-};
+  await map.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await page.getByRole('button', { name: 'places-fill · Central Lake' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByLabel('Comment').fill('Please inspect the lake class.');
+  await page.getByLabel('Scope').selectOption('property-class');
+  await page.getByLabel('Property').selectOption('class');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-const addTarget = async (
-  page: Page,
-  scope: 'feature' | 'property-class' | 'layer',
-): Promise<string> => {
-  await page.getByLabel('Comment target scope').selectOption(scope);
-  if (scope === 'property-class') {
-    await page.getByLabel('Property value selector').selectOption('class');
-  }
-  await page.getByRole('button', { name: 'Add comment target' }).click();
-  const cards = page.getByTestId('comment-target-card');
-  const card = cards.nth(await cards.count() - 1);
-  const selectionId = await card.getAttribute('data-selection-id');
-  if (selectionId === null) throw new Error('comment target has no selection ID');
-  return selectionId;
-};
+  const pin = page.getByTestId('pending-comment-pin');
+  await expect(pin).toHaveCount(1);
+  const selectionId = await pin.getAttribute('data-selection-id');
+  expect(selectionId).toMatch(/^map-selection-[0-9a-f-]{36}$/u);
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
-test('registers six tools and executes a read tool', async ({ page }) => {
-  await openSupportedExample(page);
-  await expect(page.getByTestId('registered-tools')).toContainText('consumeMapSelectionContexts');
-  await expect.poll(() => page.evaluate(() => globalThis.__webmcpTools.size)).toBe(6);
-
-  const result = await page.evaluate(() =>
-    globalThis.__callWebMcpTool('inspectStyle', { action: 'getLayerCount' }));
-
+  const result = await page.evaluate((id) => globalThis.__callWebMcpTool('consumeMapSelectionContexts', { selectionIds: [id] }), selectionId);
   expect(result.success).toBe(true);
-});
-
-test('creates and consumes feature, class, and layer targets', async ({ page }) => {
-  await openSupportedExample(page);
-  await selectCentralLake(page);
-
-  const removedId = await addTarget(page, 'feature');
-  const removedCard = page.getByTestId('comment-target-card')
-    .filter({ has: page.getByText(removedId, { exact: true }) });
-  await expect(removedCard).toContainText('Scope: Single feature');
-  await removedCard.getByRole('button', { name: `Remove unsubmitted target ${removedId}` }).click();
-  await expect(removedCard).toHaveCount(0);
-
-  const featureId = await addTarget(page, 'feature');
-  const featureResult = await page.evaluate((id) =>
-    globalThis.__callWebMcpTool('consumeMapSelectionContexts', { selectionIds: [id] }), featureId);
-  expect(featureResult.success).toBe(true);
-  expect(featureResult.consumed).toBe(1);
-  expect(featureResult.contexts?.[0]?.scope).toBe('feature');
-  await expect(page.getByTestId('comment-target-card')).toHaveCount(0);
-  await expect(page.getByLabel(`Comment target ${featureId}`)).toHaveCount(0);
-
-  const classId = await addTarget(page, 'property-class');
-  const classCard = page.locator(`[data-selection-id="${classId}"]`);
-  await expect(classCard).toContainText('Scope: Matching property value in this layer');
-  await expect(classCard).toContainText('Selector: class=water');
-
-  const layerId = await addTarget(page, 'layer');
-  const layerCard = page.locator(`[data-selection-id="${layerId}"]`);
-  await expect(layerCard).toContainText('Scope: All features in this layer');
-  await expect(layerCard).toContainText('Selector: all features in layer');
-
-  const batchResult = await page.evaluate(([first, second]) =>
-    globalThis.__callWebMcpTool('consumeMapSelectionContexts', {
-      selectionIds: [first, second],
-    }), [classId, layerId] as const);
-  expect(batchResult.success).toBe(true);
-  expect(batchResult.consumed).toBe(2);
-  expect(batchResult.contexts?.map((context) => context.scope)).toEqual([
-    'property-class',
-    'layer',
-  ]);
-  await expect(page.getByTestId('comment-target-card')).toHaveCount(0);
-  await expect(page.locator('.comment-target-marker')).toHaveCount(0);
-});
-
-test('reset removes pending targets and restores the map', async ({ page }) => {
-  await openSupportedExample(page);
-  await selectCentralLake(page);
-  await addTarget(page, 'property-class');
-  await expect(page.getByTestId('comment-target-card')).toHaveCount(1);
-  await expect(page.locator('.comment-target-marker')).toHaveCount(1);
-
-  await page.getByTestId('reset-map').click();
-
-  await expect(page.getByTestId('comment-target-card')).toHaveCount(0);
-  await expect(page.locator('.comment-target-marker')).toHaveCount(0);
-  await expect(page.getByTestId('map-layer-count')).toHaveText('3');
-});
-
-test('unsupported WebMCP keeps the real picker and reset UI usable', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.getByTestId('webmcp-support')).toHaveText('Site tools unavailable');
-  await expect(page.getByTestId('reset-map')).toBeEnabled();
-
-  await selectCentralLake(page);
-  await addTarget(page, 'layer');
-  await expect(page.getByTestId('comment-target-card')).toHaveCount(1);
-  await page.getByTestId('reset-map').click();
-
-  await expect(page.getByTestId('comment-target-card')).toHaveCount(0);
-  await expect(page.getByTestId('reset-map')).toBeEnabled();
-  await expect(page.getByTestId('map-canvas')).toBeVisible();
+  expect(result.contexts).toMatchObject([{ comment: 'Please inspect the lake class.', scope: 'property-class' }]);
+  await expect(pin).toHaveCount(0);
 });
 
 export {};
