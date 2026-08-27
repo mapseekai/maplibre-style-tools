@@ -114,7 +114,7 @@ export const createMapCommentController: CreateMapCommentController = (options) 
   };
   options.map.on('click', onClick);
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || !enabled || destroyed) return;
+    if (event.defaultPrevented || event.key !== 'Escape' || !enabled || destroyed) return;
     event.preventDefault();
     if (state === 'drafting') cancelDraft({ type: 'cancel' });
     else { state = reduceCommentMode(state, { type: 'escape' }); render(); }

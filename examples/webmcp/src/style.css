@@ -1,4 +1,4 @@
-:root { color: #142235; background: #dfe8e1; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+:root { --technical-drawer-open-height: min(55vh, calc(100vh - 2rem)); color: #142235; background: #dfe8e1; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 .app-shell, #map { height: 100vh; width: 100%; }
@@ -14,8 +14,9 @@ h1 { margin-bottom: 0; font-size: 1.15rem; }
 .map-error { top: 8rem; left: 1rem; padding: 1rem; border-left: 4px solid #b42318; border-radius: .4rem; background: white; box-shadow: 0 5px 18px rgb(20 34 53 / 18%); }
 .map-error p { margin-bottom: .5rem; }
 .technical-drawer { right: 1rem; bottom: 1rem; width: min(28rem, calc(100% - 2rem)); overflow: hidden; border-radius: .75rem; background: rgb(255 255 255 / 95%); box-shadow: 0 5px 18px rgb(20 34 53 / 18%); }
+.technical-drawer[open] { height: var(--technical-drawer-open-height); }
 .technical-drawer summary { padding: .8rem 1rem; cursor: pointer; font-weight: 700; }
-.drawer-content { max-height: 50vh; overflow: auto; padding: 0 1rem 1rem; }
+.drawer-content { max-height: calc(var(--technical-drawer-open-height) - 3rem); overflow: auto; padding: 0 1rem 1rem; }
 .status-grid { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .8rem; }
 .status-grid dd { margin: 0; overflow-wrap: anywhere; }
 .drawer-content section { margin-top: 1rem; }
@@ -36,7 +37,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focu
 .comment-popup { display: grid; min-width: 17rem; gap: .55rem; padding: .25rem; }
 .comment-popup h2 { margin: 0; font-size: 1rem; }
 .comment-popup textarea { min-height: 6rem; padding: .5rem; resize: vertical; }
-body:has(.technical-drawer[open]) .maplibregl-ctrl-bottom-right { bottom: calc(50vh + 1.5rem); }
+body:has(.technical-drawer[open]) .maplibregl-ctrl-bottom-right { bottom: calc(var(--technical-drawer-open-height) + 1rem); }
 .comment-popup select { width: 100%; padding: .4rem; }
 .comment-popup [role="alert"] { margin: 0; color: #b42318; font-weight: 600; }
 .maplibregl-ctrl-bottom-right { bottom: 6.5rem; }

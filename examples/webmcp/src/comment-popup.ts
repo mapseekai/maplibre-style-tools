@@ -151,7 +151,7 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
     }
     append(root, (() => { const element = button('Cancel'); element.addEventListener('click', cancel); return element; })());
   };
-  root.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } });
+  root.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); } });
   options.signal.addEventListener('abort', onAbort, { once: true });
   if (options.signal.aborted) close();
   else {
