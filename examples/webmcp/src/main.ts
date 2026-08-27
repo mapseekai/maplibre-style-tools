@@ -103,6 +103,30 @@ export const registerMapSelectionConsumptionTool = async (
   },
 }, { signal });
 
+export const createWebMcpExampleLifetimes = (): {
+  readonly page: AbortController;
+  readonly tools: AbortController;
+} => {
+  const page = new AbortController();
+  const tools = new AbortController();
+  page.signal.addEventListener('abort', () => tools.abort(), { once: true });
+  return { page, tools };
+};
+
+export const registerMapSelectionConsumptionToolSafely = async (
+  modelContext: ModelContextToolRegistrar,
+  store: CommentTargetStore,
+  toolsLifetime: AbortController,
+): Promise<boolean> => {
+  try {
+    await registerMapSelectionConsumptionTool(modelContext, store, toolsLifetime.signal);
+    return true;
+  } catch {
+    toolsLifetime.abort();
+    return false;
+  }
+};
+
 const requireElement = <ElementType extends HTMLElement>(testId: string): ElementType => {
   const element = document.querySelector(`[data-testid="${testId}"]`);
   if (!(element instanceof HTMLElement)) throw new Error(`Missing WebMCP example element: ${testId}`);
@@ -333,26 +357,26 @@ const startWebMcpExample = async (): Promise<void> => {
   };
   map.on('styledata', () => { void updateMapDetails(); });
 
-  const lifetime = new AbortController();
+  const { page: pageLifetime, tools: toolsLifetime } = createWebMcpExampleLifetimes();
   reset.addEventListener('click', () => {
     activity.clear();
     targets.clear();
     map.setStyle(createDemoStyle());
-  }, { signal: lifetime.signal });
+  }, { signal: pageLifetime.signal });
 
   const onMapClick = (event: MapMouseEvent): void => {
     renderCandidates(pickRenderedFeatures(map, event));
   };
   map.on('click', onMapClick);
-  window.addEventListener('pagehide', () => lifetime.abort(), { once: true, signal: lifetime.signal });
-  lifetime.signal.addEventListener('abort', () => {
+  window.addEventListener('pagehide', () => pageLifetime.abort(), { once: true, signal: pageLifetime.signal });
+  pageLifetime.signal.addEventListener('abort', () => {
     targets.clear();
     map.off('click', onMapClick);
   }, { once: true });
   const registration = await registerMapLibreWebMcpTools({
     getMap: (): MapLibreMap => map,
     allowMutations: true,
-    signal: lifetime.signal,
+    signal: toolsLifetime.signal,
     resourcePolicy: {
       baseUrl: document.baseURI,
       allowedResourceOrigins: [location.origin, 'https://demotiles.maplibre.org'],
@@ -363,13 +387,13 @@ const startWebMcpExample = async (): Promise<void> => {
   let supported = registration.supported;
   let toolNames: readonly string[] = registration.toolNames;
   if (registration.supported) {
-    try {
-      const modelContext = (document as Document & { readonly modelContext?: ModelContextToolRegistrar }).modelContext;
-      if (modelContext === undefined) throw new TypeError('WebMCP model context is unavailable.');
-      await registerMapSelectionConsumptionTool(modelContext, targets, lifetime.signal);
+    const modelContext = (document as Document & { readonly modelContext?: ModelContextToolRegistrar }).modelContext;
+    let customRegistered = false;
+    if (modelContext === undefined) toolsLifetime.abort();
+    else customRegistered = await registerMapSelectionConsumptionToolSafely(modelContext, targets, toolsLifetime);
+    if (customRegistered) {
       toolNames = [...registration.toolNames, 'consumeMapSelectionContexts'];
-    } catch {
-      lifetime.abort();
+    } else {
       supported = false;
       toolNames = [];
     }

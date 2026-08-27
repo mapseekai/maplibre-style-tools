@@ -5,7 +5,9 @@ import { projectInvocationEvent } from './activity-log.js';
 import { CommentTargetStore, type FeatureReference } from './comment-targets.js';
 import {
   addCommentTargetSafely,
+  createWebMcpExampleLifetimes,
   registerMapSelectionConsumptionTool,
+  registerMapSelectionConsumptionToolSafely,
   renderWebMcpSupport,
 } from './main.js';
 
@@ -103,4 +105,32 @@ test('registers and executes the one-shot selection consumption tool', async () 
   });
   assert.equal(store.size, 0);
   assert.equal(removed, 2);
+});
+
+test('keeps reset and picker active when custom registration removes core tools', async () => {
+  const lifetimes = createWebMcpExampleLifetimes();
+  let coreToolsRemoved = false;
+  lifetimes.tools.signal.addEventListener('abort', () => { coreToolsRemoved = true; }, { once: true });
+  let resetCalls = 0;
+  const reset = new EventTarget();
+  reset.addEventListener('click', () => { resetCalls += 1; }, { signal: lifetimes.page.signal });
+  let pickerCalls = 0;
+  const picker = new EventTarget();
+  picker.addEventListener('click', () => { pickerCalls += 1; }, { signal: lifetimes.page.signal });
+  const store = new CommentTargetStore({ capacity: 20, idFactory: () => 'map-selection-1' });
+  const modelContext = {
+    registerTool: async () => { throw new Error('custom registration failed'); },
+  };
+
+  const registered = await registerMapSelectionConsumptionToolSafely(modelContext, store, lifetimes.tools);
+
+  assert.equal(registered, false);
+  assert.equal(coreToolsRemoved, true);
+  assert.equal(lifetimes.page.signal.aborted, false);
+  reset.dispatchEvent(new Event('click'));
+  picker.dispatchEvent(new Event('click'));
+  assert.equal(resetCalls, 1);
+  assert.equal(pickerCalls, 1);
+  lifetimes.page.abort();
+  assert.equal(lifetimes.tools.signal.aborted, true);
 });
