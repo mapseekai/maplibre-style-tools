@@ -264,3 +264,103 @@ test('keeps pending comments when popup preview creation fails', () => {
   assert.equal(store.get(pending.selectionId), pending);
   assert.deepEqual(calls, ['highlight.clear:draft']);
 });
+
+test('returns focus to the map canvas when the popup invokes Cancel', () => {
+  let click!: (event: MapMouseEvent) => void;
+  let toggle!: () => void;
+  let cancel!: () => void;
+  let focusCalls = 0;
+  const map = {
+    addControl() {},
+    removeControl() {},
+    on(_event: 'click', listener: (event: MapMouseEvent) => void) { click = listener; },
+    off() {},
+    getCanvas() { return { focus() { focusCalls += 1; } }; },
+  } as unknown as MapLibreMap;
+  const controller = createMapCommentController({
+    map,
+    store: new PendingMapCommentStore({ capacity: 1, idFactory: () => 'selection-id' }),
+    markers: { add() {}, remove() {}, clear() {}, destroy() {} },
+    highlight: { show() {}, clear() {}, clearAll() {}, restore() {}, destroy() {} },
+    status: { textContent: '' } as HTMLElement,
+    signal: new AbortController().signal,
+    pick: () => ({
+      candidates: [{
+        feature: { layerId: 'places', sourceId: 'source', lngLat: [0, 0], properties: {} },
+        geometry: { type: 'Point', coordinates: [0, 0] },
+        label: 'places',
+      }],
+      truncated: false,
+    }),
+    openPopup(options) { cancel = options.onCancel; return { close() {} }; },
+    createControl(onToggle) {
+      toggle = onToggle;
+      return { element: {} as HTMLElement, setEnabled() {}, setActive() {}, focus() {}, destroy() {} };
+    },
+  });
+
+  controller.setEnabled(true);
+  toggle();
+  click({ lngLat: { lng: 0, lat: 0 } } as MapMouseEvent);
+  cancel();
+
+  assert.equal(focusCalls, 1);
+});
+
+test('destroys a populated store through marker removal before listener teardown', () => {
+  const calls: string[] = [];
+  const markers: PendingCommentMarkerView = {
+    add() {}, remove() { calls.push('markers.remove'); }, clear() {}, destroy() {},
+  };
+  const store = new PendingMapCommentStore({
+    capacity: 1,
+    idFactory: () => 'selection-id',
+    onRemove(comment) { calls.push('store.remove'); markers.remove(comment.selectionId); },
+  });
+  store.add({
+    comment: 'Destroy me cleanly',
+    scope: 'layer',
+    feature: { layerId: 'places', sourceId: 'source', lngLat: [0, 0], properties: {} },
+  });
+  const control: CommentModeControl = {
+    element: {} as HTMLElement,
+    setEnabled() {},
+    setActive() {},
+    focus() {},
+    destroy() { calls.push('control.destroy'); },
+  };
+  const map = {
+    addControl() { calls.push('map.addControl'); },
+    removeControl() { calls.push('map.removeControl'); },
+    on() { calls.push('map.on'); },
+    off() { calls.push('map.off'); },
+  } as unknown as MapLibreMap;
+  const controller = createMapCommentController({
+    map,
+    store,
+    markers,
+    highlight: {
+      show() {},
+      clear(scope) { calls.push(`highlight.clear:${scope}`); },
+      clearAll() { calls.push('highlight.clearAll'); },
+      restore() {},
+      destroy() {},
+    },
+    status: { textContent: '' } as HTMLElement,
+    signal: new AbortController().signal,
+    createControl: () => control,
+  });
+  calls.length = 0;
+
+  controller.destroy();
+
+  assert.deepEqual(calls, [
+    'highlight.clear:draft',
+    'store.remove',
+    'markers.remove',
+    'highlight.clearAll',
+    'map.off',
+    'map.removeControl',
+    'control.destroy',
+  ]);
+});

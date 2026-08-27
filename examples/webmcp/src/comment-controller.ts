@@ -103,7 +103,7 @@ export const createMapCommentController: CreateMapCommentController = (options) 
     state = reduceCommentMode(state, { type: 'map-click' }); render();
     try {
       popup = openPopup({ map: options.map, candidates: result.candidates, truncated: result.truncated, lngLat: [event.lngLat.lng, event.lngLat.lat], highlight: options.highlight, signal: options.signal,
-        onCancel: () => { popup = undefined; state = reduceCommentMode(state, { type: 'cancel' }); render(); },
+        onCancel: () => { popup = undefined; state = reduceCommentMode(state, { type: 'cancel' }); render(); options.map.getCanvas().focus(); },
         onAdd: (input, geometry) => {
           let added;
           try { added = options.store.add(input); options.markers.add(added, geometry); }

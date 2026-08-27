@@ -110,7 +110,6 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
     popup.remove();
     options.highlight.clear('draft');
     options.onCancel();
-    options.map.getCanvas().focus();
   };
   const close = (): void => { if (!closed) { closed = true; cleanup(); popup.remove(); options.highlight.clear('draft'); } };
   const selected = (): FeatureCandidate => state.candidates[state.selectedIndex]!;
