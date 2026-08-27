@@ -84,9 +84,8 @@ const startWebMcpExample = async (): Promise<void> => {
   const map = new Map({ container: 'map', style: DEMO_STYLE_URL, center: [0, 20], zoom: 1.5, attributionControl: {} });
   map.getCanvas().setAttribute('data-testid', 'map-canvas');
   const highlight = createCommentHighlight(map, pageLifetime.signal);
-  let store!: PendingMapCommentStore;
   const markers = createPendingCommentMarkerView({ map, highlight, createMarker: (element) => new Marker({ element }), onCancel: (selectionId) => { store.remove(selectionId); } });
-  store = new PendingMapCommentStore({ capacity: 20, idFactory: () => `map-selection-${crypto.randomUUID()}`, onRemove: ({ selectionId }) => markers.remove(selectionId) });
+  const store = new PendingMapCommentStore({ capacity: 20, idFactory: () => `map-selection-${crypto.randomUUID()}`, onRemove: ({ selectionId }) => markers.remove(selectionId) });
   const controller = createMapCommentController({ map, store, markers, highlight, status, signal: pageLifetime.signal });
   let loaded = false;
   let mapRevision = 0;
