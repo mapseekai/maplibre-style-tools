@@ -139,6 +139,27 @@ export class CommentTargetStore {
     return this.#targets.get(selectionId);
   }
 
+  consumeMany(selectionIds: readonly string[]): readonly MapCommentTarget[] {
+    if (!Array.isArray(selectionIds) || selectionIds.length < 1 || selectionIds.length > MAX_PROPERTIES) {
+      throw new TypeError(`Selection context IDs must contain between 1 and ${MAX_PROPERTIES} items.`);
+    }
+    const seen = new Set<string>();
+    for (const selectionId of selectionIds) {
+      if (typeof selectionId !== 'string' || selectionId.length === 0) {
+        throw new TypeError('Selection context IDs must be non-empty strings.');
+      }
+      if (seen.has(selectionId)) throw new TypeError('Selection context IDs must be unique.');
+      seen.add(selectionId);
+    }
+    const targets = selectionIds.map((selectionId) => {
+      const target = this.#targets.get(selectionId);
+      if (target === undefined) throw new TypeError('A referenced selection context is unknown.');
+      return frozenTarget(selectionId, target);
+    });
+    for (const selectionId of selectionIds) this.remove(selectionId);
+    return Object.freeze(targets);
+  }
+
   remove(selectionId: string): boolean {
     const target = this.#targets.get(selectionId);
     if (target === undefined) return false;

@@ -91,3 +91,24 @@ test('feature scope accepts a whitespace-only stable feature id', () => {
 
   assert.equal(target.feature.featureId, '   ');
 });
+
+test('consumeMany returns contexts and removes their UI state atomically', () => {
+  let removed = 0;
+  const store = createStore(20, () => { removed += 1; });
+  const one = store.add(featureTarget);
+  const two = store.add(layerTarget);
+
+  const result = store.consumeMany([one.selectionId, two.selectionId]);
+
+  assert.deepEqual(result.map((item) => item.selectionId), [one.selectionId, two.selectionId]);
+  assert.equal(store.size, 0);
+  assert.equal(removed, 2);
+});
+
+test('consumeMany rejects duplicate or unknown ids without deleting any target', () => {
+  const store = createStore();
+  const one = store.add(featureTarget);
+
+  assert.throws(() => store.consumeMany([one.selectionId, 'unknown']), /unknown/u);
+  assert.equal(store.get(one.selectionId)?.selectionId, one.selectionId);
+});

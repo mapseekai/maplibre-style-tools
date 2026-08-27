@@ -5,6 +5,7 @@ import {
 } from 'maplibre-style-tools/webmcp';
 import type { StyleDocument } from 'maplibre-style-tools/core';
 import type { Map as MapLibreMap, MapMouseEvent, Marker as MapLibreMarker } from 'maplibre-gl';
+import { z } from 'zod';
 
 import { createActivityLog } from './activity-log.js';
 import {
@@ -18,9 +19,11 @@ import { featureLabel, pickRenderedFeatures } from './feature-picker.js';
 export function renderWebMcpSupport(
   host: HTMLElement,
   registration: MapLibreWebMcpRegistration,
+  toolCount = registration.toolNames.length,
+  supported = registration.supported,
 ): void {
-  host.textContent = registration.supported
-    ? `Site tools available (${registration.toolNames.length})`
+  host.textContent = supported
+    ? `Site tools available (${toolCount})`
     : 'Site tools unavailable';
 }
 
@@ -35,6 +38,70 @@ export const addCommentTargetSafely = (
     return undefined;
   }
 };
+
+type ModelContextToolRegistrar = {
+  registerTool(
+    tool: {
+      readonly name: string;
+      readonly title: string;
+      readonly description: string;
+      readonly inputSchema: Readonly<Record<string, unknown>>;
+      readonly annotations: { readonly readOnlyHint: boolean; readonly untrustedContentHint: boolean };
+      readonly execute: (input: Record<string, unknown>, options: { readonly signal: AbortSignal }) => unknown | Promise<unknown>;
+    },
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<void>;
+};
+
+const consumeSelectionIdsSchema = z.strictObject({
+  selectionIds: z.array(z.string().min(1).max(128)).min(1).max(20)
+    .refine((ids) => new Set(ids).size === ids.length, 'selectionIds must be unique'),
+});
+
+export const registerMapSelectionConsumptionTool = async (
+  modelContext: ModelContextToolRegistrar,
+  store: CommentTargetStore,
+  signal: AbortSignal,
+): Promise<void> => modelContext.registerTool({
+  name: 'consumeMapSelectionContexts',
+  title: 'Consume map selection contexts',
+  description: 'Read and remove the immutable map selection contexts referenced by submitted browser comments. Call this before applying map changes from those comments.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      selectionIds: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        uniqueItems: true,
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+      },
+    },
+    required: ['selectionIds'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, untrustedContentHint: true },
+  execute: async (input) => {
+    const parsed = consumeSelectionIdsSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        success: false,
+        message: 'Selection context input is invalid.',
+        error: { code: 'INVALID_INPUT', message: 'Selection context input is invalid.' },
+      };
+    }
+    try {
+      const contexts = store.consumeMany(parsed.data.selectionIds);
+      return { success: true, consumed: contexts.length, contexts };
+    } catch {
+      return {
+        success: false,
+        message: 'A referenced selection context is unavailable.',
+        error: { code: 'NOT_FOUND', message: 'A referenced selection context is unavailable.' },
+      };
+    }
+  },
+}, { signal });
 
 const requireElement = <ElementType extends HTMLElement>(testId: string): ElementType => {
   const element = document.querySelector(`[data-testid="${testId}"]`);
@@ -293,8 +360,22 @@ const startWebMcpExample = async (): Promise<void> => {
     authorizeInvocation: () => true,
     onInvocation: (event) => activity.append(event),
   });
-  renderWebMcpSupport(support, registration);
-  renderToolGroups(registeredTools, registration.toolNames);
+  let supported = registration.supported;
+  let toolNames: readonly string[] = registration.toolNames;
+  if (registration.supported) {
+    try {
+      const modelContext = (document as Document & { readonly modelContext?: ModelContextToolRegistrar }).modelContext;
+      if (modelContext === undefined) throw new TypeError('WebMCP model context is unavailable.');
+      await registerMapSelectionConsumptionTool(modelContext, targets, lifetime.signal);
+      toolNames = [...registration.toolNames, 'consumeMapSelectionContexts'];
+    } catch {
+      lifetime.abort();
+      supported = false;
+      toolNames = [];
+    }
+  }
+  renderWebMcpSupport(support, registration, toolNames.length, supported);
+  renderToolGroups(registeredTools, toolNames);
   await updateMapDetails();
 };
 
