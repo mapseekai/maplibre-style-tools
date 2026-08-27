@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MapLibre WebMCP site tools</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="map" data-testid="map" aria-label="Deterministic MapLibre demonstration map"></section>
+      <aside class="control-pane" aria-label="WebMCP site tool status">
+        <header>
+          <p class="eyebrow">Standalone demo</p>
+          <h1>MapLibre WebMCP site tools</h1>
+          <p>Use an AI client that supports WebMCP to inspect or change this local map.</p>
+        </header>
+
+        <dl class="status-grid" aria-live="polite">
+          <dt>Browser security</dt><dd data-testid="secure-context">checking</dd>
+          <dt>Site tools</dt><dd data-testid="webmcp-support">checking</dd>
+          <dt>Map revision</dt><dd data-testid="map-revision">0</dd>
+          <dt>Style hash</dt><dd data-testid="map-style-hash">checking</dd>
+          <dt>Layers</dt><dd data-testid="map-layer-count">3</dd>
+        </dl>
+
+        <section aria-labelledby="registered-tools-title">
+          <h2 id="registered-tools-title">Registered site tools</h2>
+          <div data-testid="registered-tools">Waiting for WebMCP support.</div>
+        </section>
+
+        <section aria-labelledby="activity-title">
+          <h2 id="activity-title">Recent activity</h2>
+          <ol data-testid="activity-log" aria-live="polite"></ol>
+        </section>
+
+        <section aria-labelledby="map-actions-title">
+          <h2 id="map-actions-title">Map controls</h2>
+          <button type="button" data-testid="reset-map">Reset local map</button>
+        </section>
+
+        <section aria-labelledby="test-prompts-title">
+          <h2 id="test-prompts-title">Test prompts</h2>
+          <ul>
+            <li>List the layers in this map.</li>
+            <li>Change West Park to a darker green.</li>
+            <li>Reset the style after a map edit.</li>
+          </ul>
+        </section>
+
+        <section data-testid="comment-target-panel" aria-labelledby="comment-target-title">
+          <h2 id="comment-target-title">Comment targets</h2>
+          <p>Comment targets registered by extensions will appear here.</p>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
