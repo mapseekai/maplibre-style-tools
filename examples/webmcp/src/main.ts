@@ -105,7 +105,9 @@ const startWebMcpExample = async (): Promise<void> => {
   let toolNames: readonly string[] = registration.toolNames;
   if (registration.supported) {
     const modelContext = (document as Document & { readonly modelContext?: ModelContextToolRegistrar }).modelContext;
-    const customRegistered = modelContext === undefined ? false : await registerMapSelectionConsumptionToolSafely(modelContext, store, toolsLifetime);
+    const customRegistered = modelContext === undefined
+      ? (toolsLifetime.abort(), false)
+      : await registerMapSelectionConsumptionToolSafely(modelContext, store, toolsLifetime);
     if (customRegistered) toolNames = [...registration.toolNames, 'consumeMapSelectionContexts']; else { supported = false; toolNames = []; }
   }
   renderWebMcpSupport(support, registration, toolNames.length, supported); renderToolGroups(registeredTools, toolNames);

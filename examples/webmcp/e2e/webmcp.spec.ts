@@ -53,6 +53,7 @@ test('adds and consumes a map comment', async ({ page }) => {
   await installFakeWebMcp(page);
   await page.route(DEMO_STYLE_URL, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_STYLE) }));
   await page.goto('/');
+  await expect.poll(() => page.evaluate(() => globalThis.__webmcpTools.size)).toBe(6);
 
   const toggle = page.getByTestId('comment-mode-toggle');
   await expect(toggle).toBeDisabled();
