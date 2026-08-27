@@ -159,6 +159,7 @@ const targetProperties = (feature: FeatureReference): string => Object.entries(f
 const targetArticle = (target: MapCommentTarget, onRemove: () => void): HTMLElement => {
   const article = document.createElement('article');
   article.className = 'comment-target-card';
+  article.dataset.testid = 'comment-target-card';
   article.dataset.selectionId = target.selectionId;
   const heading = document.createElement('h3');
   heading.textContent = target.selectionId;
@@ -237,7 +238,7 @@ const startWebMcpExample = async (): Promise<void> => {
   selector.setAttribute('aria-label', 'Property value selector');
   const createTarget = document.createElement('button');
   createTarget.type = 'button';
-  createTarget.textContent = 'Create comment target';
+  createTarget.textContent = 'Add comment target';
   const targetCards = document.createElement('div');
   targetCards.className = 'comment-target-cards';
   controls.replaceChildren(scope, selector, createTarget);

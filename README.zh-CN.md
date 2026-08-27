@@ -7,8 +7,9 @@
 一个与传输层无关的能力层(`/capabilities`)定义了五个样式能力 ——
 `inspectStyle`、`applyStyleTransaction`、`applyStyleDocument`、
 `runMapCommand`、`queryMapFeatures` —— 包括它们严格的输入 schema、描述和有界
-的结果信封。三个薄接口对外暴露同一组能力:AI SDK 工具工厂(`/ai`)、MCP
-服务器(`/mcp`)以及 `maplibre-style` CLI。每个接口提供自己的样式权威源
+的结果信封。四个薄接口对外暴露同一组能力:AI SDK 工具工厂(`/ai`)、浏览器原生
+WebMCP Site tools(`/webmcp`)、MCP 服务器(`/mcp`)以及 `maplibre-style` CLI。
+每个接口提供自己的样式权威源
 (进程内地图、有界文档会话、桥接的实时地图或样式文件);能力语义只在核心中
 定义一次。
 
@@ -63,18 +64,20 @@ const result = await applyStyleTransaction.execute({
 
 ## 入口
 
-本包有七个受支持的入口:
+本包有八个受支持的入口:
 
 - `maplibre-style-tools` 包含非 AI 的包导出。
 - `maplibre-style-tools/core` 是与传输层无关的事务、校验、GeoJSON、分析与发现 API。它既不需要 DOM 也不需要 Node 环境类型。
 - `maplibre-style-tools/maplibre` 把已制备的事务应用到 MapLibre 地图上,并暴露有界的实时地图命令。它可以使用 DOM 类型,但不加载 Node 环境类型。
 - `maplibre-style-tools/capabilities` 是与传输层无关的能力层:五个能力执行器、严格的输入 schema、能力注册表、结果信封,以及各接口实现的 `StyleAuthority`/`RuntimeAuthority` 接口。它还导出 `createOpenAiFunctionTools` 和 `createAnthropicTools`,用于把注册表投影成 OpenAI function-calling 与 Anthropic Messages 的工具 schema,便于直接集成 LLM API。
 - `maplibre-style-tools/ai` 是 AI SDK 接口:`createMapLibreStyleTools` 把能力注册表包装成作用于进程内地图的五个 AI SDK 工具。
+- `maplibre-style-tools/webmcp` 为浏览器内的 MapLibre 地图注册页面级 Site tools。默认只读;只有显式设置 `allowMutations: true` 才会注册变更工具。
 - `maplibre-style-tools/mcp` 是 MCP 接口:有界服务器工厂、传输运行器、会话存储、实时桥接扩展与 URI 辅助函数。它暴露同样的五个能力,外加会话管理工具。
 - `maplibre-style-tools/bridge` 是浏览器安全的实时 MapLibre 客户端、协议、能力、哈希与资源策略 API。它不导出任何 Node WebSocket 服务器状态。
 
 `/ai` 与 `/mcp` 的声明图会有意加载它们所需的 Node 类型。如果不希望引入这层
-环境依赖,请直接引入根入口、`/core`、`/maplibre`、`/capabilities` 或 `/bridge`。
+环境依赖,请直接引入根入口、`/core`、`/maplibre`、`/capabilities`、`/webmcp`
+或 `/bridge`。`/webmcp` 仅用于浏览器,其公开声明不要求实验性 WebMCP 环境类型。
 
 ## 纯核心
 
@@ -300,6 +303,45 @@ maplibre-style-mcp --http --bearer-token "$TOKEN"
 
 两种传输都不接受路径或 URL 作为样式输入,也都不发起网络请求。包派生的服务器
 版本在构建期生成。
+
+## WebMCP Site tools
+
+当 AI agent 与用户在同一个浏览器页面中协作时,使用 `/webmcp`。默认注册刻意
+保持只读:只暴露 `inspectStyle` 与 `queryMapFeatures`,不注册任何变更工具。
+
+```ts
+import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
+
+const registration = await registerMapLibreWebMcpTools({
+  getMap: () => map,
+  signal: pageLifetime.signal,
+});
+
+if (!registration.supported) {
+  console.info('This browser does not expose WebMCP Site tools.');
+}
+```
+
+只有当页面同时提供调用授权策略和合适的资源策略时,才应设置
+`allowMutations: true`。该选择会额外注册 `applyStyleTransaction`、
+`applyStyleDocument` 与 `runMapCommand`;工具调用仍返回与其他接口相同的有界
+能力信封。
+
+WebMCP Site tools 是由兼容的内置浏览器发现的页面级 JavaScript 工具。它不同于
+通过 MCP wire protocol 与 MCP 宿主通信的 `/mcp` 服务器,也不同于通过受保护
+回环 WebSocket 把浏览器地图连接到该服务器的 `/bridge`。使用 WebMCP 不需要
+运行 MCP 服务器进程或浏览器桥接。
+
+`examples/webmcp` 示例选择开启变更能力,并为原生 Annotation 评论额外注册
+`consumeMapSelectionContexts`。提交的评论携带不可变的单要素、属性分类或整图层
+选择 ID;ChatGPT 先消费该上下文、移除对应卡片和标记,再调用核心工具更新地图。
+详见[原生 ChatGPT Desktop 检查清单](examples/webmcp/README.md)(英文)。
+
+**时效性实现说明(2026-08-27):** 原生验收要求在 ChatGPT 桌面应用的内置浏览器
+中使用 GPT-5.6 Sol 或 Terra,并启用 Site tools。账号、模型和工作区可用性可能随
+发布进度变化。重复原生检查前,请查阅 [WebMCP 草案](https://webmachinelearning.github.io/webmcp/)、
+[OpenAI Site tools 指南](https://help.openai.com/en/articles/20001423-using-site-tools-in-the-chatgpt-desktop-app)
+与 [OpenAI 内置浏览器指南](https://help.openai.com/en/articles/20001277-using-the-built-in-browser-in-the-chatgpt-desktop-app)。
 
 ## 实时 MapLibre 浏览器桥接
 
@@ -558,7 +600,7 @@ node evals/maplibre-style-mcp-fixture-server.mjs
 
 ## 示例
 
-两个 Vite 示例针对浏览器内的实时地图演练本包。先执行 `pnpm run build` 构建本包。
+三个 Vite 示例针对浏览器内的实时地图演练本包。先执行 `pnpm run build` 构建本包。
 
 - `examples/browser-bridge` 把 MapLibre 地图连接到 MCP 实时桥接,并显示连接
   状态。运行 `pnpm run example:dev` 后打开 `http://127.0.0.1:5173/`。
@@ -568,6 +610,11 @@ node evals/maplibre-style-mcp-fixture-server.mjs
   `createOpenAiFunctionTools`/`createAnthropicTools` 生成。运行
   `pnpm run example:dev:ai-chat` 后打开 `http://127.0.0.1:5174/`,粘贴 API Key,
   然后用中文提问,例如「把海洋换成淡蓝色」。
+- `examples/webmcp` 在确定性的地图页面中直接注册两个只读和四个写入 Site tools。
+  运行 `pnpm run example:dev:webmcp`,再在 ChatGPT 桌面应用的内置浏览器中打开
+  `http://127.0.0.1:5175/`。其[手动检查清单](examples/webmcp/README.md)(英文)
+  覆盖原生 Annotation 评论、单要素/属性分类/整图层目标流程、单次与批量上下文
+  消费,以及不支持 WebMCP 时的回退行为。
 
 ## 开发
 

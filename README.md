@@ -7,9 +7,10 @@ AI-driven tools for inspecting and editing MapLibre GL styles.
 One transport-neutral capability layer (`/capabilities`) defines the five style
 capabilities — `inspectStyle`, `applyStyleTransaction`, `applyStyleDocument`,
 `runMapCommand`, `queryMapFeatures` — including their strict input schemas,
-descriptions, and bounded result envelopes. Three thin interfaces expose the
-same capabilities: an AI SDK tool factory (`/ai`), an MCP server (`/mcp`), and
-the `maplibre-style` CLI. Each interface supplies its own style authority
+descriptions, and bounded result envelopes. Four thin interfaces expose the
+same capabilities: an AI SDK tool factory (`/ai`), browser-native WebMCP Site
+tools (`/webmcp`), an MCP server (`/mcp`), and the `maplibre-style` CLI. Each
+interface supplies its own style authority
 (in-process map, bounded document session, bridged live map, or style file);
 capability semantics are defined once in the core.
 
@@ -64,17 +65,22 @@ each tool's `.execute(input)` method directly.
 
 ## Entry points
 
-The package has seven supported entry points:
+The package has eight supported entry points:
 
 - `maplibre-style-tools` contains the non-AI package exports.
 - `maplibre-style-tools/core` is the transport-neutral transaction, validation, GeoJSON, analysis, and discovery API. It requires neither DOM nor Node ambient types.
 - `maplibre-style-tools/maplibre` applies prepared transactions to MapLibre maps and exposes bounded live-map commands. It may use DOM types but does not load Node ambient types.
 - `maplibre-style-tools/capabilities` is the transport-neutral capability layer: the five capability executors, their strict input schemas, the capability registry, the result envelope, and the `StyleAuthority`/`RuntimeAuthority` interfaces each interface implements. It also exports `createOpenAiFunctionTools` and `createAnthropicTools`, which project the registry into OpenAI function-calling and Anthropic Messages tool schemas for direct LLM API integrations.
 - `maplibre-style-tools/ai` is the AI SDK interface: `createMapLibreStyleTools` wraps the capability registry as five AI SDK tools over an in-process map.
+- `maplibre-style-tools/webmcp` registers page-scoped Site tools for an in-browser MapLibre map. It is read-only by default and registers mutation tools only when `allowMutations: true` is explicit.
 - `maplibre-style-tools/mcp` is the MCP interface: the bounded server factory, transport runners, session store, live-bridge extension, and URI helpers. It exposes the same five capabilities plus session-management tools.
 - `maplibre-style-tools/bridge` is the browser-safe live MapLibre client, protocol, capability, hashing, and resource-policy API. It exports no Node WebSocket server state.
 
-The `/ai` and `/mcp` declaration graphs intentionally load their required Node types. Import the root entry, `/core`, `/maplibre`, `/capabilities`, or `/bridge` directly when that ambient dependency is undesirable.
+The `/ai` and `/mcp` declaration graphs intentionally load their required Node
+types. Import the root entry, `/core`, `/maplibre`, `/capabilities`, `/webmcp`,
+or `/bridge` directly when that ambient dependency is undesirable. `/webmcp`
+is browser-only, and its public declarations do not require the experimental
+WebMCP ambient types.
 
 ## Pure core
 
@@ -303,6 +309,51 @@ from SDK transport-session IDs.
 
 Neither transport accepts a path or URL as Style input, and neither performs a
 network fetch. The package-derived server version is generated at build time.
+
+## WebMCP Site tools
+
+Use `/webmcp` when an AI agent and the user are working in the same browser
+page. The default registration is deliberately read-only: it exposes
+`inspectStyle` and `queryMapFeatures` but does not register mutation tools.
+
+```ts
+import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
+
+const registration = await registerMapLibreWebMcpTools({
+  getMap: () => map,
+  signal: pageLifetime.signal,
+});
+
+if (!registration.supported) {
+  console.info('This browser does not expose WebMCP Site tools.');
+}
+```
+
+Set `allowMutations: true` only when the page also supplies an invocation
+authorization policy and an appropriate resource policy. This opt-in adds
+`applyStyleTransaction`, `applyStyleDocument`, and `runMapCommand`; tool calls
+still return the same bounded capability envelopes as the other interfaces.
+
+WebMCP Site tools are page-scoped JavaScript tools discovered by a compatible
+built-in browser. They are distinct from the `/mcp` server, which speaks the MCP
+wire protocol to an MCP host, and from `/bridge`, which connects a browser map
+to that server over a protected loopback WebSocket. WebMCP needs neither an MCP
+server process nor the browser bridge.
+
+The `examples/webmcp` demo opts into mutations and adds
+`consumeMapSelectionContexts` for native Annotation comments. A submitted
+comment carries an immutable feature, property-class, or whole-layer selection
+ID; ChatGPT consumes that context first, removing its card and marker, and then
+uses the core tools to update the map. See the
+[native ChatGPT Desktop checklist](examples/webmcp/README.md).
+
+**Time-sensitive implementation note (2026-08-27):** native acceptance was
+defined for GPT-5.6 Sol or Terra with Site tools enabled in the ChatGPT desktop
+app's built-in browser. Account, model, and workspace availability can vary
+during rollout. Consult the [WebMCP draft](https://webmachinelearning.github.io/webmcp/),
+[OpenAI Site tools guide](https://help.openai.com/en/articles/20001423-using-site-tools-in-the-chatgpt-desktop-app),
+and [OpenAI built-in browser guide](https://help.openai.com/en/articles/20001277-using-the-built-in-browser-in-the-chatgpt-desktop-app)
+before repeating the native checklist.
 
 ## Live MapLibre browser bridge
 
@@ -599,7 +650,7 @@ sessions.
 
 ## Examples
 
-Two Vite examples exercise the package against a live in-browser map. Build the
+Three Vite examples exercise the package against a live in-browser map. Build the
 package first with `pnpm run build`.
 
 - `examples/browser-bridge` connects a MapLibre map to the MCP live bridge and
@@ -612,6 +663,12 @@ package first with `pnpm run build`.
   `createOpenAiFunctionTools`/`createAnthropicTools` from `/capabilities`.
   Run `pnpm run example:dev:ai-chat` and open `http://127.0.0.1:5174/`, then
   paste an API key and ask in Chinese, for example "把海洋换成淡蓝色".
+- `examples/webmcp` registers two read and four write Site tools directly on a
+  deterministic map page. Run `pnpm run example:dev:webmcp` and open
+  `http://127.0.0.1:5175/` in the ChatGPT desktop built-in browser. Its
+  [manual checklist](examples/webmcp/README.md) covers native Annotation
+  comments, the feature/property-class/layer target workflow, one-shot and
+  batch context consumption, and the unsupported fallback.
 
 ## Development
 
