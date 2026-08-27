@@ -4,10 +4,16 @@ import {
   type MapLibreWebMcpRegistration,
 } from 'maplibre-style-tools/webmcp';
 import type { StyleDocument } from 'maplibre-style-tools/core';
-import type { Map as MapLibreMap } from 'maplibre-gl';
+import type { Map as MapLibreMap, MapMouseEvent, Marker as MapLibreMarker } from 'maplibre-gl';
 
 import { createActivityLog } from './activity-log.js';
+import {
+  CommentTargetStore,
+  type FeatureReference,
+  type MapCommentTarget,
+} from './comment-targets.js';
 import { createDemoStyle } from './demo-style.js';
+import { featureLabel, pickRenderedFeatures } from './feature-picker.js';
 
 export function renderWebMcpSupport(
   host: HTMLElement,
@@ -36,8 +42,49 @@ const renderToolGroups = (host: HTMLElement, toolNames: readonly string[]): void
   ]));
 };
 
+const targetScopeLabel = (target: MapCommentTarget): string => {
+  if (target.scope === 'feature') return 'Single feature';
+  if (target.scope === 'property-class') return 'Matching property value in this layer';
+  return 'All features in this layer';
+};
+
+const targetLocation = (feature: FeatureReference): string => `${feature.lngLat[0].toFixed(5)}, ${feature.lngLat[1].toFixed(5)}`;
+
+const targetProperties = (feature: FeatureReference): string => Object.entries(feature.properties)
+  .map(([name, value]) => `${name}=${String(value)}`).join(', ') || 'none';
+
+const targetArticle = (target: MapCommentTarget, onRemove: () => void): HTMLElement => {
+  const article = document.createElement('article');
+  article.className = 'comment-target-card';
+  article.dataset.selectionId = target.selectionId;
+  const heading = document.createElement('h3');
+  heading.textContent = target.selectionId;
+  const selectorText = target.scope === 'property-class'
+    ? `${target.selector.property}=${String(target.selector.value)}`
+    : target.scope === 'feature'
+      ? `feature ID=${String(target.feature.featureId)}`
+      : 'all features in layer';
+  const detail = document.createElement('p');
+  detail.textContent = [
+    `Scope: ${targetScopeLabel(target)}`,
+    `Layer: ${target.feature.layerId}`,
+    `Source: ${target.feature.sourceId}`,
+    `Location: ${targetLocation(target.feature)}`,
+    `Selector: ${selectorText}`,
+    `Properties: ${targetProperties(target.feature)}`,
+  ].join(' · ');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'comment-target-remove';
+  remove.textContent = `Remove ${target.selectionId}`;
+  remove.setAttribute('aria-label', `Remove unsubmitted target ${target.selectionId}`);
+  remove.addEventListener('click', onRemove);
+  article.replaceChildren(heading, detail, remove);
+  return article;
+};
+
 const startWebMcpExample = async (): Promise<void> => {
-  const [{ Map }, ,] = await Promise.all([
+  const [{ Map, Marker }, ,] = await Promise.all([
     import('maplibre-gl'),
     import('maplibre-gl/dist/maplibre-gl.css'),
     import('./style.css'),
@@ -58,8 +105,137 @@ const startWebMcpExample = async (): Promise<void> => {
   const revision = requireElement('map-revision');
   const styleHash = requireElement('map-style-hash');
   const reset = requireElement<HTMLButtonElement>('reset-map');
+  const targetHost = requireElement('comment-target-panel');
+  const targetTitle = targetHost.querySelector('h2');
   const secureContext = requireElement('secure-context');
   secureContext.textContent = window.isSecureContext ? 'secure context' : 'not a secure context';
+
+  const targetStatus = document.createElement('p');
+  targetStatus.dataset.testid = 'comment-target-status';
+  targetStatus.setAttribute('aria-live', 'polite');
+  targetStatus.textContent = 'Click a map feature to create a comment target.';
+  const candidateHost = document.createElement('div');
+  candidateHost.className = 'feature-candidates';
+  const controls = document.createElement('div');
+  controls.className = 'comment-target-controls';
+  const scope = document.createElement('select');
+  scope.setAttribute('aria-label', 'Comment target scope');
+  const addScopeOption = (value: MapCommentTarget['scope'], text: string): HTMLOptionElement => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    scope.append(option);
+    return option;
+  };
+  const featureScope = addScopeOption('feature', 'Single feature');
+  addScopeOption('property-class', 'Matching property value in this layer');
+  addScopeOption('layer', 'All features in this layer');
+  const selector = document.createElement('select');
+  selector.setAttribute('aria-label', 'Property value selector');
+  const createTarget = document.createElement('button');
+  createTarget.type = 'button';
+  createTarget.textContent = 'Create comment target';
+  const targetCards = document.createElement('div');
+  targetCards.className = 'comment-target-cards';
+  controls.replaceChildren(scope, selector, createTarget);
+  targetHost.replaceChildren(...(targetTitle === null ? [] : [targetTitle]), targetStatus, candidateHost, controls, targetCards);
+
+  const markers = new globalThis.Map<string, MapLibreMarker>();
+  const removeTargetVisuals = (target: MapCommentTarget): void => {
+    markers.get(target.selectionId)?.remove();
+    markers.delete(target.selectionId);
+    targetCards.querySelector(`[data-selection-id="${CSS.escape(target.selectionId)}"]`)?.remove();
+  };
+  let targetId = 0;
+  const targets = new CommentTargetStore({
+    capacity: 20,
+    idFactory: () => `map-selection-${++targetId}`,
+    onRemove: removeTargetVisuals,
+  });
+  let currentFeature: FeatureReference | undefined;
+  const renderControls = (): void => {
+    featureScope.disabled = currentFeature?.featureId === undefined;
+    if (featureScope.disabled && scope.value === 'feature') scope.value = 'property-class';
+    scope.disabled = currentFeature === undefined;
+    selector.disabled = currentFeature === undefined || scope.value !== 'property-class';
+    createTarget.disabled = currentFeature === undefined
+      || (scope.value === 'feature' && currentFeature.featureId === undefined)
+      || (scope.value === 'property-class' && selector.value === '');
+  };
+  const selectFeature = (feature: FeatureReference): void => {
+    currentFeature = feature;
+    selector.replaceChildren();
+    for (const [property, value] of Object.entries(feature.properties)) {
+      const option = document.createElement('option');
+      option.value = property;
+      option.textContent = `${property} = ${String(value)}`;
+      selector.append(option);
+    }
+    targetStatus.textContent = `Selected ${featureLabel(feature)}.`;
+    renderControls();
+  };
+  const renderCandidates = (candidates: readonly FeatureReference[]): void => {
+    candidateHost.replaceChildren();
+    if (candidates.length === 0) {
+      currentFeature = undefined;
+      targetStatus.textContent = 'No rendered feature was found at that location.';
+      selector.replaceChildren();
+      renderControls();
+      return;
+    }
+    if (candidates.length === 1) {
+      selectFeature(candidates[0]!);
+      return;
+    }
+    const heading = document.createElement('p');
+    heading.textContent = 'Choose a feature at this location:';
+    const list = document.createElement('ul');
+    list.setAttribute('aria-label', 'Overlapping map features');
+    for (const feature of candidates) {
+      const item = document.createElement('li');
+      const choose = document.createElement('button');
+      choose.type = 'button';
+      choose.className = 'feature-choice';
+      choose.textContent = featureLabel(feature);
+      choose.addEventListener('click', () => selectFeature(feature));
+      item.append(choose);
+      list.append(item);
+    }
+    candidateHost.replaceChildren(heading, list);
+    targetStatus.textContent = 'Choose one of the overlapping rendered features.';
+    currentFeature = undefined;
+    selector.replaceChildren();
+    renderControls();
+  };
+  const renderTarget = (target: MapCommentTarget): void => {
+    const markerElement = document.createElement('div');
+    markerElement.className = 'comment-target-marker';
+    markerElement.textContent = target.selectionId;
+    markerElement.setAttribute('aria-label', `Comment target ${target.selectionId}`);
+    const marker = new Marker({ element: markerElement })
+      .setLngLat([target.feature.lngLat[0], target.feature.lngLat[1]])
+      .addTo(map);
+    markers.set(target.selectionId, marker);
+    targetCards.append(targetArticle(target, () => targets.remove(target.selectionId)));
+  };
+  scope.addEventListener('change', renderControls);
+  selector.addEventListener('change', renderControls);
+  createTarget.addEventListener('click', () => {
+    if (currentFeature === undefined) return;
+    const target = scope.value === 'feature' && currentFeature.featureId !== undefined
+      ? targets.add({ scope: 'feature', feature: currentFeature as FeatureReference & { readonly featureId: string | number } })
+      : scope.value === 'property-class'
+        ? (() => {
+          const value = currentFeature.properties[selector.value];
+          if (value === undefined) return undefined;
+          return targets.add({ scope: 'property-class', feature: currentFeature, selector: { property: selector.value, value } });
+        })()
+        : targets.add({ scope: 'layer', feature: currentFeature });
+    if (target === undefined) return;
+    renderTarget(target);
+    targetStatus.textContent = `Created unsubmitted comment target ${target.selectionId}.`;
+  });
+  renderControls();
 
   let mapRevision = 0;
   let currentHash: string | undefined;
@@ -77,13 +253,22 @@ const startWebMcpExample = async (): Promise<void> => {
   };
   map.on('styledata', () => { void updateMapDetails(); });
 
+  const lifetime = new AbortController();
   reset.addEventListener('click', () => {
     activity.clear();
+    targets.clear();
     map.setStyle(createDemoStyle());
-  });
+  }, { signal: lifetime.signal });
 
-  const lifetime = new AbortController();
-  window.addEventListener('pagehide', () => lifetime.abort(), { once: true });
+  const onMapClick = (event: MapMouseEvent): void => {
+    renderCandidates(pickRenderedFeatures(map, event));
+  };
+  map.on('click', onMapClick);
+  window.addEventListener('pagehide', () => lifetime.abort(), { once: true, signal: lifetime.signal });
+  lifetime.signal.addEventListener('abort', () => {
+    targets.clear();
+    map.off('click', onMapClick);
+  }, { once: true });
   const registration = await registerMapLibreWebMcpTools({
     getMap: (): MapLibreMap => map,
     allowMutations: true,

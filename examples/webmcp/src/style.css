@@ -64,6 +64,60 @@ button {
 button:hover { background: #0f5269; }
 button:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
 
+.feature-candidates,
+.comment-target-controls,
+.comment-target-cards {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+}
+
+.feature-candidates p,
+.comment-target-card p { margin: 0; font-size: 0.84rem; }
+.feature-candidates ul { display: grid; gap: 0.35rem; list-style: none; padding: 0; }
+
+.feature-choice,
+.comment-target-remove {
+  min-height: 2rem;
+  text-align: left;
+  font-size: 0.84rem;
+}
+
+.comment-target-controls select {
+  width: 100%;
+  min-height: 2.4rem;
+  border: 1px solid #0f5269;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  color: var(--ink);
+  background: #ffffff;
+  font: inherit;
+}
+
+.comment-target-card {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px solid var(--rule);
+  border-left: 0.3rem solid var(--teal);
+  padding: 0.75rem;
+  background: #ffffff;
+}
+
+.comment-target-card h3 { margin: 0; }
+.comment-target-remove { background: #5e342f; border-color: #5e342f; }
+.comment-target-remove:hover { background: #462522; }
+
+.comment-target-marker {
+  max-width: 12rem;
+  border: 2px solid #0f5269;
+  border-radius: 999px;
+  padding: 0.25rem 0.45rem;
+  color: #ffffff;
+  background: #0f5269;
+  font: 700 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 760px) {
   .app-shell { grid-template-columns: 1fr; grid-template-rows: minmax(56vh, 1fr) auto; height: auto; }
   .control-pane { border-top: 1px solid var(--rule); border-left: 0; }
