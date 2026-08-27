@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createMapCommentController, type CommentModeControl } from './comment-controller.js';
+import {
+  createCommentModeControl,
+  createMapCommentController,
+  type CommentModeControl,
+} from './comment-controller.js';
 import { PendingMapCommentStore } from './comment-targets.js';
 import type { CommentHighlightController } from './comment-highlight.js';
+
+class TestElement extends EventTarget {
+  className = '';
+  type = '';
+  disabled = false;
+  title = '';
+  readonly dataset: Record<string, string> = {};
+  readonly children: TestElement[] = [];
+  append(...children: TestElement[]): void { this.children.push(...children); }
+  setAttribute(name: string, value: string): void { if (name === 'class') this.className = value; }
+  remove(): void {}
+}
 import type { PendingCommentMarkerView } from './comment-markers.js';
 import type { Map as MapLibreMap } from 'maplibre-gl';
 import { reduceCommentMode } from './comment-controller.js';
@@ -12,6 +28,28 @@ test('keeps comment mode after add or draft cancel and uses two-stage Escape', (
   assert.equal(reduceCommentMode('drafting', { type: 'add' }), 'comment-mode');
   assert.equal(reduceCommentMode('drafting', { type: 'escape' }), 'comment-mode');
   assert.equal(reduceCommentMode('comment-mode', { type: 'escape' }), 'idle');
+});
+
+test('renders a standard MapLibre control group with an interactive toggle', () => {
+  const originalDocument = globalThis.document;
+  const elements: TestElement[] = [];
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { createElement: () => { const element = new TestElement(); elements.push(element); return element; } },
+  });
+  try {
+    let toggles = 0;
+    const control = createCommentModeControl(() => { toggles += 1; });
+    const button = elements[1]!;
+    assert.equal(control.element.className, 'maplibregl-ctrl maplibregl-ctrl-group');
+    assert.equal(button.className, 'maplibregl-ctrl-icon');
+    assert.equal(button.disabled, true);
+    control.setEnabled(true);
+    button.dispatchEvent(new Event('click'));
+    assert.equal(toggles, 1);
+  } finally {
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: originalDocument });
+  }
 });
 
 test('resets comment mode for style replacement and abort', () => {

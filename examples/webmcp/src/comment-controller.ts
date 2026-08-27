@@ -55,16 +55,19 @@ export interface MapCommentControllerOptions {
 
 export type CreateMapCommentController = (options: MapCommentControllerOptions) => MapCommentController;
 
-const defaultControl = (onToggle: () => void): CommentModeControl => {
-  const element = document.createElement('button');
-  element.type = 'button'; element.className = 'maplibregl-ctrl-icon'; element.setAttribute('aria-label', 'Add map comment');
-  element.setAttribute('aria-pressed', 'false'); element.dataset.testid = 'comment-mode-toggle'; element.disabled = true;
-  element.addEventListener('click', onToggle);
+export const createCommentModeControl = (onToggle: () => void): CommentModeControl => {
+  const element = document.createElement('div');
+  element.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'maplibregl-ctrl-icon'; button.setAttribute('aria-label', 'Add map comment');
+  button.setAttribute('aria-pressed', 'false'); button.dataset.testid = 'comment-mode-toggle'; button.disabled = true;
+  button.addEventListener('click', onToggle);
+  element.append(button);
   return {
     element,
-    setEnabled(enabled, reason) { element.disabled = !enabled; element.title = enabled ? '' : reason ?? ''; },
-    setActive(active) { element.setAttribute('aria-pressed', String(active)); },
-    destroy() { element.removeEventListener('click', onToggle); element.remove(); },
+    setEnabled(enabled, reason) { button.disabled = !enabled; button.title = enabled ? '' : reason ?? ''; },
+    setActive(active) { button.setAttribute('aria-pressed', String(active)); },
+    destroy() { button.removeEventListener('click', onToggle); element.remove(); },
   };
 };
 
@@ -85,7 +88,7 @@ export const createMapCommentController: CreateMapCommentController = (options) 
     if (state === 'drafting') { cancelDraft({ type: 'cancel' }); state = 'idle'; } else state = reduceCommentMode(state, { type: 'toggle' });
     render();
   };
-  const control = (options.createControl ?? defaultControl)(toggle);
+  const control = (options.createControl ?? createCommentModeControl)(toggle);
   const mapControl: IControl = { onAdd: () => control.element, onRemove: () => control.destroy() };
   options.map.addControl(mapControl);
   const onClick = (event: MapMouseEvent): void => {

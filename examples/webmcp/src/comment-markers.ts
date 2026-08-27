@@ -18,9 +18,9 @@ export interface PendingCommentMarkerViewOptions {
   readonly onCancel: (selectionId: string) => void;
 }
 
-type Entry = { readonly marker: MapLibreMarker; readonly element: HTMLButtonElement; readonly geometry: FeatureGeometry; readonly abort: AbortController };
+type Entry = { readonly marker: MapLibreMarker; readonly element: HTMLElement; readonly geometry: FeatureGeometry; readonly abort: AbortController };
 
-const summaryFor = (comment: PendingMapComment): string => {
+export const pendingCommentSummary = (comment: PendingMapComment): string => {
   const selector = comment.scope === 'property-class' ? `; selector ${comment.selector.property} = ${String(comment.selector.value)}` : '';
   const sourceLayer = comment.feature.sourceLayer === undefined ? '' : `/${comment.feature.sourceLayer}`;
   return `Pending map comment ${comment.selectionId}: ${comment.comment}; ${comment.feature.layerId}; ${comment.feature.sourceId}${sourceLayer}; ${comment.scope}${selector}; location ${comment.feature.lngLat[0]}, ${comment.feature.lngLat[1]}.`;
@@ -43,21 +43,36 @@ export const createPendingCommentMarkerView = (options: PendingCommentMarkerView
     add(comment, geometry) {
       if (destroyed) throw new Error('Pending comment markers have been destroyed.');
       if (entries.has(comment.selectionId)) throw new Error(`Pending comment marker already exists: ${comment.selectionId}`);
-      const element = document.createElement('button');
-      element.type = 'button';
-      element.className = 'pending-comment-pin';
-      element.dataset.testid = 'pending-comment-pin';
+      const element = document.createElement('div');
+      element.className = 'pending-comment-marker';
       element.dataset.selectionId = comment.selectionId;
-      element.textContent = String(++ordinal);
-      element.setAttribute('aria-label', summaryFor(comment));
+      const pin = document.createElement('button');
+      pin.type = 'button';
+      pin.className = 'pending-comment-pin';
+      pin.dataset.testid = 'pending-comment-pin';
+      pin.dataset.selectionId = comment.selectionId;
+      pin.textContent = String(++ordinal);
+      pin.setAttribute('aria-label', pendingCommentSummary(comment));
+      pin.setAttribute('aria-expanded', 'false');
+      const summary = document.createElement('article');
+      summary.className = 'pending-comment-summary';
+      summary.hidden = true;
+      summary.textContent = pendingCommentSummary(comment);
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.textContent = 'Cancel pending comment';
+      cancel.setAttribute('aria-label', `Cancel pending comment ${comment.selectionId}`);
+      summary.append(cancel);
+      element.append(pin, summary);
       const abort = new AbortController();
-      const show = (): void => { options.highlight.show(comment.selectionId, geometry); };
+      const show = (): void => { summary.hidden = false; pin.setAttribute('aria-expanded', 'true'); options.highlight.show(comment.selectionId, geometry); };
       const clear = (): void => { options.highlight.clear(comment.selectionId); };
-      element.addEventListener('mouseenter', show, { signal: abort.signal });
-      element.addEventListener('focus', show, { signal: abort.signal });
-      element.addEventListener('mouseleave', clear, { signal: abort.signal });
-      element.addEventListener('blur', clear, { signal: abort.signal });
-      element.addEventListener('click', () => { options.onCancel(comment.selectionId); }, { signal: abort.signal });
+      pin.addEventListener('mouseenter', show, { signal: abort.signal });
+      pin.addEventListener('focus', show, { signal: abort.signal });
+      pin.addEventListener('mouseleave', clear, { signal: abort.signal });
+      pin.addEventListener('blur', clear, { signal: abort.signal });
+      pin.addEventListener('click', show, { signal: abort.signal });
+      cancel.addEventListener('click', () => { options.onCancel(comment.selectionId); }, { signal: abort.signal });
       const marker = options.createMarker(element).setLngLat([...comment.feature.lngLat]).addTo(options.map);
       entries.set(comment.selectionId, { marker, element, geometry, abort });
     },

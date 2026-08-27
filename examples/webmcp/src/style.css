@@ -30,6 +30,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focu
 .maplibregl-ctrl-icon[data-testid="comment-mode-toggle"]::before { content: "+"; font-size: 1.45rem; line-height: 1; }
 .maplibregl-ctrl-icon[data-testid="comment-mode-toggle"][aria-pressed="true"] { background: #17324d; color: #fff; }
 .pending-comment-pin { min-width: 2rem; min-height: 2rem; padding: 0; border: 2px solid white; border-radius: 50%; background: #b45309; color: white; font-weight: 800; box-shadow: 0 1px 5px rgb(20 34 53 / 40%); }
+.pending-comment-marker { position: relative; }
+.pending-comment-summary { position: absolute; z-index: 3; right: 0; bottom: calc(100% + .4rem); width: min(18rem, 70vw); padding: .65rem; border: 1px solid #718096; border-radius: .45rem; background: #fff; color: #142235; box-shadow: 0 4px 12px rgb(20 34 53 / 25%); font-size: .8rem; line-height: 1.35; }
+.pending-comment-summary button { display: block; margin-top: .55rem; }
 .comment-popup { display: grid; min-width: 17rem; gap: .55rem; padding: .25rem; }
 .comment-popup h2 { margin: 0; font-size: 1rem; }
 .comment-popup textarea { min-height: 6rem; padding: .5rem; resize: vertical; }
