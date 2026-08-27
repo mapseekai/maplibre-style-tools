@@ -77,6 +77,7 @@ export const createCommentHighlight = (
     if (destroyed) return;
     destroyed = true;
     map.off('style.load', onStyleLoad);
+    signal.removeEventListener('abort', destroy);
     for (const layerId of [FILL_LAYER_ID, LINE_LAYER_ID, POINT_LAYER_ID]) {
       if (map.getLayer(layerId) !== undefined) map.removeLayer(layerId);
     }
@@ -93,21 +94,18 @@ export const createCommentHighlight = (
       owner = nextOwner;
       geometry = nextGeometry;
       restore();
-      updateData();
     },
     clear(clearOwner): void {
       if (destroyed || owner !== clearOwner) return;
       owner = undefined;
       geometry = undefined;
       restore();
-      updateData();
     },
     clearAll(): void {
       if (destroyed) return;
       owner = undefined;
       geometry = undefined;
       restore();
-      updateData();
     },
     restore,
     destroy,
