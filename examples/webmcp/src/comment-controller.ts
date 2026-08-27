@@ -113,9 +113,16 @@ export const createMapCommentController: CreateMapCommentController = (options) 
     } catch { popup = undefined; options.highlight.clear('draft'); state = reduceCommentMode(state, { type: 'cancel' }); render(); setStatus('Unable to preview that map feature.'); }
   };
   options.map.on('click', onClick);
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !enabled || destroyed) return;
+    event.preventDefault();
+    if (state === 'drafting') cancelDraft({ type: 'cancel' });
+    else { state = reduceCommentMode(state, { type: 'escape' }); render(); }
+  };
+  if (typeof document !== 'undefined') document.addEventListener('keydown', onKeyDown);
   const destroy = (): void => {
     if (destroyed) return;
-    destroyed = true; cancelDraft({ type: 'abort' }); options.store.clear(); options.highlight.clearAll(); options.map.off('click', onClick); options.map.removeControl(mapControl); control.destroy();
+    destroyed = true; cancelDraft({ type: 'abort' }); options.store.clear(); options.highlight.clearAll(); options.map.off('click', onClick); if (typeof document !== 'undefined') document.removeEventListener('keydown', onKeyDown); options.map.removeControl(mapControl); control.destroy();
   };
   options.signal.addEventListener('abort', destroy, { once: true });
   control.setEnabled(false);

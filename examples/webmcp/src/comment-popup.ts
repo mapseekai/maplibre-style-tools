@@ -101,15 +101,18 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
   root.setAttribute('aria-label', 'Add map comment');
   const popup = new Popup({ closeButton: false, closeOnClick: false }).setLngLat([...options.lngLat]).setDOMContent(root).addTo(options.map);
 
+  const onAbort = (): void => { close(); };
+  const cleanup = (): void => { options.signal.removeEventListener('abort', onAbort); };
   const cancel = (): void => {
     if (closed) return;
     closed = true;
+    cleanup();
     popup.remove();
     options.highlight.clear('draft');
     options.onCancel();
     options.map.getCanvas().focus();
   };
-  const close = (): void => { if (!closed) { closed = true; popup.remove(); options.highlight.clear('draft'); } };
+  const close = (): void => { if (!closed) { closed = true; cleanup(); popup.remove(); options.highlight.clear('draft'); } };
   const selected = (): FeatureCandidate => state.candidates[state.selectedIndex]!;
   const render = (): void => {
     root.replaceChildren();
@@ -149,7 +152,11 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
     append(root, (() => { const element = button('Cancel'); element.addEventListener('click', cancel); return element; })());
   };
   root.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } });
-  options.signal.addEventListener('abort', close, { once: true });
-  if (options.signal.aborted) close(); else render();
+  options.signal.addEventListener('abort', onAbort, { once: true });
+  if (options.signal.aborted) close();
+  else {
+    try { render(); }
+    catch (error) { close(); throw error; }
+  }
   return { close };
 };

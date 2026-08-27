@@ -36,6 +36,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, summary:focu
 .comment-popup { display: grid; min-width: 17rem; gap: .55rem; padding: .25rem; }
 .comment-popup h2 { margin: 0; font-size: 1rem; }
 .comment-popup textarea { min-height: 6rem; padding: .5rem; resize: vertical; }
+body:has(.technical-drawer[open]) .maplibregl-ctrl-bottom-right { bottom: calc(50vh + 1.5rem); }
 .comment-popup select { width: 100%; padding: .4rem; }
 .comment-popup [role="alert"] { margin: 0; color: #b42318; font-weight: 600; }
 .maplibregl-ctrl-bottom-right { bottom: 6.5rem; }

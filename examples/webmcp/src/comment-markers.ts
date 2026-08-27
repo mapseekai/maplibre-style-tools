@@ -2,7 +2,7 @@ import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl';
 
 import type { CommentHighlightController } from './comment-highlight.js';
 import type { PendingMapComment } from './comment-targets.js';
-import type { FeatureGeometry } from './feature-picker.js';
+import { featureLabel, type FeatureGeometry } from './feature-picker.js';
 
 export interface PendingCommentMarkerView {
   add(comment: PendingMapComment, geometry: FeatureGeometry): void;
@@ -22,8 +22,9 @@ type Entry = { readonly marker: MapLibreMarker; readonly element: HTMLElement; r
 
 export const pendingCommentSummary = (comment: PendingMapComment): string => {
   const selector = comment.scope === 'property-class' ? `; selector ${comment.selector.property} = ${String(comment.selector.value)}` : '';
+  const featureId = comment.scope === 'feature' ? `; feature ID ${String(comment.feature.featureId)}` : '';
   const sourceLayer = comment.feature.sourceLayer === undefined ? '' : `/${comment.feature.sourceLayer}`;
-  return `Pending map comment ${comment.selectionId}: ${comment.comment}; ${comment.feature.layerId}; ${comment.feature.sourceId}${sourceLayer}; ${comment.scope}${selector}; location ${comment.feature.lngLat[0]}, ${comment.feature.lngLat[1]}.`;
+  return `Pending map comment ${comment.selectionId}: ${comment.comment}; ${featureLabel(comment.feature)}; ${comment.feature.layerId}; ${comment.feature.sourceId}${sourceLayer}; ${comment.scope}${featureId}${selector}; location ${comment.feature.lngLat[0]}, ${comment.feature.lngLat[1]}.`;
 };
 
 export const createPendingCommentMarkerView = (options: PendingCommentMarkerViewOptions): PendingCommentMarkerView => {
@@ -71,8 +72,8 @@ export const createPendingCommentMarkerView = (options: PendingCommentMarkerView
       pin.addEventListener('focus', show, { signal: abort.signal });
       pin.addEventListener('mouseleave', clear, { signal: abort.signal });
       pin.addEventListener('blur', clear, { signal: abort.signal });
-      pin.addEventListener('click', show, { signal: abort.signal });
-      cancel.addEventListener('click', () => { options.onCancel(comment.selectionId); }, { signal: abort.signal });
+      pin.addEventListener('click', (event) => { event.stopPropagation(); show(); }, { signal: abort.signal });
+      cancel.addEventListener('click', (event) => { event.stopPropagation(); options.onCancel(comment.selectionId); }, { signal: abort.signal });
       const marker = options.createMarker(element).setLngLat([...comment.feature.lngLat]).addTo(options.map);
       entries.set(comment.selectionId, { marker, element, geometry, abort });
     },

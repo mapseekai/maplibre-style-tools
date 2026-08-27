@@ -51,13 +51,18 @@ const installFakeWebMcp = async (page: Page): Promise<void> => {
 
 test('adds and consumes a map comment', async ({ page }) => {
   await installFakeWebMcp(page);
-  await page.route(DEMO_STYLE_URL, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_STYLE) }));
+  let releaseStyle!: () => void;
+  const styleHeld = new Promise<void>((resolve) => { releaseStyle = resolve; });
+  await page.route(DEMO_STYLE_URL, async (route) => {
+    await styleHeld;
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_STYLE) });
+  });
   await page.goto('/');
-  await expect.poll(() => page.evaluate(() => globalThis.__webmcpTools.size)).toBe(6);
-
   const toggle = page.getByTestId('comment-mode-toggle');
   await expect(toggle).toBeDisabled();
+  releaseStyle();
   await expect(toggle).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => globalThis.__webmcpTools.size)).toBe(6);
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
