@@ -8,6 +8,7 @@ import type {
   FeatureStateInput,
   GlobalStateInput,
   MapRuntimeCommands,
+  MapStyleCurrentResult,
   MapStyleApplyResult,
   RemoveFeatureStateInput,
   RemoveImageInput,
@@ -27,6 +28,8 @@ import {
   createStyleToolError,
   isStyleToolError,
   applyStyleTransaction,
+  jsonValueSchema,
+  STYLE_TOOL_ERROR_CODES,
   type JsonObject,
   type StyleDocument,
   type StyleToolError,
@@ -75,10 +78,22 @@ const styleSnapshotFromError = (
 
 const rollbackError = (details: JsonObject | undefined): StyleToolError | undefined => {
   const value = ownRecord(details?.rollbackError);
-  if (value === undefined || typeof value.code !== 'string' || typeof value.message !== 'string') {
+  if (value === undefined || typeof value.code !== 'string'
+    || !(STYLE_TOOL_ERROR_CODES as readonly string[]).includes(value.code)
+    || typeof value.message !== 'string') {
     return undefined;
   }
-  return createStyleToolError(value.code as StyleToolErrorCode, value.message);
+  const nested = jsonValueSchema.safeParse(value.details);
+  const nestedDetails = nested.success && !Array.isArray(nested.data)
+    && nested.data !== null && typeof nested.data === 'object'
+    ? nested.data as JsonObject
+    : undefined;
+  return createStyleToolError(
+    value.code as StyleToolErrorCode,
+    value.message,
+    typeof value.path === 'string' ? value.path : undefined,
+    nestedDetails,
+  );
 };
 
 const currentFailure = (
@@ -93,16 +108,16 @@ const currentFailure = (
       key !== 'currentSnapshot' && key !== 'rolledBack' && key !== 'rollbackError')) as JsonObject;
   const primary = createStyleToolError(authentic.code, authentic.message, authentic.path,
     cleanedDetails === undefined || Object.keys(cleanedDetails).length === 0 ? undefined : cleanedDetails);
-  const rolledBack = details?.rolledBack === false ? false : undefined;
+  const rolledBack = typeof details?.rolledBack === 'boolean' ? details.rolledBack : undefined;
   const restored = rollbackError(details);
   if (style === undefined) {
     return {
       ...unavailable(primary),
-      ...(rolledBack === undefined ? {} : { rolledBack }),
+      ...(rolledBack === false ? { rolledBack } : {}),
       ...(restored === undefined ? {} : { rollbackError: restored }),
     };
   }
-  return {
+  const result: MapStyleCurrentResult = {
     ok: false,
     style,
     styleAuthority: 'current',
@@ -115,6 +130,7 @@ const currentFailure = (
     ...(rolledBack === undefined ? {} : { rolledBack }),
     ...(restored === undefined ? {} : { rollbackError: restored }),
   };
+  return result;
 };
 
 const runtimeFailure = (error: unknown): RuntimeCommandResult => ({
@@ -140,11 +156,12 @@ const limitList = <Item extends string | JsonObject>(
   transportTruncated: boolean,
   input: RuntimeListInput,
 ): RuntimeListData<Item> => {
-  const limited = items.slice(0, input.limit ?? DEFAULT_RUNTIME_LIST_LIMIT);
+  const maximum = input.limit ?? DEFAULT_RUNTIME_LIST_LIMIT;
+  const retained = items.length > maximum ? items.slice(0, maximum) : [...items];
   return {
-    items: limited,
-    returned: limited.length,
-    truncated: transportTruncated || returned > limited.length,
+    items: retained,
+    returned: retained.length,
+    truncated: transportTruncated || retained.length < returned,
   };
 };
 

@@ -189,3 +189,28 @@ test('makes an authenticated mutation failure unavailable when it omits the curr
   assert.equal(result.rolledBack, false);
   assert.equal(result.rollbackError?.code, 'IO_ERROR');
 });
+
+test('preserves successful rollback metadata on a current Style failure', async () => {
+  const runtime = commandRuntime(() => {
+    throw createStyleToolError('TIMEOUT', 'Browser map command timed out.', undefined, {
+      currentSnapshot: { revision: 2, styleHash: 'b'.repeat(64), style: baseStyle },
+      rolledBack: true,
+      rollbackError: {
+        code: 'IO_ERROR',
+        message: 'Rollback completion warning.',
+        path: '/sources/base',
+        details: { reason: 'transient-network' },
+      },
+    });
+  });
+  const result = await new WebMcpMapAuthority(runtime).applyDocument('https://styles.example/map.json', { diff: true });
+  assert.equal(result.ok, false);
+  assert.equal(result.styleAuthority, 'current');
+  assert.equal(result.rolledBack, true);
+  assert.deepEqual(result.rollbackError, {
+    code: 'IO_ERROR',
+    message: 'Rollback completion warning.',
+    path: '/sources/base',
+    details: { reason: 'transient-network' },
+  });
+});
