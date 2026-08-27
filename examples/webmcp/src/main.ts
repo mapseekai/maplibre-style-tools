@@ -14,7 +14,13 @@ import {
   type PendingMapComment,
 } from './comment-targets.js';
 import { createDemoStyle } from './demo-style.js';
-import { featureLabel, pickRenderedFeatures } from './feature-picker.js';
+import {
+  featureLabel,
+  pickRenderedFeatures,
+  propertyOptionsFor,
+  type FeatureCandidate,
+  type FeaturePickResult,
+} from './feature-picker.js';
 
 export function renderWebMcpSupport(
   host: HTMLElement,
@@ -280,19 +286,19 @@ const startWebMcpExample = async (): Promise<void> => {
       || (scope.value === 'feature' && currentFeature.featureId === undefined)
       || (scope.value === 'property-class' && selector.value === '');
   };
-  const selectFeature = (feature: FeatureReference): void => {
+  const selectFeature = ({ feature }: FeatureCandidate): void => {
     currentFeature = feature;
     selector.replaceChildren();
-    for (const [property, value] of Object.entries(feature.properties)) {
+    for (const { property, label } of propertyOptionsFor(feature)) {
       const option = document.createElement('option');
       option.value = property;
-      option.textContent = `${property} = ${String(value)}`;
+      option.textContent = label;
       selector.append(option);
     }
     targetStatus.textContent = `Selected ${featureLabel(feature)}.`;
     renderControls();
   };
-  const renderCandidates = (candidates: readonly FeatureReference[]): void => {
+  const renderCandidates = ({ candidates, truncated }: FeaturePickResult): void => {
     candidateHost.replaceChildren();
     if (candidates.length === 0) {
       currentFeature = undefined;
@@ -306,16 +312,18 @@ const startWebMcpExample = async (): Promise<void> => {
       return;
     }
     const heading = document.createElement('p');
-    heading.textContent = 'Choose a feature at this location:';
+    heading.textContent = truncated
+      ? 'Choose a feature at this location (showing the top 10):'
+      : 'Choose a feature at this location:';
     const list = document.createElement('ul');
     list.setAttribute('aria-label', 'Overlapping map features');
-    for (const feature of candidates) {
+    for (const candidate of candidates) {
       const item = document.createElement('li');
       const choose = document.createElement('button');
       choose.type = 'button';
       choose.className = 'feature-choice';
-      choose.textContent = featureLabel(feature);
-      choose.addEventListener('click', () => selectFeature(feature));
+      choose.textContent = candidate.label;
+      choose.addEventListener('click', () => selectFeature(candidate));
       item.append(choose);
       list.append(item);
     }

@@ -1,8 +1,23 @@
 import type { Map as MapLibreMap, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
 
-import { isBoundedIdentity, type FeatureReference } from './comment-targets.js';
+import {
+  isBoundedIdentity,
+  type FeatureReference,
+  type Scalar,
+} from './comment-targets.js';
 
-type Scalar = string | number | boolean | null;
+export type FeatureGeometry = MapGeoJSONFeature['geometry'];
+
+export interface FeatureCandidate {
+  readonly feature: FeatureReference;
+  readonly geometry: FeatureGeometry;
+  readonly label: string;
+}
+
+export interface FeaturePickResult {
+  readonly candidates: readonly FeatureCandidate[];
+  readonly truncated: boolean;
+}
 
 const MAX_CANDIDATES = 10;
 const MAX_PROPERTIES = 20;
@@ -28,44 +43,82 @@ const projectProperties = (properties: unknown): Readonly<Record<string, Scalar>
   return Object.freeze(result);
 };
 
-const projectFeature = (feature: MapGeoJSONFeature, lngLat: readonly [number, number]): FeatureReference | undefined => {
-  const layerId = feature.layer?.id;
-  const sourceId = feature.source;
+const projectFeature = (
+  rawFeature: MapGeoJSONFeature,
+  lngLat: readonly [number, number],
+): FeatureCandidate | undefined => {
+  const layerId = rawFeature.layer?.id;
+  const sourceId = rawFeature.source;
   if (!isBoundedIdentity(layerId, MAX_PROPERTY_NAME_LENGTH) || !isBoundedIdentity(sourceId, MAX_PROPERTY_NAME_LENGTH)) return undefined;
-  if (feature.sourceLayer !== undefined && !isBoundedIdentity(feature.sourceLayer, MAX_PROPERTY_NAME_LENGTH)) return undefined;
-  const featureId = isBoundedIdentity(feature.id, MAX_STRING_LENGTH)
-    ? feature.id
-    : typeof feature.id === 'number' && Number.isFinite(feature.id) ? feature.id : undefined;
-  const sourceLayer = feature.sourceLayer === undefined
+  if (rawFeature.sourceLayer !== undefined && !isBoundedIdentity(rawFeature.sourceLayer, MAX_PROPERTY_NAME_LENGTH)) return undefined;
+  const featureId = isBoundedIdentity(rawFeature.id, MAX_STRING_LENGTH)
+    ? rawFeature.id
+    : typeof rawFeature.id === 'number' && Number.isFinite(rawFeature.id) ? rawFeature.id : undefined;
+  const sourceLayer = rawFeature.sourceLayer === undefined
     ? undefined
-    : feature.sourceLayer;
-  return Object.freeze({
+    : rawFeature.sourceLayer;
+  const feature = Object.freeze({
     layerId,
     sourceId,
     ...(sourceLayer === undefined ? {} : { sourceLayer }),
     ...(featureId === undefined ? {} : { featureId }),
     lngLat: Object.freeze([lngLat[0], lngLat[1]]) as readonly [number, number],
-    properties: projectProperties(feature.properties),
+    properties: projectProperties(rawFeature.properties),
   });
+  return Object.freeze({
+    feature,
+    geometry: rawFeature.geometry,
+    label: featureLabel(feature),
+  });
+};
+
+const candidateKey = (candidate: FeatureCandidate): string => {
+  const { feature, geometry } = candidate;
+  const identity = [feature.layerId, feature.sourceId, feature.sourceLayer ?? null];
+  return feature.featureId !== undefined
+    ? JSON.stringify([...identity, 'id', feature.featureId])
+    : JSON.stringify([
+      ...identity,
+      'geometry', geometry,
+      'properties', Object.entries(feature.properties).sort(([left], [right]) => left.localeCompare(right)),
+    ]);
 };
 
 export const pickRenderedFeatures = (
   map: MapLibreMap,
   event: MapMouseEvent,
-): readonly FeatureReference[] => {
-  const rendered = map.queryRenderedFeatures(event.point, {
-    layers: map.getStyle().layers.map((layer) => layer.id),
-  });
+): FeaturePickResult => {
+  const rendered = map.queryRenderedFeatures(event.point);
   const lngLat: readonly [number, number] = [event.lngLat.lng, event.lngLat.lat];
-  const candidates: FeatureReference[] = [];
+  const candidates: FeatureCandidate[] = [];
+  const candidateKeys = new Set<string>();
   for (const rawFeature of rendered) {
-    if (candidates.length === MAX_CANDIDATES) break;
-    const feature = projectFeature(rawFeature, lngLat);
-    if (feature !== undefined) candidates.push(feature);
+    const candidate = projectFeature(rawFeature, lngLat);
+    if (candidate === undefined) continue;
+    const key = candidateKey(candidate);
+    if (candidateKeys.has(key)) continue;
+    if (candidates.length === MAX_CANDIDATES) {
+      return Object.freeze({
+        candidates: Object.freeze(candidates),
+        truncated: true,
+      });
+    }
+    candidateKeys.add(key);
+    candidates.push(candidate);
   }
-  return Object.freeze(candidates);
+  return Object.freeze({
+    candidates: Object.freeze(candidates),
+    truncated: false,
+  });
 };
 
+export const propertyOptionsFor = (
+  feature: FeatureReference,
+): readonly { readonly property: string; readonly value: Scalar; readonly label: string }[] => Object.freeze(
+  Object.entries(feature.properties)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([property, value]) => Object.freeze({ property, value, label: `${property} = ${String(value)}` })),
+);
 export const featureLabel = (feature: FeatureReference): string => {
   const name = feature.properties.name;
   return `${feature.layerId} · ${typeof name === 'string' && name !== '' ? name : 'unnamed feature'}`;
