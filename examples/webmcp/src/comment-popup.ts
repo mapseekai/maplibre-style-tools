@@ -90,8 +90,18 @@ export const reducePopupState = (state: PopupState, event: PopupEvent): PopupSta
   return event.error === undefined ? Object.freeze({ ...state, error: undefined }) : Object.freeze({ ...state, error: event.error });
 };
 
+export const retainPopupStateAfterAddError = (state: PopupState, error: string): PopupState =>
+  reducePopupState(state, { type: 'error', error });
+
 const append = <T extends HTMLElement>(parent: HTMLElement, child: T): T => { parent.append(child); return child; };
 const button = (label: string): HTMLButtonElement => { const element = document.createElement('button'); element.type = 'button'; element.textContent = label; return element; };
+
+export const focusPopupStage = (
+  root: { querySelector(selector: string): { focus(): void } | null },
+  step: PopupState['step'],
+): void => {
+  root.querySelector(`[data-popup-focus="${step === 'candidate' ? 'candidate' : 'draft'}"]`)?.focus();
+};
 
 export const openCommentPopup: OpenCommentPopup = (options) => {
   let state = initialPopupState(options.candidates);
@@ -121,13 +131,14 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
       const heading = append(root, document.createElement('h2')); heading.textContent = 'Choose a map feature';
       for (const [index, entry] of state.candidates.entries()) {
         const choice = button(entry.label); choice.setAttribute('aria-pressed', String(index === state.selectedIndex));
+        if (index === state.selectedIndex) choice.dataset.popupFocus = 'candidate';
         choice.addEventListener('click', () => { state = reducePopupState(state, { type: 'choose', index }); render(); }); append(root, choice);
       }
       if (options.truncated) { const notice = append(root, document.createElement('p')); notice.textContent = 'Only the top matching features are shown.'; }
       const next = button('Next'); next.addEventListener('click', () => { state = reducePopupState(state, { type: 'next' }); render(); }); append(root, next);
     } else {
       const heading = append(root, document.createElement('h2')); heading.textContent = candidate.label;
-      const textarea = append(root, document.createElement('textarea')); textarea.value = state.comment; textarea.maxLength = 1_001; textarea.setAttribute('aria-label', 'Comment');
+      const textarea = append(root, document.createElement('textarea')); textarea.value = state.comment; textarea.maxLength = 1_001; textarea.setAttribute('aria-label', 'Comment'); textarea.dataset.popupFocus = 'draft';
       textarea.addEventListener('input', () => { state = reducePopupState(state, { type: 'comment', value: textarea.value }); });
       const scope = append(root, document.createElement('select')); scope.setAttribute('aria-label', 'Scope');
       for (const option of scopeOptionsFor(candidate)) { const item = append(scope, document.createElement('option')); item.value = option.scope; item.textContent = option.disabledReason === undefined ? option.label : `${option.label} — ${option.disabledReason}`; item.disabled = !option.enabled; item.selected = option.scope === state.scope; }
@@ -144,11 +155,12 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
             ? (() => { const property = properties.find((entry) => entry.property === state.property); return property === undefined ? undefined : { comment: normalized.value, scope: 'property-class' as const, feature, selector: { property: property.property, value: property.value as Scalar } }; })()
             : { comment: normalized.value, scope: 'layer', feature };
         if (input === undefined) { state = reducePopupState(state, { type: 'error', error: 'Choose a scalar property.' }); render(); return; }
-        const error = options.onAdd(input, candidate.geometry); if (error === undefined) close(); else { state = reducePopupState(state, { type: 'error', error }); render(); }
+        const error = options.onAdd(input, candidate.geometry); if (error === undefined) close(); else { state = retainPopupStateAfterAddError(state, error); render(); }
       }); append(root, add);
-      textarea.focus();
+      focusPopupStage(root, 'draft');
     }
     append(root, (() => { const element = button('Cancel'); element.addEventListener('click', cancel); return element; })());
+    if (state.step === 'candidate') focusPopupStage(root, 'candidate');
   };
   root.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); } });
   options.signal.addEventListener('abort', onAbort, { once: true });

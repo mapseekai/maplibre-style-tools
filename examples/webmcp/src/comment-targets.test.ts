@@ -48,6 +48,31 @@ test('property class accepts only scalar properties', () => {
   }), /scalar/u);
 });
 
+test('property class requires an exact own projected scalar property match', () => {
+  const store = createStore(['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']);
+  const propertyInput = (property: string, value: string | number | boolean | null): PendingMapCommentInput => ({
+    comment: 'Property comment', scope: 'property-class', feature: mutableFeature(), selector: { property, value },
+  });
+
+  assert.throws(() => store.add(propertyInput('missing', 'park')), /projected feature property/u);
+  assert.throws(() => store.add(propertyInput('class', '1')), /match/u);
+  assert.throws(() => store.add(propertyInput('class', Number.NaN as unknown as number)), /scalar/u);
+  for (const [value, properties] of [
+    [null, { value: null }],
+    [true, { value: true }],
+    [7, { value: 7 }],
+    ['park', { value: 'park' }],
+  ] as const) {
+    const pending = store.add({
+      comment: 'Property comment',
+      scope: 'property-class',
+      feature: { ...mutableFeature(), properties },
+      selector: { property: 'value', value },
+    });
+    assert.equal(pending.scope, 'property-class');
+  }
+});
+
 test('stores trimmed comments and immutable feature snapshots', () => {
   const feature = mutableFeature();
   const pending = createStore().add({

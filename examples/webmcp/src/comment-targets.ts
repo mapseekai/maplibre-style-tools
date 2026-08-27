@@ -94,16 +94,21 @@ const frozenComment = (selectionId: string, input: PendingMapCommentInput): Pend
   }
   if (input.scope === 'property-class') {
     const property = requiredIdentifier(input.selector?.property, 'Property selector');
-    if (!isScalar(input.selector?.value)) throw new TypeError('Property selector value must be scalar.');
+    const selectorValue = input.selector?.value;
+    if (!isScalar(selectorValue)) throw new TypeError('Property selector value must be scalar.');
+    if (!Object.hasOwn(feature.properties, property)) {
+      throw new TypeError('Property selector must name an own projected feature property.');
+    }
+    const projectedValue = feature.properties[property];
+    if (!Object.is(projectedValue, selectorValue)) {
+      throw new TypeError('Property selector value must match the projected feature property.');
+    }
     return Object.freeze({
       comment,
       selectionId,
       scope: 'property-class' as const,
       feature,
-      selector: Object.freeze({
-        property,
-        value: typeof input.selector.value === 'string' ? boundedString(input.selector.value) : input.selector.value,
-      }),
+      selector: Object.freeze({ property, value: projectedValue }),
     });
   }
   return Object.freeze({ comment, selectionId, scope: 'layer' as const, feature });

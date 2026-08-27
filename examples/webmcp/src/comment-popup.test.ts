@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  focusPopupStage,
   initialPopupState,
   normalizeCommentDraft,
   reducePopupState,
+  retainPopupStateAfterAddError,
   scopeOptionsFor,
 } from './comment-popup.js';
 import type { FeatureCandidate } from './feature-picker.js';
@@ -53,4 +55,42 @@ test('initializes a single candidate directly at the draft', () => {
   const state = initialPopupState([waterCandidate]);
   assert.equal(state.step, 'draft');
   assert.equal(state.selectedIndex, 0);
+});
+
+test('focuses the selected candidate after opening and rerendering candidate stage', () => {
+  const focused: string[] = [];
+  const root = {
+    querySelector(selector: string) {
+      assert.equal(selector, '[data-popup-focus="candidate"]');
+      return { focus: () => { focused.push('selected'); } };
+    },
+  };
+
+  focusPopupStage(root, 'candidate');
+  focusPopupStage(root, 'candidate');
+
+  assert.deepEqual(focused, ['selected', 'selected']);
+});
+
+test('retains a failed add draft and restores its textarea focus', () => {
+  let state = initialPopupState([roadCandidate, waterCandidate]);
+  state = reducePopupState(state, { type: 'choose', index: 1 });
+  state = reducePopupState(state, { type: 'next' });
+  state = reducePopupState(state, { type: 'comment', value: 'Keep this comment' });
+  state = reducePopupState(state, { type: 'scope', scope: 'property-class' });
+  state = reducePopupState(state, { type: 'property', property: 'name' });
+  state = retainPopupStateAfterAddError(state, 'Unable to add this map comment.');
+  const focused: string[] = [];
+
+  focusPopupStage({ querySelector: (selector: string) => {
+    assert.equal(selector, '[data-popup-focus="draft"]');
+    return { focus: () => { focused.push('textarea'); } };
+  } }, state.step);
+
+  assert.equal(state.selectedIndex, 1);
+  assert.equal(state.comment, 'Keep this comment');
+  assert.equal(state.scope, 'property-class');
+  assert.equal(state.property, 'name');
+  assert.equal(state.error, 'Unable to add this map comment.');
+  assert.deepEqual(focused, ['textarea']);
 });
