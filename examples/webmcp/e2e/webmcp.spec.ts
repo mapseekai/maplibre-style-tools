@@ -9,8 +9,8 @@ const TEST_STYLE = {
       data: {
         type: 'FeatureCollection',
         features: [
-          { type: 'Feature', id: 1, properties: { class: 'water', name: 'Central Lake', visible: true, rank: 2 }, geometry: { type: 'Polygon', coordinates: [[[-8, -8], [8, -8], [8, 8], [-8, 8], [-8, -8]]] } },
-          { type: 'Feature', properties: { class: 'district', name: 'Central District' }, geometry: { type: 'Polygon', coordinates: [[[-12, -12], [12, -12], [12, 12], [-12, 12], [-12, -12]]] } },
+          { type: 'Feature', id: 1, properties: { class: 'water', name: 'Central Lake', visible: true, rank: 2 }, geometry: { type: 'Polygon', coordinates: [[[-8, 36], [8, 36], [8, 52], [-8, 52], [-8, 36]]] } },
+          { type: 'Feature', properties: { class: 'district', name: 'Central District' }, geometry: { type: 'Polygon', coordinates: [[[-12, 32], [12, 32], [12, 56], [-12, 56], [-12, 32]]] } },
         ],
       },
     },
@@ -23,6 +23,15 @@ const TEST_STYLE = {
 } as const;
 
 type FakeTool = { readonly execute: (input: Record<string, unknown>, options: { readonly signal: AbortSignal }) => unknown | Promise<unknown> };
+type MapCommentContext = { readonly comment: string; readonly scope: string; readonly feature: { readonly layerId: string } };
+type WebMcpToolResult = Readonly<Record<string, unknown>> & {
+  readonly success?: boolean;
+  readonly contexts?: readonly MapCommentContext[];
+  readonly data?: {
+    readonly changedLayers?: readonly string[];
+    readonly projection?: { readonly value?: { readonly id?: string; readonly paint?: Readonly<Record<string, unknown>> } };
+  };
+};
 
 declare global {
   var __webmcpTools: Map<string, FakeTool>;
@@ -49,7 +58,19 @@ const installFakeWebMcp = async (page: Page): Promise<void> => {
   });
 };
 
-test('adds and consumes a map comment', async ({ page }) => {
+const selectUpperCentralLake = async (page: Page): Promise<void> => {
+  const map = page.getByTestId('map');
+  const box = await map.boundingBox();
+  if (box === null) throw new Error('map has no visible bounds');
+  const candidate = page.getByRole('button', { name: 'places-fill · Central Lake' });
+  await expect.poll(async () => {
+    await map.click({ position: { x: box.width / 2, y: box.height / 2 - 80 } });
+    return candidate.isVisible();
+  }).toBe(true);
+  await candidate.click();
+};
+
+test('adds a map comment and applies a WebMCP update from its consumed context', async ({ page }) => {
   await installFakeWebMcp(page);
   let releaseStyle!: () => void;
   const styleHeld = new Promise<void>((resolve) => { releaseStyle = resolve; });
@@ -66,15 +87,29 @@ test('adds and consumes a map comment', async ({ page }) => {
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
-  const map = page.getByTestId('map');
-  const box = await map.boundingBox();
-  if (box === null) throw new Error('map has no visible bounds');
-  await map.click({ position: { x: box.width / 2, y: box.height / 2 } });
-  await page.getByRole('button', { name: 'places-fill · Central Lake' }).click();
+  await selectUpperCentralLake(page);
   await page.getByRole('button', { name: 'Next' }).click();
-  await page.getByLabel('Comment').fill('Please inspect the lake class.');
-  await page.getByLabel('Scope').selectOption('property-class');
-  await page.getByLabel('Property').selectOption('class');
+  const popupLayout = await page.locator('.maplibregl-popup').evaluate((popup) => {
+    const content = popup.querySelector('.maplibregl-popup-content');
+    const form = popup.querySelector('.comment-popup');
+    if (content === null || form === null) return false;
+    const popupBox = popup.getBoundingClientRect();
+    const contentBox = content.getBoundingClientRect();
+    const formBox = form.getBoundingClientRect();
+    return {
+      popupFitsViewport: popupBox.top >= 0 && popupBox.bottom <= window.innerHeight,
+      formFitsContent: formBox.left >= contentBox.left && formBox.right <= contentBox.right,
+      popup: { top: popupBox.top, bottom: popupBox.bottom },
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(popupLayout, `Unexpected popup layout: ${JSON.stringify(popupLayout)}`).toMatchObject({
+    popupFitsViewport: true,
+    formFitsContent: true,
+  });
+  await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please inspect the lake class.');
+  await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('property-class');
+  await page.getByRole('combobox', { name: 'Property', exact: true }).selectOption('class');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
 
   const pin = page.getByTestId('pending-comment-pin');
@@ -83,10 +118,28 @@ test('adds and consumes a map comment', async ({ page }) => {
   expect(selectionId).toMatch(/^map-selection-[0-9a-f-]{36}$/u);
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
-  const result = await page.evaluate((id) => globalThis.__callWebMcpTool('consumeMapSelectionContexts', { selectionIds: [id] }), selectionId);
+  const result = await page.evaluate((id) => globalThis.__callWebMcpTool('consumeMapSelectionContexts', { selectionIds: [id] }), selectionId) as WebMcpToolResult;
   expect(result.success).toBe(true);
   expect(result.contexts).toMatchObject([{ comment: 'Please inspect the lake class.', scope: 'property-class' }]);
   await expect(pin).toHaveCount(0);
+
+  const context = result.contexts?.[0];
+  if (context === undefined) throw new Error('Consumed comment context is missing.');
+  const mutation = await page.evaluate((layerId) => globalThis.__callWebMcpTool('applyStyleTransaction', {
+    transaction: { operations: [{ op: 'setLayerProperties', layerId, paint: { 'fill-color': '#f97316' } }] },
+    diff: true,
+  }), context.feature.layerId) as WebMcpToolResult;
+  expect(mutation.success).toBe(true);
+  expect(mutation.data?.changedLayers).toEqual([context.feature.layerId]);
+
+  const inspected = await page.evaluate((layerId) => globalThis.__callWebMcpTool('inspectStyle', {
+    action: 'getLayer', layerId, fields: ['paint'],
+  }), context.feature.layerId) as WebMcpToolResult;
+  expect(inspected.success).toBe(true);
+  expect(inspected.data?.projection?.value).toMatchObject({
+    id: context.feature.layerId,
+    paint: { 'fill-color': '#f97316' },
+  });
 });
 
 export {};

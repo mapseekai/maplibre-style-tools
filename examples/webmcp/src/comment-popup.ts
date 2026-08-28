@@ -106,10 +106,13 @@ export const focusPopupStage = (
 export const openCommentPopup: OpenCommentPopup = (options) => {
   let state = initialPopupState(options.candidates);
   let closed = false;
+  let attached = false;
   const root = document.createElement('section');
   root.className = 'comment-popup';
   root.setAttribute('aria-label', 'Add map comment');
-  const popup = new Popup({ closeButton: false, closeOnClick: false }).setLngLat([...options.lngLat]).setDOMContent(root).addTo(options.map);
+  const popup = new Popup({ closeButton: false, closeOnClick: false, maxWidth: 'none' })
+    .setLngLat([...options.lngLat])
+    .setDOMContent(root);
 
   const onAbort = (): void => { close(); };
   const cleanup = (): void => { options.signal.removeEventListener('abort', onAbort); };
@@ -161,12 +164,19 @@ export const openCommentPopup: OpenCommentPopup = (options) => {
     }
     append(root, (() => { const element = button('Cancel'); element.addEventListener('click', cancel); return element; })());
     if (state.step === 'candidate') focusPopupStage(root, 'candidate');
+    if (attached) popup.setLngLat([...options.lngLat]);
   };
   root.addEventListener('keydown', (event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); } });
   options.signal.addEventListener('abort', onAbort, { once: true });
   if (options.signal.aborted) close();
   else {
-    try { render(); }
+    try {
+      render();
+      popup.addTo(options.map);
+      attached = true;
+      popup.setLngLat([...options.lngLat]);
+      focusPopupStage(root, state.step);
+    }
     catch (error) { close(); throw error; }
   }
   return { close };
