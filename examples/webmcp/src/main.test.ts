@@ -72,7 +72,7 @@ test('renders unsupported WebMCP without disabling a sibling reset button', () =
     close() {},
   });
 
-  assert.equal(host.textContent, 'Site tools unavailable · local preview');
+  assert.equal(host.textContent, '站点工具不可用 · 本地预览');
   assert.equal(resetButton.disabled, false);
 });
 
@@ -100,7 +100,7 @@ test('registers and executes the one-shot selection consumption tool', async () 
     readOnlyHint: false,
     untrustedContentHint: true,
   });
-  assert.deepEqual(tool.inputSchema?.required, ['selectionIds']);
+  assert.equal(tool.inputSchema?.required, undefined);
   const result = await tool.execute({ selectionIds: [feature.selectionId, layer.selectionId] }, {
     signal: new AbortController().signal,
   });
@@ -111,6 +111,31 @@ test('registers and executes the one-shot selection consumption tool', async () 
   });
   assert.equal(store.size, 0);
   assert.equal(removed, 2);
+});
+
+test('consumes every submitted context when selectionIds is omitted', async () => {
+  let nextId = 0;
+  const store = new PendingMapCommentStore({ capacity: 20, idFactory: () => `map-selection-${++nextId}` });
+  const submitted = store.add({ comment: 'Submitted comment', scope: 'layer', feature: selectionFeature });
+  const pending = store.add({ comment: 'Pending comment', scope: 'layer', feature: selectionFeature });
+  store.submitAll();
+  const reopened = store.add({ comment: 'New draft comment', scope: 'layer', feature: selectionFeature });
+  let tool: RegisteredTool | undefined;
+  const modelContext = {
+    registerTool: async (nextTool: RegisteredTool) => { tool = nextTool; },
+  };
+  await registerMapSelectionConsumptionTool(modelContext, store, new AbortController().signal);
+  assert.ok(tool !== undefined);
+
+  const result = await tool.execute({}, { signal: new AbortController().signal });
+
+  assert.deepEqual(result, {
+    success: true,
+    consumed: 2,
+    contexts: [submitted, pending],
+  });
+  assert.equal(store.size, 1);
+  assert.deepEqual(store.list().map((comment) => comment.selectionId), [reopened.selectionId]);
 });
 
 test('keeps reset and picker active when custom registration removes core tools', async () => {
@@ -175,7 +200,7 @@ test('keeps page UI handlers active when core tool registration fails', async ()
 
   assert.equal(registration, undefined);
   assert.equal(registrationAttempts, 1);
-  assert.equal(support.textContent, 'Site tools failed to register');
+  assert.equal(support.textContent, '站点工具注册失败');
   assert.equal(support.textContent.includes('private'), false);
   assert.equal(lifetimes.tools.signal.aborted, true);
   assert.equal(lifetimes.page.signal.aborted, false);

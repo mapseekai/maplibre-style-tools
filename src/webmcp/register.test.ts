@@ -90,6 +90,28 @@ test('reports unsupported WebMCP without reading a global document', async () =>
   registration.close();
 });
 
+test('detects the spec navigator.modelContext when the document has none', async (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const context = new FakeModelContext();
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { modelContext: context } });
+  t.after(() => {
+    if (original === undefined) Reflect.deleteProperty(globalThis, 'navigator');
+    else Object.defineProperty(globalThis, 'navigator', original);
+  });
+
+  assert.equal(isWebMcpSupported(), true);
+  assert.equal(isWebMcpSupported(documentWith()), true);
+
+  const registration = await registerMapLibreWebMcpTools({
+    getMap: () => null,
+    resourcePolicy: { baseUrl: 'https://map.example/app/', allowedResourceOrigins: ['https://map.example'] },
+  });
+  assert.equal(registration.supported, true);
+  assert.deepEqual(registration.toolNames, ['inspectStyle', 'queryMapFeatures']);
+  assert.deepEqual([...context.tools.keys()], ['inspectStyle', 'queryMapFeatures']);
+  registration.close();
+});
+
 test('registers two default read-only WebMCP tools', async () => {
   const context = new FakeModelContext();
   const registration = await registerMapLibreWebMcpTools(registrationOptions(context));

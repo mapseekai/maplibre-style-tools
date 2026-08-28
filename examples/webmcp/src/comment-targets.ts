@@ -118,13 +118,16 @@ export class PendingMapCommentStore {
   readonly #capacity: number;
   readonly #idFactory: () => string;
   readonly #onRemove?: (comment: PendingMapComment) => void;
+  readonly #onChange?: () => void;
   readonly #comments = new Map<string, PendingMapComment>();
   readonly #issuedIds = new Set<string>();
+  readonly #submitted = new Set<string>();
 
   constructor(options: {
     capacity: number;
     idFactory(): string;
     onRemove?(comment: PendingMapComment): void;
+    onChange?(): void;
   }) {
     if (!Number.isInteger(options.capacity) || options.capacity < 1 || options.capacity > MAX_PROPERTIES) {
       throw new RangeError(`Comment target capacity must be an integer between 1 and ${MAX_PROPERTIES}.`);
@@ -132,10 +135,19 @@ export class PendingMapCommentStore {
     this.#capacity = options.capacity;
     this.#idFactory = options.idFactory;
     this.#onRemove = options.onRemove;
+    this.#onChange = options.onChange;
   }
 
   get size(): number {
     return this.#comments.size;
+  }
+
+  list(): readonly PendingMapComment[] {
+    return Object.freeze([...this.#comments.values()]);
+  }
+
+  isSubmitted(selectionId: string): boolean {
+    return this.#submitted.has(selectionId);
   }
 
   add(input: PendingMapCommentInput): PendingMapComment {
@@ -147,11 +159,36 @@ export class PendingMapCommentStore {
     const comment = frozenComment(selectionId, input);
     this.#issuedIds.add(selectionId);
     this.#comments.set(selectionId, comment);
+    this.#onChange?.();
     return comment;
+  }
+
+  update(selectionId: string, input: PendingMapCommentInput): PendingMapComment {
+    if (!this.#comments.has(selectionId)) throw new TypeError('A referenced selection context is unknown.');
+    if (this.#submitted.has(selectionId)) throw new TypeError('A submitted map comment can no longer be edited.');
+    const next = frozenComment(requiredIdentifier(selectionId, 'Selection ID', MAX_SELECTION_ID_LENGTH), input);
+    this.#comments.set(selectionId, next);
+    this.#onChange?.();
+    return next;
+  }
+
+  submitAll(): readonly PendingMapComment[] {
+    const pending = [...this.#comments.values()].filter((comment) => !this.#submitted.has(comment.selectionId));
+    for (const comment of pending) this.#submitted.add(comment.selectionId);
+    if (pending.length > 0) this.#onChange?.();
+    return Object.freeze(pending);
   }
 
   get(selectionId: string): PendingMapComment | undefined {
     return this.#comments.get(selectionId);
+  }
+
+  consumeSubmitted(): readonly PendingMapComment[] {
+    const selectionIds = [...this.#comments.keys()].filter((selectionId) => this.#submitted.has(selectionId));
+    const comments = selectionIds.map((selectionId) => this.#comments.get(selectionId) as PendingMapComment);
+    for (const selectionId of selectionIds) this.#drop(selectionId);
+    if (selectionIds.length > 0) this.#onChange?.();
+    return Object.freeze(comments);
   }
 
   consumeMany(selectionIds: readonly string[]): readonly PendingMapComment[] {
@@ -171,19 +208,30 @@ export class PendingMapCommentStore {
       if (comment === undefined) throw new TypeError('A referenced selection context is unknown.');
       return comment;
     });
-    for (const selectionId of selectionIds) this.remove(selectionId);
+    for (const selectionId of selectionIds) this.#drop(selectionId);
+    this.#onChange?.();
     return Object.freeze(comments);
   }
 
-  remove(selectionId: string): boolean {
+  #drop(selectionId: string): void {
     const comment = this.#comments.get(selectionId);
-    if (comment === undefined) return false;
+    if (comment === undefined) return;
     this.#comments.delete(selectionId);
+    this.#submitted.delete(selectionId);
     this.#onRemove?.(comment);
+  }
+
+  remove(selectionId: string): boolean {
+    if (this.#submitted.has(selectionId)) return false;
+    if (!this.#comments.has(selectionId)) return false;
+    this.#drop(selectionId);
+    this.#onChange?.();
     return true;
   }
 
   clear(): void {
-    for (const selectionId of [...this.#comments.keys()]) this.remove(selectionId);
+    if (this.#comments.size === 0) return;
+    for (const selectionId of [...this.#comments.keys()]) this.#drop(selectionId);
+    this.#onChange?.();
   }
 }

@@ -33,42 +33,56 @@ reports that they are unavailable.
 ## Page-owned map comments
 
 Wait for the style to load; the **Add map comment** control is disabled until
-then. Turn it on, then click the map. When rendered features overlap, choose
-the intended candidate and select the explicit **Next** button before drafting
-the comment. Enter a non-empty comment of at most 1,000 characters, choose one
-of these scopes, and select **Add**:
+then. Turn it on — the map cursor switches to a comment glyph — then click the
+map. When rendered features overlap, choose the intended candidate and select
+**下一步 (Next)** before drafting the comment. Enter a non-empty comment of at
+most 1,000 characters, choose one of these scopes, and select **添加 (Add)**:
 
-- **Feature** — one feature (requires a stable feature ID).
-- **Property class** — features in this layer with a selected scalar property
-  value.
-- **Layer** — all features in this layer.
+- **要素 (Feature)** — one feature (requires a stable feature ID).
+- **属性类 (Property class)** — features in this layer with a selected scalar
+  property value.
+- **图层 (Layer)** — all features in this layer.
 
-Use **Cancel** to abandon a draft. Adding a comment creates a numbered,
-persistent map pin and an accessible summary containing the selection UUID,
-visible feature identity, scope, and comment context. Focusing, hovering, or
-opening its pin highlights the selected geometry on demand; the pin's
-**Cancel pending comment** action removes that pin and its pending context.
-After **Add**, comment mode stays active so another map comment can be added.
+Use **取消 (Cancel)** to abandon a draft. Clicking another map location with
+an empty draft discards it and starts a new one there; a draft that already
+contains text is protected and clicks elsewhere are ignored. Adding a comment
+creates a numbered, persistent map pin (pins always renumber from 1) whose
+accessible summary contains the selection UUID, visible feature identity,
+scope, and comment context. Clicking a pin reopens the same popup in edit
+mode with **保存 (Save)**, **删除 (Delete)**, and **取消 (Cancel)**; hovering
+or focusing a pin still highlights the selected geometry on demand. After
+**添加**, comment mode stays active so another map comment can be added.
+
+Pending comments are listed in the **地图评论 (Map comments)** panel at the
+top right. Each entry shows the feature label and scope badge; the pin icon
+locates and expands the map pin, the pencil edits the comment text in place
+(the scope and feature stay fixed), and the trash icon deletes the entry.
+
+## Custom styles
+
+The technical drawer's **Custom style** section loads any MapLibre style by
+URL or by pasting a style JSON document. Loading a custom style clears all
+pending comments and pins because their feature references belong to the
+previous style.
 
 ## Native Annotation handoff and submission
 
-The page does not create a ChatGPT composer tag. After page **Add**, use native
-**Annotation** mode to annotate the accessible pin or its summary. This is the
-handoff boundary: native Annotation creates the composer tag, which includes
-the visible selection identity and comment context. Add any extra ChatGPT text
-needed in the composer, then submit one or several tags.
+**提交给 ChatGPT (Submit to ChatGPT)** in the panel locks every pending
+comment, removes their map pins, and shows a Chinese digest of the submitted
+comments. The digest is auto-selected and copied to the clipboard as a
+convenience, but no manual composer step is required: there is no public API
+for the page to create native composer tags, so submission relies on the
+consumption tool instead.
 
-For submitted tags, expect ChatGPT to make one batch
-`consumeMapSelectionContexts` call with all related selection UUIDs **before**
-calling the applicable style tools. The pending pins must disappear before the
-requested live style change appears. A UUID from a cancelled pin, page reset,
-or reload is stale: consumption safely returns `NOT_FOUND`; remove the stale
-native composer tag manually and submit only current tags.
+For submitted comments, expect ChatGPT to call `consumeMapSelectionContexts`
+**before** calling the applicable style tools. The tool accepts an explicit
+`selectionIds` list; when omitted, it consumes **every submitted comment at
+once**, so ChatGPT can process the whole submission directly after the user
+asks for it. Consumed pins disappear before the requested live style change
+appears. A UUID from a deleted comment, page reset, or reload is stale:
+consumption safely returns `NOT_FOUND`.
 
-Native tag creation and submission remain manual acceptance checks because
-there is no public composer automation API. Verify the page-owned flow with
-headless Chromium and verify the tag handoff manually in the native plugin
-environment; do not use Playwright runtime automation.
+Verify the page-owned flow with headless Chromium or a manual browser session.
 
 See the [WebMCP draft](https://webmachinelearning.github.io/webmcp/) and the
 [OpenAI Site tools guide](https://help.openai.com/en/articles/20001423-using-site-tools-in-the-chatgpt-desktop-app).

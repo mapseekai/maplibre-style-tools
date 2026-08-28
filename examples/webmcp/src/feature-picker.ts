@@ -1,5 +1,7 @@
 import type { Map as MapLibreMap, MapGeoJSONFeature, MapMouseEvent } from 'maplibre-gl';
 
+import { isCommentHighlightLayer } from './comment-highlight.js';
+
 import {
   isBoundedIdentity,
   type FeatureReference,
@@ -93,6 +95,7 @@ export const pickRenderedFeatures = (
   const candidates: FeatureCandidate[] = [];
   const candidateKeys = new Set<string>();
   for (const rawFeature of rendered) {
+    if (isCommentHighlightLayer(rawFeature.layer?.id)) continue;
     const candidate = projectFeature(rawFeature, lngLat);
     if (candidate === undefined) continue;
     const key = candidateKey(candidate);
@@ -119,6 +122,6 @@ export const propertyOptionsFor = (
     .map(([property, value]) => Object.freeze({ property, value, label: `${property} = ${String(value)}` })),
 );
 export const featureLabel = (feature: FeatureReference): string => {
-  const name = feature.properties.name;
-  return `${feature.layerId} · ${typeof name === 'string' && name !== '' ? name : 'unnamed feature'}`;
+  const name = feature.properties.name ?? feature.properties.NAME;
+  return `${feature.layerId} · ${typeof name === 'string' && name !== '' ? name : '未命名要素'}`;
 };

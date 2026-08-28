@@ -52,6 +52,16 @@ test('queries every rendered feature without a layer allowlist', () => {
   assert.equal(result.candidates[0]?.geometry.type, 'LineString');
 });
 
+test('excludes the comment highlight overlay layers from candidates', () => {
+  const result = pickRenderedFeatures(fakeMap([
+    rawFeature({ id: 7, layerId: 'webmcp-comment-highlight:maplibre:water:Polygon', source: 'maplibre', sourceLayer: 'water' }),
+    rawFeature({ id: 7, layerId: 'webmcp-comment-highlight:match:draft', source: 'maplibre', sourceLayer: 'water' }),
+    rawFeature({ id: 7, layerId: 'water', source: 'maplibre', sourceLayer: 'water' }),
+  ]), event);
+
+  assert.deepEqual(result.candidates.map(({ feature }) => feature.layerId), ['water']);
+});
+
 test('deduplicates before retaining the topmost ten', () => {
   const rendered = [
     rawFeature({ id: 1, layerId: 'top', source: 'base' }),

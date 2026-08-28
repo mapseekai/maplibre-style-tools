@@ -50,7 +50,7 @@ export interface WebMcpToolDefinitionLike {
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
   readonly annotations: WebMcpToolAnnotationsLike;
-  readonly execute: (input: Record<string, unknown>, options: { signal: AbortSignal }) => unknown | Promise<unknown>;
+  readonly execute: (input: Record<string, unknown>, options?: { readonly signal?: AbortSignal }) => unknown | Promise<unknown>;
 }
 
 export interface WebMcpModelContextLike {

@@ -1,35 +1,45 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Map Style Collaborator</title>
+    <title>地图样式协作</title>
   </head>
   <body>
-    <main class="app-shell">
-      <section id="map" data-testid="map" aria-label="Collaborative MapLibre style map"></section>
+    <main class="app-shell" data-testid="app-shell">
+      <section id="map" data-testid="map" aria-label="协作式 MapLibre 样式地图"></section>
       <header class="map-header">
-        <div><p class="eyebrow">WebMCP example</p><h1>Map Style Collaborator</h1></div>
-        <p data-testid="webmcp-support" aria-live="polite">Checking Site tools</p>
+        <div><p class="eyebrow">WebMCP 示例</p><h1>地图样式协作</h1></div>
+        <p data-testid="webmcp-support" aria-live="polite">正在检查站点工具</p>
       </header>
       <p class="map-message" data-testid="comment-status" aria-live="polite"></p>
       <section class="map-error" data-testid="map-load-error" hidden>
-        <p>Unable to load the demonstration map.</p>
-        <button type="button" data-testid="retry-map">Retry</button>
+        <p>演示地图加载失败。</p>
+        <button type="button" data-testid="retry-map">重试</button>
       </section>
       <details class="technical-drawer" data-testid="technical-drawer">
-        <summary>Site tools and activity</summary>
+        <summary>站点工具与活动</summary>
         <div class="drawer-content">
           <dl class="status-grid">
-            <dt>Browser security</dt><dd data-testid="secure-context">checking</dd>
-            <dt>Map revision</dt><dd data-testid="map-revision">0</dd>
-            <dt>Style hash</dt><dd data-testid="map-style-hash">checking</dd>
-            <dt>Layers</dt><dd data-testid="map-layer-count">0</dd>
+            <dt>浏览器安全</dt><dd data-testid="secure-context">检查中</dd>
+            <dt>地图版本</dt><dd data-testid="map-revision">0</dd>
+            <dt>样式哈希</dt><dd data-testid="map-style-hash">检查中</dd>
+            <dt>图层数</dt><dd data-testid="map-layer-count">0</dd>
           </dl>
-          <section><h2>Registered site tools</h2><div data-testid="registered-tools">Waiting for WebMCP support.</div></section>
-          <section><h2>Recent activity</h2><ol data-testid="activity-log" aria-live="polite"></ol></section>
-          <section><h2>Map controls</h2><button type="button" data-testid="reset-map">Reset local map</button></section>
-          <section><h2>Test prompts</h2><ul><li>List the layers in this map.</li><li>Make the selected roads more prominent.</li><li>Reset the style after a map edit.</li></ul></section>
+          <section><h2>已注册的站点工具</h2><div data-testid="registered-tools">等待 WebMCP 支持。</div></section>
+          <section><h2>最近活动</h2><ol data-testid="activity-log" aria-live="polite"></ol></section>
+          <section class="style-loader"><h2>自定义样式</h2>
+            <label class="field-row" for="style-url">样式 URL</label>
+            <div class="field-inline">
+              <input id="style-url" type="url" data-testid="style-url" placeholder="https://example.com/style.json" spellcheck="false" />
+              <button type="button" class="btn-secondary btn-compact" data-testid="load-style-url">加载 URL</button>
+            </div>
+            <label class="field-row" for="style-json">样式 JSON</label>
+            <textarea id="style-json" data-testid="style-json" rows="4" placeholder='{"version":8,"sources":{},"layers":[]}' spellcheck="false"></textarea>
+            <button type="button" class="btn-secondary btn-compact" data-testid="apply-style-json">应用 JSON</button>
+          </section>
+          <section><h2>地图控制</h2><button type="button" data-testid="reset-map">重置本地地图</button></section>
+          <section><h2>测试提示</h2><ul><li>列出这张地图的所有图层。</li><li>让选中的道路更醒目。</li><li>在地图修改后重置样式。</li></ul></section>
         </div>
       </details>
     </main>

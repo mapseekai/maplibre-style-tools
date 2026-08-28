@@ -16,6 +16,24 @@ test('defaults to the two read-only capability tools', () => {
   assert.equal(tools.every((tool) => tool.annotations.untrustedContentHint), true);
 });
 
+test('tolerates hosts that invoke execute without options or a signal', async () => {
+  const seen: AbortSignal[] = [];
+  const tools = createMapLibreWebMcpToolDefinitions({
+    allowMutations: false,
+    execute: async (_name, _input, signal) => { seen.push(signal); return { success: true, message: 'ok', data: null }; },
+  });
+
+  await tools[0]!.execute({ action: 'getRoot' });
+  await tools[1]!.execute({ action: 'getRoot' }, {});
+  await tools[0]!.execute({ action: 'getRoot' }, { signal: AbortSignal.abort('stop') });
+
+  assert.equal(seen.length, 3);
+  assert.equal(seen[0] instanceof AbortSignal, true);
+  assert.equal(seen[0]!.aborted, false);
+  assert.equal(seen[1]!.aborted, false);
+  assert.equal(seen[2]!.aborted, true);
+});
+
 test('projects all five tools without schema drift', () => {
   const tools = createMapLibreWebMcpToolDefinitions({ allowMutations: true, execute });
   assert.deepEqual(tools.map((tool) => tool.name), [

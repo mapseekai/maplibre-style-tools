@@ -23,6 +23,8 @@ const titles: Readonly<Record<CapabilityName, string>> = Object.freeze({
 
 const readOnlyTools = new Set<CapabilityName>(WEB_MCP_READ_ONLY_TOOLS);
 
+const neverAborted = new AbortController().signal;
+
 export function createMapLibreWebMcpToolDefinitions(options: {
   readonly allowMutations: boolean;
   readonly execute: WebMcpToolExecutor;
@@ -39,7 +41,7 @@ export function createMapLibreWebMcpToolDefinitions(options: {
       readOnlyHint: readOnlyTools.has(name),
       untrustedContentHint: true,
     }),
-    execute: (input: Record<string, unknown>, { signal }: { signal: AbortSignal }) =>
-      options.execute(name, input, signal),
+    execute: (input: Record<string, unknown>, execOptions?: { readonly signal?: AbortSignal }) =>
+      options.execute(name, input, execOptions?.signal ?? neverAborted),
   })));
 }

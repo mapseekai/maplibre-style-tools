@@ -11,7 +11,7 @@ test('provides a complete read-only pending comment summary', () => {
   assert.equal(pendingCommentSummary({
     selectionId: 'map-selection-1', comment: 'Inspect the lake.', scope: 'feature',
     feature: { layerId: 'places-fill', sourceId: 'places', featureId: 1, lngLat: [1, 2], properties: { class: 'water', name: 'Central Lake' } },
-  }), 'Pending map comment map-selection-1: Inspect the lake.; places-fill · Central Lake; places-fill; places; feature; feature ID 1; location 1, 2.');
+  }), '待处理评论 map-selection-1：Inspect the lake.；places-fill · Central Lake；图层 places-fill；数据源 places；范围 要素；要素 ID 1；位置 1, 2。');
 });
 
 test('keeps pins compact outside their interaction region and toggles persistent expansion', () => {

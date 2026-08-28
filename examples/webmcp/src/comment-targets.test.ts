@@ -150,6 +150,68 @@ test('feature scope accepts a whitespace-only stable feature id', () => {
   assert.equal(target.feature.featureId, '   ');
 });
 
+test('update keeps the selection identity and revalidates the comment', () => {
+  const store = createStore();
+  const added = store.add(featureTarget);
+
+  const updated = store.update(added.selectionId, { comment: 'Rewritten comment', scope: 'feature', feature });
+
+  assert.equal(updated.selectionId, added.selectionId);
+  assert.equal(updated.comment, 'Rewritten comment');
+  assert.equal(store.get(added.selectionId)?.comment, 'Rewritten comment');
+  assert.throws(() => store.update('unknown', featureTarget), /unknown/u);
+  assert.throws(() => store.update(added.selectionId, { comment: '   ', scope: 'feature', feature }), /non-empty/u);
+  assert.equal(store.get(added.selectionId)?.comment, 'Rewritten comment');
+});
+
+test('submitAll locks edits and removes while keeping contexts consumable', () => {
+  const store = createStore();
+  const one = store.add(featureTarget);
+  const two = store.add(layerTarget);
+
+  const submitted = store.submitAll();
+
+  assert.deepEqual(submitted.map((item) => item.selectionId), [one.selectionId, two.selectionId]);
+  assert.equal(store.isSubmitted(one.selectionId), true);
+  assert.equal(store.size, 2);
+  assert.throws(() => store.update(one.selectionId, layerTarget), /submitted/u);
+  assert.equal(store.remove(one.selectionId), false);
+  assert.equal(store.get(one.selectionId)?.comment, 'Feature comment');
+
+  const consumed = store.consumeMany([one.selectionId, two.selectionId]);
+  assert.equal(consumed.length, 2);
+  assert.equal(store.size, 0);
+  assert.equal(store.isSubmitted(one.selectionId), false);
+});
+
+test('onChange fires for add, update, submit, remove, consume, and clear', () => {
+  let changes = 0;
+  let issued = 0;
+  const store = new PendingMapCommentStore({
+    capacity: 20,
+    idFactory: () => `map-selection-${(issued += 1)}`,
+    onChange: () => { changes += 1; },
+  });
+  const added = store.add(featureTarget);
+  store.update(added.selectionId, layerTarget);
+  store.submitAll();
+  assert.equal(changes, 3);
+
+  store.consumeMany([added.selectionId]);
+  assert.equal(changes, 4);
+
+  const second = store.add(featureTarget);
+  assert.equal(changes, 5);
+  store.remove(second.selectionId);
+  assert.equal(changes, 6);
+  store.add(featureTarget);
+  assert.equal(changes, 7);
+  store.clear();
+  assert.equal(changes, 8);
+  store.clear();
+  assert.equal(changes, 8);
+});
+
 test('consumeMany returns contexts and removes their UI state atomically', () => {
   let removed = 0;
   const store = createStore(undefined, 20, () => { removed += 1; });
@@ -161,6 +223,31 @@ test('consumeMany returns contexts and removes their UI state atomically', () =>
   assert.deepEqual(result.map((item) => item.selectionId), [one.selectionId, two.selectionId]);
   assert.equal(store.size, 0);
   assert.equal(removed, 2);
+});
+
+test('consumeSubmitted consumes only submitted comments and keeps pending ones editable', () => {
+  let changes = 0;
+  const store = new PendingMapCommentStore({
+    capacity: 20,
+    idFactory: (() => { let next = 0; return () => `map-selection-${(next += 1)}`; })(),
+    onChange: () => { changes += 1; },
+  });
+  const first = store.add(featureTarget);
+  const second = store.add(layerTarget);
+  const submitted = store.submitAll();
+  assert.deepEqual(submitted.map((comment) => comment.selectionId), [first.selectionId, second.selectionId]);
+  const reopened = store.add(featureTarget);
+  assert.equal(changes, 4);
+
+  const consumed = store.consumeSubmitted();
+
+  assert.deepEqual(consumed.map((comment) => comment.selectionId), [first.selectionId, second.selectionId]);
+  assert.equal(store.size, 1);
+  assert.equal(store.get(reopened.selectionId), reopened);
+  assert.equal(store.isSubmitted(reopened.selectionId), false);
+  assert.equal(changes, 5);
+  assert.deepEqual(store.consumeSubmitted(), []);
+  assert.equal(changes, 5);
 });
 
 test('consumeMany rejects duplicate or unknown ids without deleting any target', () => {

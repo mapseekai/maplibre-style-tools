@@ -7,17 +7,29 @@ import type {
 } from './types.js';
 
 type WebMcpDocument = Document & { readonly modelContext?: WebMcpModelContextLike };
+type WebMcpNavigator = Navigator & { readonly modelContext?: WebMcpModelContextLike };
 
 const resolveDocument = (documentValue?: Document): Document | undefined =>
   documentValue ?? (typeof document === 'undefined' ? undefined : document);
 
-const modelContextFor = (documentValue?: Document): WebMcpModelContextLike | undefined => {
-  const candidate = resolveDocument(documentValue);
-  return candidate === undefined ? undefined : (candidate as WebMcpDocument).modelContext;
+export const resolveWebMcpModelContext = (documentValue?: Document): WebMcpModelContextLike | undefined => {
+  const explicit = documentValue === undefined
+    ? undefined
+    : (documentValue as WebMcpDocument).modelContext;
+  if (explicit !== undefined) return explicit;
+  if (documentValue === undefined && typeof document !== 'undefined') {
+    const fromDocument = (document as WebMcpDocument).modelContext;
+    if (fromDocument !== undefined) return fromDocument;
+  }
+  if (typeof navigator !== 'undefined') {
+    const fromNavigator = (navigator as WebMcpNavigator).modelContext;
+    if (fromNavigator !== undefined) return fromNavigator;
+  }
+  return undefined;
 };
 
 export function isWebMcpSupported(documentValue?: Document): boolean {
-  return typeof modelContextFor(documentValue)?.registerTool === 'function';
+  return typeof resolveWebMcpModelContext(documentValue)?.registerTool === 'function';
 }
 
 const normalizeExposedTo = (
@@ -53,10 +65,10 @@ const unsupportedRegistration = (): MapLibreWebMcpRegistration => ({
 export async function registerMapLibreWebMcpTools(
   options: RegisterMapLibreWebMcpToolsOptions,
 ): Promise<MapLibreWebMcpRegistration> {
-  const documentValue = resolveDocument(options.document);
-  const modelContext = modelContextFor(documentValue);
+  const modelContext = resolveWebMcpModelContext(options.document);
   if (typeof modelContext?.registerTool !== 'function') return unsupportedRegistration();
 
+  const documentValue = resolveDocument(options.document);
   const exposedTo = normalizeExposedTo(options.exposedTo);
   if (options.signal?.aborted) throw options.signal.reason;
 

@@ -88,7 +88,7 @@ test('adds a map comment and applies a WebMCP update from its consumed context',
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 
   await selectUpperCentralLake(page);
-  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: '下一步' }).click();
   const popupLayout = await page.locator('.maplibregl-popup').evaluate((popup) => {
     const content = popup.querySelector('.maplibregl-popup-content');
     const form = popup.querySelector('.comment-popup');
@@ -107,10 +107,10 @@ test('adds a map comment and applies a WebMCP update from its consumed context',
     popupFitsViewport: true,
     formFitsContent: true,
   });
-  await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('Please inspect the lake class.');
-  await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('property-class');
-  await page.getByRole('combobox', { name: 'Property', exact: true }).selectOption('class');
-  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('textbox', { name: '评论内容', exact: true }).fill('Please inspect the lake class.');
+  await page.getByRole('combobox', { name: '应用范围', exact: true }).selectOption('property-class');
+  await page.getByRole('combobox', { name: '属性', exact: true }).selectOption('class');
+  await page.getByRole('button', { name: '添加', exact: true }).click();
 
   const pin = page.getByTestId('pending-comment-pin');
   await expect(pin).toHaveCount(1);

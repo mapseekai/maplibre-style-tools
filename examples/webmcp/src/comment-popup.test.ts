@@ -37,8 +37,8 @@ test('accepts the exact comment bounds and rejects empty or oversized drafts', (
   assert.deepEqual(options.map(({ scope, enabled }) => [scope, enabled]), [
     ['feature', false], ['property-class', false], ['layer', true],
   ]);
-  assert.match(options[0]?.disabledReason ?? '', /stable feature ID/u);
-  assert.match(options[1]?.disabledReason ?? '', /scalar property/u);
+  assert.match(options[0]?.disabledReason ?? '', /稳定的要素 ID/u);
+  assert.match(options[1]?.disabledReason ?? '', /标量属性/u);
 });
 
 test('requires explicit Next for overlapping candidates', () => {
