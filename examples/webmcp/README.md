@@ -6,6 +6,12 @@ live MapLibre map. It uses the free, keyless
 the visible map attribution intact, and do not use this public demo tile
 service for production traffic.
 
+## Live demo
+
+The latest `main` build is deployed to GitHub Pages:
+<https://mapseekai.github.io/maplibre-style-tools/>. It is served over HTTPS
+(a secure context), so Site-tools detection works exactly as on localhost.
+
 ## Prerequisites and startup
 
 1. Use the latest supported ChatGPT desktop built-in browser, or an equivalent

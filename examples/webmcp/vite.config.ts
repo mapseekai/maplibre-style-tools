@@ -18,6 +18,8 @@ const emitMapLibreWorker = (): Plugin => ({
 });
 
 export default defineConfig({
+  // GitHub Pages serves project sites under /<repo>/; keep '/' for local dev.
+  base: process.env.WEBMCP_BASE ?? '/',
   plugins: [emitMapLibreWorker()],
   optimizeDeps: { exclude: ['maplibre-gl'] },
   root: new URL('.', import.meta.url).pathname,
