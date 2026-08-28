@@ -11,6 +11,7 @@ on:
       - .github/workflows/deploy-webmcp.yml
   workflow_dispatch:
 
+# Requires repo Settings → Pages → Source: GitHub Actions (one-time setup).
 permissions:
   contents: read
   pages: write
