@@ -9,7 +9,7 @@ service for production traffic.
 ## Live demo
 
 The latest `main` build is deployed to GitHub Pages:
-<https://mapseekai.github.io/maplibre-style-tools/>. It is served over HTTPS
+<https://mapseekai.github.io/maplibre-style-tools/webmcp/>. It is served over HTTPS
 (a secure context), so Site-tools detection works exactly as on localhost.
 
 ## Prerequisites and startup
