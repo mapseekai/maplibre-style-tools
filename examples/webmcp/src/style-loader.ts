@@ -1,5 +1,7 @@
 import type { StyleDocument } from 'maplibre-style-tools/core';
 
+import { isCommentHighlightLayer } from './comment-highlight.js';
+
 export type ParsedStyleUrl =
   | { readonly ok: true; readonly url: string }
   | { readonly ok: false; readonly error: string };
@@ -42,3 +44,12 @@ export const parseStyleJson = (value: string): ParsedStyleJson => {
   const style = parsed as StyleDocument;
   return { ok: true, style };
 };
+
+/**
+ * Strips page-internal overlay layers so the export reflects the authored
+ * style plus requested mutations, never the comment highlight scaffolding.
+ */
+export const styleForExport = (style: StyleDocument): StyleDocument => ({
+  ...style,
+  layers: style.layers.filter((layer) => !isCommentHighlightLayer(layer.id)),
+});

@@ -69,7 +69,9 @@ locates and expands the map pin, the pencil edits the comment text in place
 The technical drawer's **Custom style** section loads any MapLibre style by
 URL or by pasting a style JSON document. Loading a custom style clears all
 pending comments and pins because their feature references belong to the
-previous style.
+previous style. **导出 style.json (Export style.json)** downloads the current
+style document — including every mutation applied through the Site tools or
+the JSON loader — with the page-internal comment highlight layers stripped.
 
 ## Native Annotation handoff and submission
 

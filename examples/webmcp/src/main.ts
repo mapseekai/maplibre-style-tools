@@ -10,7 +10,7 @@ import { createCommentHighlight } from './comment-highlight.js';
 import { createPendingCommentMarkerView, pendingCommentSummary } from './comment-markers.js';
 import { createCommentPanel, type CommentPanelView } from './comment-panel.js';
 import { PendingMapCommentStore, type PendingMapCommentInput } from './comment-targets.js';
-import { parseStyleJson, parseStyleUrl } from './style-loader.js';
+import { parseStyleJson, parseStyleUrl, styleForExport } from './style-loader.js';
 
 const DEMO_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
 
@@ -179,6 +179,18 @@ const startWebMcpExample = async (): Promise<void> => {
     const parsed = parseStyleJson(requireElement<HTMLTextAreaElement>('style-json').value);
     if (!parsed.ok) { status.textContent = parsed.error; return; }
     loadCustomStyle(parsed.style);
+  }, { signal: pageLifetime.signal });
+  requireElement<HTMLButtonElement>('export-style-json').addEventListener('click', () => {
+    const style = map.getStyle() as StyleDocument | undefined;
+    if (style === undefined) { status.textContent = '样式尚未加载完成，暂无法导出。'; return; }
+    const exported = styleForExport(style);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'style.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = `已导出 style.json（${exported.layers.length} 个图层，包含当前全部修改）。`;
   }, { signal: pageLifetime.signal });
   window.addEventListener('pagehide', () => pageLifetime.abort(), { once: true, signal: pageLifetime.signal });
   pageLifetime.signal.addEventListener('abort', () => { controller.destroy(); markers.destroy(); highlight.destroy(); map.off('style.load', onStyleLoad); map.off('styledata', onStyleData); map.off('idle', onIdle); map.off('error', onError); }, { once: true });

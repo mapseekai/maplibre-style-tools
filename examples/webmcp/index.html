@@ -36,7 +36,10 @@
             </div>
             <label class="field-row" for="style-json">样式 JSON</label>
             <textarea id="style-json" data-testid="style-json" rows="4" placeholder='{"version":8,"sources":{},"layers":[]}' spellcheck="false"></textarea>
-            <button type="button" class="btn-secondary btn-compact" data-testid="apply-style-json">应用 JSON</button>
+            <div class="field-inline">
+              <button type="button" class="btn-secondary btn-compact" data-testid="apply-style-json">应用 JSON</button>
+              <button type="button" class="btn-secondary btn-compact" data-testid="export-style-json">导出 style.json</button>
+            </div>
           </section>
           <section><h2>地图控制</h2><button type="button" data-testid="reset-map">重置本地地图</button></section>
           <section><h2>测试提示</h2><ul><li>列出这张地图的所有图层。</li><li>让选中的道路更醒目。</li><li>在地图修改后重置样式。</li></ul></section>
