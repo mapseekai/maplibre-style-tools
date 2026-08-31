@@ -19,7 +19,7 @@ weight: 50
 | Geometry depth | 16 | 可覆盖的 standalone 默认值；transaction/runtime 接口 cap | Standalone 验证/分析可替换正安全整数 `maxGeometryDepth`；嵌入 transaction 与 runtime-diff 的验证使用 16。 |
 | Property depth | 32 | 可覆盖的 standalone 默认值；transaction/runtime 接口 cap | Standalone 验证/分析可替换正安全整数 `maxPropertyDepth`；嵌入 transaction 与 runtime-diff 的验证使用 32。 |
 | Feature query | 100 features and 1 MiB serialized | Direct-adapter 默认值；capability/bridge 最大值 | 直接 adapter 可以提供不同的正安全整数 `FeatureQueryLimits`。公开 capability input 与 bridge runtime 将请求限制在 100 和 1 MiB；`limit` 与 `maxSerializedBytes` 只能降低这些值，输出会被截断。 |
-| Runtime list | 300 default, 500 maximum | 默认值加固定 per-request 最大值 | 省略 `limit` 时使用 300；请求可选择 1–500，不能提高最大值。 |
+| Runtime list | 直接 adapter：300 default、500 maximum；共享 `runMapCommand`：100 default and maximum | 特定于边界的默认值与固定请求最大值 | 直接 MapLibre adapter 的 `listImages`/`listSprites` 在省略 `limit` 时使用 300，并接受 1–500。AI SDK、MCP 与 WebMCP 使用的共享 capability 在省略时提供 100，并拒绝高于 100 的请求。 |
 | Bridge message | 5 MiB | 可配置且协商的默认 ceiling | Server 公开一个正安全整数 ceiling；client 可以显式选择不超过它的数值，否则使用 5 MiB 与 server ceiling 中较低者。单独 frame field 在声明处仍保留更小的固定最大值。 |
 | MCP message | 5 MiB default; 128 KiB–64 MiB configurable range | 具有固定范围的可配置默认值 | `maxMessageBytes` 可配置为 128 KiB 至硬性 64 MiB 最大值；envelope reserve 会减少 application-result bytes。 |
 | MCP request ID | 256 bytes | 固定入站最大值 | 按 UTF-8 JSON bytes 计量；不可配置。 |
