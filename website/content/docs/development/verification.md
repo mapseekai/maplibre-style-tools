@@ -20,7 +20,7 @@ pnpm run verify:e2e
 ```
 
 - `pnpm run typecheck` verifies the TypeScript projects and their ambient-type boundaries.
-- `pnpm run lint` checks repository source and documentation formatting rules.
+- `pnpm run lint` checks authored JavaScript and TypeScript source with ESLint.
 - `pnpm run test` compiles and runs the repository test suite.
 - `pnpm run test:example:ai-chat`, `pnpm run test:example:bridge`, and `pnpm run test:example:webmcp` verify the runnable integrations.
 - `pnpm run check:package` verifies build output and package contracts, including public declaration closure.
@@ -34,4 +34,4 @@ go mod verify
 hugo --cleanDestinationDir --gc --minify --environment production --printPathWarnings --panicOnWarning
 ```
 
-Run the Hugo commands when changing public documentation. Treat warnings as failures so the generated site remains navigation- and link-safe.
+When changing public documentation, run both website checks: `go mod verify` verifies Go-module checksums, and the Hugo command validates and builds the production site. Treat Hugo warnings as failures so the generated site remains navigation- and link-safe.

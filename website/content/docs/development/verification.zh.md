@@ -20,7 +20,7 @@ pnpm run verify:e2e
 ```
 
 - `pnpm run typecheck` 验证 TypeScript project 及其 ambient-type 边界。
-- `pnpm run lint` 检查仓库源码与文档格式规则。
+- `pnpm run lint` 使用 ESLint 检查编写的 JavaScript 与 TypeScript 源码。
 - `pnpm run test` 编译并运行仓库测试套件。
 - `pnpm run test:example:ai-chat`、`pnpm run test:example:bridge` 和 `pnpm run test:example:webmcp` 验证可运行集成。
 - `pnpm run check:package` 验证构建输出与 package contract，包括公开声明闭包。
@@ -34,4 +34,4 @@ go mod verify
 hugo --cleanDestinationDir --gc --minify --environment production --printPathWarnings --panicOnWarning
 ```
 
-修改公开文档时应运行 Hugo 命令。将 warning 视为 failure，以保持生成站点的导航与链接安全。
+修改公开文档时应同时运行两项网站检查：`go mod verify` 验证 Go-module checksums，Hugo 命令验证并构建生产站点。将 Hugo warnings 视为 failures，以保持生成站点的导航与链接安全。
