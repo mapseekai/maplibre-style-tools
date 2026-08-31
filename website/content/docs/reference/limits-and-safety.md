@@ -4,31 +4,31 @@ description: Look up byte, count, depth, transport, and resource-policy boundari
 weight: 50
 ---
 
-The defaults and maxima below are public compatibility boundaries. Byte limits measure UTF-8 data or UTF-8 JSON serialization at the named boundary.
+The values below are public compatibility boundaries. Byte limits measure UTF-8 data or UTF-8 JSON serialization at the named boundary. “Overrideable default” means a direct API or configured Authority may replace the value with a positive safe integer; it does not bypass a stricter interface schema, negotiated ceiling, or fixed admission maximum.
 
 ## Default limits {#default-limits}
 
-| Boundary | Default or maximum |
-| --- | ---: |
-| Style JSON | 5 MiB |
-| Semantic diff | 1 MiB |
-| Operations per transaction | 100 |
-| Inline GeoJSON | 5 MiB |
-| GeoJSON features | 100,000 |
-| Coordinate positions | 1,000,000 |
-| Geometry depth | 16 |
-| Property depth | 32 |
-| Feature query | 100 features and 1 MiB serialized |
-| Runtime list | 300 default, 500 maximum |
-| Bridge message | 5 MiB |
-| MCP message | 5 MiB default, 64 MiB configurable maximum |
-| MCP request ID | 256 bytes |
-| MCP method | 128 bytes |
-| MCP resource URI | 8 KiB |
-| Style session ID | 512 bytes |
-| HTTP bearer token | 4 KiB |
+| Boundary | Published value | Classification | Configuration and scope |
+| --- | ---: | --- | --- |
+| Style JSON | 5 MiB | Overrideable default; fixed CLI input cap | Direct core/MapLibre and MCP session options accept positive-safe `maxStyleBytes`; bridge peers negotiate against the server ceiling. CLI Style input remains capped at 5 MiB, and an interface may impose a lower effective limit. |
+| Semantic diff | 1 MiB | Overrideable default; fixed CLI cap | Direct core/MapLibre and MCP session options accept positive-safe `maxDiffBytes`; bridge peers negotiate against the server ceiling. CLI and other unconfigured paths retain 1 MiB. |
+| Operations per transaction | 100 | Overrideable core/Authority default; interface schema cap | Direct core/MapLibre, MCP session, and bridge effective limits may replace `maxOperations`. The default capability model schema and CLI admit at most 100 unless a configured Authority applies a lower limit. |
+| Inline GeoJSON | 5 MiB | Overrideable standalone default; transaction interface cap | `validateInlineGeoJson` and `analyzeGeoJson` accept a positive-safe `maxBytes` override. Embedded transaction validation uses the published cap; runtime GeoJSON diffs instead use the separate 1 MiB diff-byte cap. |
+| GeoJSON features | 100,000 | Overrideable standalone default; transaction/runtime interface cap | Standalone validation/analysis may replace positive-safe `maxFeatures`; embedded transaction and runtime-diff validation use 100,000. |
+| Coordinate positions | 1,000,000 | Overrideable standalone default; transaction/runtime interface cap | Standalone validation/analysis may replace positive-safe `maxCoordinatePositions`; embedded transaction and runtime-diff validation use 1,000,000. |
+| Geometry depth | 16 | Overrideable standalone default; transaction/runtime interface cap | Standalone validation/analysis may replace positive-safe `maxGeometryDepth`; embedded transaction and runtime-diff validation use 16. |
+| Property depth | 32 | Overrideable standalone default; transaction/runtime interface cap | Standalone validation/analysis may replace positive-safe `maxPropertyDepth`; embedded transaction and runtime-diff validation use 32. |
+| Feature query | 100 features and 1 MiB serialized | Direct-adapter default; capability/bridge maximum | A direct adapter may supply different positive-safe `FeatureQueryLimits`. Public capability input and bridge runtime cap requests at 100 and 1 MiB; `limit` and `maxSerializedBytes` may only lower them, and output truncates. |
+| Runtime list | 300 default, 500 maximum | Default plus fixed per-request maximum | Omitting `limit` uses 300; a request may select 1–500 and cannot raise the maximum. |
+| Bridge message | 5 MiB | Configurable negotiated default ceiling | The server publishes a positive-safe ceiling; the client may explicitly select a value at or below it, otherwise it uses the lower of 5 MiB and the server ceiling. Individual frame fields retain smaller fixed maxima where declared. |
+| MCP message | 5 MiB default; 128 KiB–64 MiB configurable range | Configurable default with fixed range | `maxMessageBytes` may be configured from 128 KiB through the hard 64 MiB maximum; an envelope reserve reduces application-result bytes. |
+| MCP request ID | 256 bytes | Fixed admission maximum | Measured as UTF-8 JSON bytes; not configurable. |
+| MCP method | 128 bytes | Fixed admission maximum | Measured as UTF-8 bytes; not configurable. |
+| MCP resource URI | 8 KiB | Fixed admission maximum | Measured as UTF-8 bytes before canonical-namespace admission; not configurable. |
+| Style session ID | 512 bytes | Fixed admission maximum | The non-empty ID must contain no lone surrogate and remain within 512 UTF-8 bytes; its enclosing resource URI separately remains subject to the 8 KiB URI maximum. Not configurable. |
+| HTTP bearer token | 4 KiB | Fixed admission maximum | A token must be non-empty, contain no ASCII whitespace/control characters, and remain at or below 4 KiB UTF-8; not configurable. |
 
-Style, diff, transaction, GeoJSON, feature-query, and transport limits are enforced before an oversized value crosses its boundary. Some core and transport defaults can be lowered or configured through their documented options; named maxima cannot be exceeded.
+Style, diff, transaction, GeoJSON, feature-query, and transport limits are enforced before an oversized value crosses its boundary. The effective limit is the strictest applicable configured default, interface cap, negotiated ceiling, or fixed maximum. The classifications above follow the canonical [core transaction limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/transaction.ts), [GeoJSON limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/geojson.ts), [feature-query schemas](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/adapters/maplibre/schemas.ts), [bridge negotiation](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/client.ts), [MCP message policy](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/message-boundary.ts), [session limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/session-store.ts), and [HTTP admission](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/http.ts).
 
 ## Schema and projection safety {#schema-and-projection-safety}
 
