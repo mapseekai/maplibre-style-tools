@@ -28,13 +28,13 @@ The root entry is intentionally small: it re-exports core types plus `applyStyle
 | root | No | No | Pure core only |
 | `/core` | No | No | None |
 | `/maplibre` | Yes | No | In-process MapLibre map |
-| `/capabilities` | No | No | Caller-provided authorities |
+| `/capabilities` | Yes | No | Caller-provided authorities |
 | `/ai` | Through dependencies | Yes | AI SDK and in-process map |
 | `/webmcp` | Yes | No | Browser `document.modelContext` and in-process map |
 | `/mcp` | No | Yes | Node MCP host and optional bridge server |
 | `/bridge` | Yes | No | Browser map and protected WebSocket endpoint |
 
-“Ambient” describes the TypeScript global libraries visible through the public declaration boundary. It does not mean every import immediately performs runtime work.
+“Ambient” describes the TypeScript global libraries visible through the public declaration boundary. It does not mean every import immediately performs runtime work. The `/capabilities` declarations expose `AbortSignal` and export `MapStyleAuthority`, whose declaration imports MapLibre types, so consumers need DOM ambient types even when they provide a different authority; the boundary does not require Node ambient types.
 
 ## Selection rules {#selection-rules}
 

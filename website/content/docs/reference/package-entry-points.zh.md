@@ -28,13 +28,13 @@ weight: 10
 | root | No | No | Pure core only |
 | `/core` | No | No | None |
 | `/maplibre` | Yes | No | In-process MapLibre map |
-| `/capabilities` | No | No | Caller-provided authorities |
+| `/capabilities` | Yes | No | Caller-provided authorities |
 | `/ai` | Through dependencies | Yes | AI SDK and in-process map |
 | `/webmcp` | Yes | No | Browser `document.modelContext` and in-process map |
 | `/mcp` | No | Yes | Node MCP host and optional bridge server |
 | `/bridge` | Yes | No | Browser map and protected WebSocket endpoint |
 
-“Ambient” 描述通过公开声明边界可见的 TypeScript 全局库，并不表示每次导入都会立即执行运行时工作。
+“Ambient” 描述通过公开声明边界可见的 TypeScript 全局库，并不表示每次导入都会立即执行运行时工作。`/capabilities` 声明公开了 `AbortSignal`，并导出 `MapStyleAuthority`；后者的声明会导入 MapLibre 类型，因此即使消费者提供其他 Authority，也需要 DOM ambient 类型；该边界不需要 Node ambient 类型。
 
 ## 选择规则 {#selection-rules}
 

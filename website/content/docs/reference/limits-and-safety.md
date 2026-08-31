@@ -34,7 +34,7 @@ Style, diff, transaction, GeoJSON, feature-query, and transport limits are enfor
 
 Public capability schemas use strict objects and native JSON values. Unknown properties, non-finite numbers, malformed discriminators, and values above declared limits are rejected before authority execution.
 
-Inspection, mutation, runtime-list, and feature-query results are bounded projections rather than complete unbounded runtime state. Results report `returned` and `truncated`, preserve bounded warnings, and keep feature-query serialization within the caller's allowed value and the public maximum.
+Inspection projections and feature-query projections report both `returned` and `truncated`. List-form runtime command results expose those fields on their nested `BoundedCollection`. Mutation receipts and `acknowledgement`-form runtime command receipts expose `truncated` but no `returned`. These bounded outputs preserve bounded warnings and keep feature-query serialization within the caller's allowed value and the public maximum.
 
 ## Transaction and revision safety {#transaction-and-revision-safety}
 

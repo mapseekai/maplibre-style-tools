@@ -34,7 +34,7 @@ Style、diff、事务、GeoJSON、要素查询与传输限制会在超限值跨�
 
 公开能力 Schema 使用严格对象与原生 JSON 值。未知属性、非有限数值、格式错误的判别字段以及超过声明限制的值，会在 Authority 执行前被拒绝。
 
-检查、变更、运行时列表与要素查询结果都是有界投影，而不是完整且无界的运行时状态。结果会报告 `returned` 与 `truncated`，保留有界 warnings，并让要素查询序列化保持在调用方允许值和公开最大值以内。
+检查投影与要素查询投影同时报告 `returned` 和 `truncated`。列表形式的运行时命令结果在嵌套的 `BoundedCollection` 上公开这两个字段。变更回执与 `acknowledgement` 形式的运行时命令回执公开 `truncated`，但没有 `returned`。这些有界输出会保留有界 warnings，并让要素查询序列化保持在调用方允许值和公开最大值以内。
 
 ## 事务与修订安全 {#transaction-and-revision-safety}
 
