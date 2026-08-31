@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">maplibre-style-tools</title>
+  <path fill="#3969ac" d="M32 4 58 18 32 32 6 18 32 4Z"/>
+  <path fill="#11a579" d="m6 29 26 14 26-14v10L32 53 6 39V29Z"/>
+  <path fill="#f2b701" d="m6 42 26 14 26-14v8L32 64 6 50v-8Z"/>
+</svg>

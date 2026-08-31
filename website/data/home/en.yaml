@@ -1,0 +1,37 @@
+sections: [hero, cards, cta]
+
+hero:
+  align: center
+  eyebrow: MapLibre style tooling
+  title_lines:
+    - words: [{ text: Inspect styles. }]
+    - words: [{ text: Change them with confidence. }]
+  lead: One bounded capability layer for Core, MapLibre, AI SDK, MCP, WebMCP, browser bridge, and CLI integrations.
+  actions:
+    - { label: Read the docs, url: docs/, icon: fa-solid fa-book, style: primary }
+    - { label: View on GitHub, url: https://github.com/mapseekai/maplibre-style-tools, icon: fa-brands fa-github, style: ghost }
+
+cards:
+  eyebrow: Choose a path
+  title: Start from the interface you need
+  columns: 3
+  items:
+    - title: Understand the architecture
+      desc: Learn how the core, capability registry, authorities, and interfaces fit together.
+      icon: fa-solid fa-diagram-project
+      url: docs/introduction/
+    - title: Complete a first integration
+      desc: Install the package and inspect a MapLibre style through AI SDK or CLI.
+      icon: fa-solid fa-rocket
+      url: docs/getting-started/
+    - title: Select an interface
+      desc: Compare Core, MapLibre, AI SDK, MCP, WebMCP, bridge, and CLI workflows.
+      icon: fa-solid fa-code-branch
+      url: docs/guides/
+
+cta:
+  title: Need an exact contract?
+  text: Look up package entry points, capability inputs, errors, limits, and CLI behavior.
+  label: Open the reference
+  url: docs/reference/
+  style: primary
