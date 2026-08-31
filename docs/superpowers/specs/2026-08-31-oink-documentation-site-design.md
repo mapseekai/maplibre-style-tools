@@ -13,6 +13,12 @@ reference, and maintainer documentation. It deploys from the existing
 repository to GitHub Pages at
 `https://mapseekai.github.io/maplibre-style-tools/`.
 
+The repository already publishes the WebMCP example to the same GitHub Pages
+site at `/webmcp/`. GitHub Pages accepts one deployed artifact per site, so the
+documentation and example must be assembled and deployed by one workflow. The
+documentation becomes the site root; the existing WebMCP example keeps its
+current `/webmcp/` URL and behavior.
+
 The documentation site is a self-contained Hugo Module. It does not replace or
 relocate the root `README.md`, `README.zh-CN.md`, `CHANGELOG.md`, or the existing
 `docs/` tree. In particular, internal design specifications and implementation
@@ -66,6 +72,8 @@ content.
   one deterministic Hugo build.
 - Deploy automatically to the repository's GitHub Pages site after a successful
   warning-strict build on `main`.
+- Preserve the existing WebMCP example at `/webmcp/` inside the same Pages
+  deployment artifact.
 - Validate documentation with repository evidence and fresh-reader testing.
 
 ## Non-goals
@@ -121,7 +129,16 @@ Repository compatibility contracts
      warning-strict Hugo build
                   |
                   v
- GitHub Pages + Markdown/LLMS outputs
+GitHub Pages + Markdown/LLMS outputs
+```
+
+The Pages artifact is assembled explicitly:
+
+```text
+website/public/          ─┐
+                          ├─> .tmp/pages/ ─> GitHub Pages
+examples/webmcp/dist/ ────┘       ├─ /index.html
+                                  └─ /webmcp/index.html
 ```
 
 Keeping the site in this repository makes documentation changes reviewable
@@ -161,7 +178,8 @@ website/
         ├── reference/
         └── development/
 
-.github/workflows/deploy-docs.yml
+.github/workflows/deploy-pages.yml
+# replaces .github/workflows/deploy-webmcp.yml
 ```
 
 `website/go.mod` pins OINK v1.0.0 and declares Go 1.27.0. `website/go.sum`
@@ -303,24 +321,45 @@ hugo --cleanDestinationDir --gc --minify --environment production \
   --printPathWarnings --panicOnWarning
 ```
 
-`.github/workflows/deploy-docs.yml` follows the official OINK Starter GitHub
-Pages workflow and uses:
+`.github/workflows/deploy-pages.yml` replaces the existing
+`.github/workflows/deploy-webmcp.yml`. A second deployment workflow is not
+allowed because independent Pages deployments would overwrite one another.
+The combined workflow follows the official OINK Starter GitHub Pages workflow
+and preserves the existing WebMCP example build. It uses:
 
 - Go from `website/go.mod`;
 - Hugo Extended 0.165.0;
 - cached Hugo modules keyed by the module checksums;
+- Node.js 22 and pnpm 10.10.0 for the existing WebMCP example build;
 - GitHub Pages configuration, artifact upload, and deployment Actions;
-- `website/public/` as the deployment artifact;
+- `.tmp/pages/` as the single deployment artifact;
 - least-privilege Pages and OIDC permissions;
 - deployment concurrency that cancels stale in-progress publishes.
 
-Pull requests that modify `website/**`, the workflow, or documentation-relevant
-public contracts run the strict build but do not deploy. Pushes to `main` run
-the same build and deploy only after it succeeds. A manual workflow trigger
-allows a clean rebuild without a source change.
+The build assembles the artifact in this order:
 
-The workflow is independent of npm packaging and existing application example
-deployments. It must not alter the package build matrix or publish npm output.
+1. Build the package and WebMCP example with the existing
+   `pnpm run build:example:webmcp` flow and
+   `WEBMCP_BASE=/maplibre-style-tools/webmcp/`.
+2. Build the OINK site from `website/` with the Pages base URL at the repository
+   root.
+3. Copy `website/public/` to `.tmp/pages/`.
+4. Copy `examples/webmcp/dist/` to `.tmp/pages/webmcp/`.
+5. Assert that both `.tmp/pages/index.html` and
+   `.tmp/pages/webmcp/index.html` exist before upload.
+
+The previous HTML redirect at the Pages root is removed because the OINK home
+page now owns `/`. No WebMCP output path or application behavior changes.
+
+Pull requests that modify `website/**`, the combined workflow, the WebMCP
+example, or documentation-relevant public contracts run both builds and the
+artifact assertions but do not deploy. Pushes to `main` run the same build and
+deploy only after it succeeds. A manual workflow trigger allows a clean rebuild
+without a source change.
+
+The workflow is independent of npm publishing and must not alter the package
+build matrix or publish npm output. It does own both public Pages surfaces:
+OINK at the root and WebMCP at `/webmcp/`.
 
 ## Validation
 
@@ -337,6 +376,8 @@ Implementation verification consists of the following gates.
   - `public/llms.txt` and `public/zh/llms.txt`;
   - semantic Markdown outputs for representative pages;
   - local-search indexes for both languages.
+- The combined artifact contains the existing WebMCP example at
+  `.tmp/pages/webmcp/index.html`.
 
 ### Repository fact check
 
@@ -356,7 +397,9 @@ Implementation verification consists of the following gates.
 Because the site must not change runtime behavior, run the repository's
 existing typecheck, lint, unit test, package-contract, example, and relevant
 E2E verification commands after the documentation files and workflow are in
-place. Any failure is treated as an implementation failure even if Hugo builds.
+place. The WebMCP example build and E2E checks are mandatory because its Pages
+artifact is now assembled by the combined workflow. Any failure is treated as
+an implementation failure even if Hugo builds.
 
 ### Reader testing
 
@@ -386,6 +429,8 @@ defined. Any gap returns to content refinement before completion.
   qualified rather than guessed.
 - A deployment failure does not rewrite or remove the last successful Pages
   deployment.
+- A missing documentation root or WebMCP entry point blocks artifact upload so
+  one public surface cannot silently replace the other.
 - The implementation does not modify root documentation or package behavior to
   make the site build; site-specific fixes remain inside `website/` or its
   workflow.
@@ -404,7 +449,9 @@ The documentation site is complete when:
 5. Local module verification and warning-strict production builds pass.
 6. Existing repository verification passes without runtime or package-contract
    changes.
-7. The GitHub Pages workflow builds on pull requests and deploys from `main`.
+7. One GitHub Pages workflow builds on pull requests, deploys from `main`, and
+   publishes OINK at `/` plus the WebMCP example at `/webmcp/` from one
+   artifact.
 8. English and Chinese reader tests answer the discovery questions correctly
    and report no unresolved contradictions or material ambiguity.
 9. The deployed site is reachable at
@@ -426,6 +473,8 @@ The documentation site is complete when:
   separately verified dependency change.
 - **Pages path errors:** set the repository subpath base URL, build with path
   warnings promoted to errors, and verify representative deployed routes.
+- **Pages artifact collision:** replace the existing WebMCP-only deployment
+  with one combined workflow and assert both root entry points before upload.
 - **Toolchain mismatch:** pin Go and Hugo in CI and document the same versions
   for local contributors.
 
@@ -434,7 +483,9 @@ The documentation site is complete when:
 Implementation may add or modify only:
 
 - `website/**`;
-- `.github/workflows/deploy-docs.yml`;
+- `.github/workflows/deploy-pages.yml`;
+- removal of `.github/workflows/deploy-webmcp.yml` after its WebMCP build and
+  deployment behavior has moved unchanged into the combined workflow;
 - a minimal root README link to the published documentation, if the final site
   URL is live and the link is verified.
 
