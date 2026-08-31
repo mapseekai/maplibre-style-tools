@@ -26,7 +26,7 @@ Use `querySourceFeaturesBounded` or `queryRenderedFeaturesBounded` for feature r
 
 ## Incremental GeoJSON {#incremental-geojson}
 
-Validate incremental GeoJSON source changes with the runtime schema before calling MapLibre's `updateData`. The schema accepts one or more effective `removeAll`, `remove`, `add`, or `update` actions and rejects duplicate feature or property identifiers.
+Validate incremental GeoJSON source changes with the runtime schema before calling MapLibre's `updateData`. The schema accepts one or more effective `removeAll`, `remove`, `add`, or `update` actions. IDs must be unique within `remove` and within `update`, and property keys must be unique within each update; IDs may be reused across `remove`, `add`, and `update`, and `add` does not require unique IDs.
 
 ```ts
 import { runtimeGeoJsonSourceDiffSchema } from 'maplibre-style-tools/maplibre';

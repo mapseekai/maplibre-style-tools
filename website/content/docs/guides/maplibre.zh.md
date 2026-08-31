@@ -26,7 +26,7 @@ weight: 20
 
 ## 增量 GeoJSON {#incremental-geojson}
 
-在调用 MapLibre 的 `updateData` 前，使用运行时 Schema 验证增量 GeoJSON 源变更。Schema 接受一个或多个有效的 `removeAll`、`remove`、`add` 或 `update` 操作，并拒绝重复的要素或属性标识符。
+在调用 MapLibre 的 `updateData` 前，使用运行时 Schema 验证增量 GeoJSON 源变更。Schema 接受一个或多个有效的 `removeAll`、`remove`、`add` 或 `update` 操作。`remove` 内部和 `update` 内部的 ID 必须唯一，每个更新内的属性键也必须唯一；ID 可以在 `remove`、`add` 和 `update` 之间复用，`add` 不要求唯一 ID。
 
 ```ts
 import { runtimeGeoJsonSourceDiffSchema } from 'maplibre-style-tools/maplibre';
