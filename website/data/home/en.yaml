@@ -30,8 +30,8 @@ cards:
       url: docs/guides/
 
 cta:
-  title: Need an exact contract?
-  text: Look up package entry points, capability inputs, errors, limits, and CLI behavior.
+  title: Need contract guidance?
+  text: Use the curated, non-exhaustive reference for package entry points, capability contracts, errors, limits, and CLI behavior.
   label: Open the reference
   url: docs/reference/
   style: primary

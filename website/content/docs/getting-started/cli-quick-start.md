@@ -24,7 +24,7 @@ maplibre-style inspect style.json --query road
 maplibre-style apply style.json --operations operations.json --dry-run
 ```
 
-`--dry-run` reports the candidate without writing it.
+`--dry-run` returns the mutation receipt and optional semantic diff without writing. It never returns a complete candidate Style or `data.style`.
 
 ## Write intentionally {#write-intentionally}
 

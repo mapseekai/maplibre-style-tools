@@ -24,7 +24,7 @@ maplibre-style inspect style.json --query road
 maplibre-style apply style.json --operations operations.json --dry-run
 ```
 
-`--dry-run` 只报告候选结果，不会写入文件。
+`--dry-run` 返回变更收据和可选的语义差异，但不会写入文件。它绝不会返回完整的候选 Style 或 `data.style`。
 
 ## 有意地写入 {#write-intentionally}
 

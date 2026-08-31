@@ -30,8 +30,8 @@ cards:
       url: docs/guides/
 
 cta:
-  title: 需要精确契约？
-  text: 查询软件包入口、能力输入、错误、限制和 CLI 行为。
+  title: 需要契约指南？
+  text: 查阅经过整理但非穷举的参考，了解软件包入口、能力契约、错误、限制和 CLI 行为。
   label: 打开参考
   url: docs/reference/
   style: primary
