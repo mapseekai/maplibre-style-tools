@@ -4,11 +4,11 @@ description: 以只读默认值和显式写入授权注册页面级浏览器工�
 weight: 60
 ---
 
-当兼容浏览器将 Site tools 暴露给与同一页面及其 MapLibre 地图协作的 AI agent 时，请使用 `/webmcp`。注册是页面级且仅限浏览器；它既不需要 MCP server 进程，也不需要浏览器桥接。
+当浏览器向页面公开 `document.modelContext` 时，请使用 `/webmcp`。WebMCP Site tools 是带描述与结构化 Schema 的 JavaScript 函数；浏览器会让与该页面协作的 Agent 发现并调用它们。注册是页面级且仅限浏览器；它既不需要 MCP server 进程，也不需要浏览器桥接。
 
 ## 何时使用 WebMCP {#when-to-use-webmcp}
 
-WebMCP 用于实时的页面内交互，其中页面仍是地图访问的 authority。当外部 MCP host 需要 wire-protocol server 时请使用 [MCP](../mcp/)；仅当该 host 必须访问浏览器地图时才使用[浏览器桥接](../bridge/)。
+WebMCP 用于实时的页面内交互，其中页面仍是地图访问的 authority。所需的浏览器表面是 `document.modelContext`；支持情况在注册时进行 feature detection。当外部 MCP host 需要 wire-protocol server 时请使用 [MCP](../mcp/)；仅当该 host 必须访问浏览器地图时才使用[浏览器桥接](../bridge/)。
 
 ## 只读注册 {#read-only-registration}
 
@@ -25,7 +25,7 @@ if (!registration.supported) {
 }
 ```
 
-默认注册只公开 `inspectStyle` 和 `queryMapFeatures`。浏览器未提供 WebMCP Site tools 时，注册会以 `supported: false` 结束；应将其视为 feature-detection 结果，而不是默默添加另一种传输方式的许可。
+默认注册只公开 `inspectStyle` 和 `queryMapFeatures`。`document.modelContext` 不可用时，注册会以 `supported: false` 结束；应将其视为预期的 feature-detection 结果，而不是错误或默默添加另一种传输方式的许可。WebMCP 仍是演进中的 Community Group draft，因此不要从固定的浏览器版本列表推断支持情况；请查看权威的 [WebMCP draft](https://webmachinelearning.github.io/webmcp/)与当前 [Web Platform Test 结果](https://wpt.fyi/results/webmcp)。
 
 ## 显式写入授权 {#mutation-opt-in}
 
@@ -37,4 +37,4 @@ if (!registration.supported) {
 
 ## 与 MCP 的区别 {#how-it-differs-from-mcp}
 
-WebMCP 在兼容浏览器中注册 JavaScript 工具。`/mcp` 是通过 stdio 或受保护 HTTP 使用 MCP wire protocol 的 server。两者都投影共享能力，但 WebMCP 默认是两个只读页面工具，而 MCP 还可以管理有边界的离线会话和已注册的实时地图目标。
+WebMCP 会在支持该表面的浏览器中，把适用的共享注册表契约注册为 JavaScript 工具。`/mcp` 是通过 stdio 或受保护 HTTP 使用 MCP wire protocol 的 server。WebMCP 默认是两个只读页面工具；MCP 公开全部五个 capability 名称，还可以管理有边界的离线会话和已注册的实时地图目标。

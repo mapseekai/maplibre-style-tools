@@ -50,6 +50,6 @@ MCP validates bounded request IDs, methods, resource URIs, session IDs, total me
 
 ## Resource policy {#resource-policy}
 
-Bridge resource policy admits new network references only when the connection has `network.load` and the resolved URL matches the configured origin, prefix, data-URL, or registered custom-protocol policy. Relative Style resource URLs and forbidden protocols are rejected; retained baseline references do not gain new network authority.
+Bridge resource policy admits new network references only when the connection has the additional `network.load` permission and the resolved URL matches the configured origin, prefix, data-URL, or registered custom-protocol policy. `network.load` does not authorize a callable operation by itself; see the [bridge permission-to-operation mapping](../../guides/bridge/#capabilities). Relative Style resource URLs and forbidden protocols are rejected; retained baseline references do not gain new network authority.
 
 `analyzeGeoJson` does not fetch remote GeoJSON. For a URL input it returns a successful analysis result with `available: false` and reason `remote-url`, allowing the caller to decide whether and where fetching is authorized.

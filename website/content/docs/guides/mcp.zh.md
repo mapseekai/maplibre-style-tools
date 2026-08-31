@@ -31,6 +31,8 @@ HTTP 默认绑定到 loopback（`127.0.0.1`）。非 loopback 绑定需要 `--al
 
 Style 会话是有边界的内存文档工作流。将已验证的 Style 打开为会话，在带 revision 的文档上操作，并在结束时关闭它。会话标识符属于应用数据，与 MCP transport-session 标识符不同。即使同时连接了浏览器地图，会话目标仍保持离线。
 
+完整的字段级 MCP、session 与 resource 形状应以规范的[公开 DTO 声明](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts)、[resource URI 契约](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.ts)、[MCP contract tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/contract.test.ts)和 [resource tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.test.ts)为准。本指南有意覆盖受支持工作流，而不重复每个 DTO。
+
 ## 实时地图扩展 {#live-map-extension}
 
-实时地图扩展让 MCP 工具可以定位到通过[浏览器桥接](../bridge/)连接的浏览器地图。使用 bridge 选项启动 MCP host，然后仅授予页面所需的 bridge capability 与资源 origin。该扩展不会把离线会话变成实时地图：实时目标必须由已连接的浏览器客户端注册。
+实时地图扩展让 MCP 工具可以定位到通过[浏览器桥接](../bridge/)连接的浏览器地图。使用 bridge 选项启动 MCP host，然后仅授予页面所需的 bridge permission 与资源 origin。该扩展不会把离线会话变成实时地图：实时目标必须由已连接的浏览器客户端注册。

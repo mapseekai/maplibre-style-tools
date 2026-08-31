@@ -38,4 +38,4 @@ The root entry is intentionally small: it re-exports core types plus `applyStyle
 
 ## Selection rules {#selection-rules}
 
-Use `/core` for transport-neutral Style documents, `/maplibre` when application code already owns a `Map`, and `/capabilities` when building a custom interface over caller-provided authorities. Use `/ai`, `/webmcp`, or `/mcp` for their named integration. Use `/bridge` only for the browser side of a protected live-map connection; the Node bridge server is exported by `/mcp`.
+Use `/core` for transport-neutral Style documents, `/maplibre` when application code already owns a `Map`, and `/capabilities` in a DOM-capable host when building a custom interface over caller-provided authorities. Use `/ai`, `/webmcp`, or `/mcp` for their named integration. Use `/bridge` only for the browser side of a protected live-map connection; the Node bridge server is exported by `/mcp`.

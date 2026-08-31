@@ -21,7 +21,7 @@ AI SDK | MCP | WebMCP | CLI
  Core document | live MapLibre map | browser bridge
 ```
 
-The `capabilityRegistry` is the shared catalogue of descriptions, strict input schemas, runtime requirements, and executors. Thin interfaces project that catalogue into their own tool format instead of defining divergent operations.
+The `capabilityRegistry` is the shared catalogue of descriptions, strict input schemas, runtime requirements, and executors. Thin interfaces project the applicable subset of that catalogue into their own tool format instead of defining divergent operations; the CLI and default WebMCP surface intentionally expose subsets.
 
 ## Style authorities {#style-authorities}
 
@@ -36,9 +36,9 @@ A `RuntimeAuthority` is available only when a live map exists. It supplies runti
 ## Ambient type boundaries {#ambient-type-boundaries}
 
 - `/core` is ES-only.
-- `/maplibre`, `/webmcp`, and browser `/bridge` are DOM-capable without Node ambient types.
+- `/maplibre`, `/capabilities`, `/webmcp`, and browser `/bridge` are DOM-capable without Node ambient types.
 - `/mcp` and `/ai` are Node-capable where required.
 
-These boundaries are part of the public integration contract: import the narrowest entry point that fits the host environment.
+These boundaries are part of the public integration contract: import the narrowest entry point that fits the host environment. `/capabilities` exposes `AbortSignal` and MapLibre-backed authority declarations, so its public declaration closure needs DOM types even when a caller supplies another authority.
 
 Next, see the [shared capability model](../capabilities/).

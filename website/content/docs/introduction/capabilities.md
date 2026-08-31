@@ -4,11 +4,13 @@ description: The five shared operations, result envelope, and runtime requiremen
 weight: 30
 ---
 
-The capability layer gives every interface one set of named operations, strict schemas, and bounded results.
+The capability layer defines one set of named operations, strict schemas, and bounded results. Each interface exposes the subset that applies to its host.
+
+Here, **bounded** means that inputs and outputs are constrained by explicit schemas plus byte, count, depth, timeout, and authority limits. Depending on the boundary, an oversized or unauthorized value is rejected, or an output projection is truncated and marked as such. See [Limits and Safety](../../reference/limits-and-safety/).
 
 ## Shared registry {#shared-registry}
 
-`capabilityRegistry` is the transport-neutral source of truth for a capability’s description, input schema, model input schema, runtime requirement, and executor. AI SDK, MCP, WebMCP, and CLI integrations project this registry into their own transport without changing its semantics.
+`capabilityRegistry` is the transport-neutral source of truth for a capability’s description, input schema, model input schema, runtime requirement, and executor. AI SDK, MCP, WebMCP, and CLI integrations project the applicable registry contracts into their own transport without changing their semantics. This is semantic consistency, not a promise that every interface exposes all five names: the CLI is document-oriented, and default WebMCP exposes two read-only tools.
 
 ## The five capabilities {#five-capabilities}
 

@@ -1,6 +1,6 @@
 ---
 title: Docs
-description: Learn the architecture, complete an integration, and look up exact public contracts.
+description: Learn the architecture, complete an integration, and browse curated supported-contract guidance.
 type: docs
 icon: fa-solid fa-book
 sidebar_root_for: self

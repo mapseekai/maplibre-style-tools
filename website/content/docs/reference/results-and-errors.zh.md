@@ -16,6 +16,17 @@ type CapabilityResult<TData> =
 
 读取 `data` 或 `error` 前应先检查 `success`。成功结果包含能力专用的投影或回执。失败结果包含软件包创建的 `StyleToolError`；顶层 `message` 是该失败的公开摘要。
 
+## Core 与 capability 失败层 {#core-capability-failures}
+
+Core 文档函数与 capability interface 使用不同判别字段，因为它们属于不同层：
+
+| Layer | Failure discriminator | Meaning |
+| --- | --- | --- |
+| 直接 `/core` 事务 | `ok: false` | Core transaction result 保留原始 Style、空的 changed-object list、空 diff、warnings 与其 `error`。 |
+| Capability 与 interface | `success: false` | Capability 边界把预期的 core 或 Authority failure 投影为共享 `CapabilityResult`，其中包含公开 `message` 与 `error`，且不存在成功 `data`。 |
+
+应根据所调用的 API 选择判别字段。Interface adapter 不会把失败的 core result 变成成功的 capability data。规范形状位于 [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts)与[能力契约](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts)中。
+
 ## 错误字段 {#error-fields}
 
 | Field | Type | Meaning |

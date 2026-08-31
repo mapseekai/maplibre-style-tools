@@ -41,4 +41,4 @@ Use `composeFilter` when building a combined MapLibre expression filter, or use 
 
 ## Atomic failure {#atomic-failure}
 
-Transactions are atomic at the document boundary. If any operation fails, or the final candidate fails Style validation, `applyStyleTransaction` returns `ok: false` with the original Style, empty changed-layer/source lists, and an empty diff. No partially transformed candidate is returned. For a live-map mutation after a successful preparation, use the [MapLibre adapter](../maplibre/).
+Transactions are atomic at the document boundary. If any operation fails, or the final candidate fails Style validation, `applyStyleTransaction` returns `ok: false` with the original Style, empty changed-layer/source lists, and an empty diff. No partially transformed candidate is returned. This direct core discriminator is distinct from the capability-layer `success: false` envelope; see [Core and capability failure layers](../../reference/results-and-errors/#core-capability-failures). For a live-map mutation after a successful preparation, use the [MapLibre adapter](../maplibre/).

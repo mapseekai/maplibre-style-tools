@@ -1,20 +1,20 @@
 ---
 title: Capability Contracts
-description: Compare inputs, outputs, authority needs, and interface availability.
+description: Compare curated input/output guidance, authority needs, and interface availability.
 weight: 30
 ---
 
-The five public capabilities share one registry, strict schemas, and a common result envelope. The table is the compatibility matrix for their public input and success-data types.
+The five public capabilities share one registry, strict schemas, and a common result envelope. This page is a curated compatibility guide to their public input and success-data types; it is not an exhaustive field-level API reference.
 
 ## Capability matrix {#capability-matrix}
 
 | Capability | Input type | Success data | Runtime | AI SDK | MCP | WebMCP | CLI |
 | --- | --- | --- | ---: | ---: | ---: | --- | --- |
-| `inspectStyle` | `InspectStyleInput` | `InspectionProjection` | No | Yes | Yes | Default | `inspect`; `validate` covers validation actions |
-| `applyStyleTransaction` | `ApplyStyleTransactionInput` | `StyleMutationReceipt` | No | Yes | Yes | `allowMutations` | `apply` |
-| `applyStyleDocument` | `ApplyStyleDocumentInput` | `StyleMutationReceipt` | No | Yes | Yes | `allowMutations` | No |
-| `runMapCommand` | `RunMapCommandInput` | `MapCommandReceipt` | Yes | Yes | Yes | `allowMutations` | No |
-| `queryMapFeatures` | `QueryMapFeaturesInput` | `FeatureQueryProjection` | Yes | Yes | Yes | Default | No |
+| `inspectStyle` | [`InspectStyleInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts#L21) | `InspectionProjection` | No | Yes | Yes | Default | `inspect`; `validate` covers validation actions |
+| `applyStyleTransaction` | [`ApplyStyleTransactionInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `StyleMutationReceipt` | No | Yes | Yes | `allowMutations` | `apply` |
+| `applyStyleDocument` | [`ApplyStyleDocumentInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `StyleMutationReceipt` | No | Yes | Yes | `allowMutations` | No |
+| `runMapCommand` | [`RunMapCommandInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `MapCommandReceipt` | Yes | Yes | Yes | `allowMutations` | No |
+| `queryMapFeatures` | [`QueryMapFeaturesInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `FeatureQueryProjection` | Yes | Yes | Yes | Default | No |
 
 “Runtime” means a live MapLibre map is required. The AI SDK facade supplies all five tools over an in-process map. MCP exposes all five capability names and additionally exposes session management.
 
@@ -34,7 +34,9 @@ An `AuthoritySource` resolves lazily and may return `null`; authority-dependent 
 
 Capability schemas accept native JSON values and use strict objects, so unknown fields are rejected. `capabilityRegistry` provides both the execution `inputSchema` and a model-facing `modelInputSchema`; execution always validates again at the capability boundary.
 
-`InspectStyleInput` selects one inspection action. `ApplyStyleTransactionInput` carries a transaction plus optional `dryRun` and `diff`. `ApplyStyleDocumentInput` selects an inline Style or absolute URL. Runtime command and feature-query inputs are discriminated by `action` or `target`.
+[`InspectStyleInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts#L21) is the canonical complete inspection-action union. `ApplyStyleTransactionInput` carries a transaction plus optional `dryRun` and `diff`. `ApplyStyleDocumentInput` selects an inline Style or absolute URL. Runtime command and feature-query inputs are discriminated by `action` or `target`.
+
+For every complete field and discriminator, use the canonical [capability type declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts), [execution schemas](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.ts), and [schema tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.test.ts). Transaction operation variants and core result shapes are defined in [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts) and exercised by the adjacent core schema and operation tests.
 
 ## Interface availability {#interface-availability}
 

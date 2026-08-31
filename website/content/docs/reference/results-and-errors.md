@@ -16,6 +16,17 @@ type CapabilityResult<TData> =
 
 Check `success` before reading `data` or `error`. A success contains the capability-specific projection or receipt. A failure contains a package-created `StyleToolError`; the top-level `message` is the public summary of that failure.
 
+## Core and capability failure layers {#core-capability-failures}
+
+Core document functions and capability interfaces use different discriminators because they are different layers:
+
+| Layer | Failure discriminator | Meaning |
+| --- | --- | --- |
+| Direct `/core` transaction | `ok: false` | The core transaction result retains the original Style, empty changed-object lists, an empty diff, warnings, and its `error`. |
+| Capability and interface | `success: false` | The capability boundary projects an expected core or Authority failure into the shared `CapabilityResult` with public `message` and `error`; there is no success `data`. |
+
+Choose the discriminator for the API you called. Interface adapters do not turn a failed core result into successful capability data. The canonical shapes are in [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts) and [capability contracts](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts).
+
 ## Error fields {#error-fields}
 
 | Field | Type | Meaning |

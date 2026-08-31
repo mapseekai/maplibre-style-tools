@@ -38,4 +38,4 @@ weight: 10
 
 ## 选择规则 {#selection-rules}
 
-面向传输无关的 Style 文档时使用 `/core`；应用代码已持有 `Map` 时使用 `/maplibre`；为调用方提供的 Authority 构建自定义接口时使用 `/capabilities`。需要对应集成时使用 `/ai`、`/webmcp` 或 `/mcp`。`/bridge` 只用于受保护实时地图连接的浏览器端；Node bridge server 由 `/mcp` 导出。
+面向传输无关的 Style 文档时使用 `/core`；应用代码已持有 `Map` 时使用 `/maplibre`；在支持 DOM 的宿主中为调用方提供的 Authority 构建自定义接口时使用 `/capabilities`。需要对应集成时使用 `/ai`、`/webmcp` 或 `/mcp`。`/bridge` 只用于受保护实时地图连接的浏览器端；Node bridge server 由 `/mcp` 导出。

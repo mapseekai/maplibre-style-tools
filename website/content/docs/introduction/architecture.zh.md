@@ -21,7 +21,7 @@ AI SDK | MCP | WebMCP | CLI
  Core document | live MapLibre map | browser bridge
 ```
 
-`capabilityRegistry` 是共享目录，包含描述、严格输入 Schema、运行时要求和执行器。轻量接口把该目录投影为各自的工具格式，而不是定义彼此不同的操作。
+`capabilityRegistry` 是共享目录，包含描述、严格输入 Schema、运行时要求和执行器。轻量接口把该目录中适用的子集投影为各自的工具格式，而不是定义彼此不同的操作；CLI 与默认 WebMCP 表面有意只公开子集。
 
 ## 样式 Authority {#style-authorities}
 
@@ -36,9 +36,9 @@ AI SDK | MCP | WebMCP | CLI
 ## Ambient 类型边界 {#ambient-type-boundaries}
 
 - `/core` 仅限 ES。
-- `/maplibre`、`/webmcp` 和浏览器 `/bridge` 支持 DOM，但不包含 Node ambient 类型。
+- `/maplibre`、`/capabilities`、`/webmcp` 和浏览器 `/bridge` 支持 DOM，但不包含 Node ambient 类型。
 - `/mcp` 与 `/ai` 在需要时支持 Node。
 
-这些边界是公开集成契约的一部分：应导入与宿主环境匹配的最窄入口点。
+这些边界是公开集成契约的一部分：应导入与宿主环境匹配的最窄入口点。`/capabilities` 公开 `AbortSignal` 与 MapLibre-backed Authority 声明，因此即使调用方提供其他 Authority，其公开声明闭包仍需要 DOM 类型。
 
 接下来请阅读[共享能力模型](../capabilities/)。

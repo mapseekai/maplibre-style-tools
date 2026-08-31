@@ -12,6 +12,6 @@ weight: 40
 
 ## 兼容性承诺 {#compatibility-commitments}
 
-公开 exports、capability schemas、result envelopes、bridge protocol messages 与 public DTOs 都是 compatibility contracts。应谨慎对待它们的变更。除非修改明确要求迁移，否则保留 ESM-only `tsc -b` build、package formats、runtime requirements 与 testing frameworks。
+公开 exports、capability schemas、result envelopes、bridge protocol messages 与 public DTOs 都是兼容性敏感项。应谨慎对待它们的变更。本站总结受支持契约；修改字段级形状前，请审阅规范的[能力声明与 DTO](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts)、[能力 Schema 测试](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.test.ts)、[bridge protocol 声明](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.ts)、[bridge protocol 测试](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.test.ts)、[MCP/session DTO](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts)与 [MCP contract tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/contract.test.ts)。除非修改明确要求迁移，否则保留 ESM-only `tsc -b` build、package formats、runtime requirements 与 testing frameworks。
 
 在创建或选择工作前，请查看 [issue tracker](https://github.com/mapseekai/maplibre-style-tools/issues)。当仓库的 release process 要求时，请将用户可见变更记录到 [CHANGELOG](https://github.com/mapseekai/maplibre-style-tools/blob/main/CHANGELOG.md)。

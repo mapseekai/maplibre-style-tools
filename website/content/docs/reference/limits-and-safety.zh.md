@@ -50,6 +50,6 @@ MCP 会验证有界 request ID、method、resource URI、session ID、完整 mes
 
 ## 资源策略 {#resource-policy}
 
-只有连接具备 `network.load`，且解析后的 URL 符合配置的 origin、prefix、data URL 或已注册自定义协议策略时，bridge resource policy 才允许新的网络引用。相对 Style 资源 URL 与禁用协议会被拒绝；保留的 baseline 引用不会获得新的网络 Authority。
+只有连接具备附加的 `network.load` permission，且解析后的 URL 符合配置的 origin、prefix、data URL 或已注册自定义协议策略时，bridge resource policy 才允许新的网络引用。`network.load` 本身不授权任何可调用操作；参见 [bridge permission-to-operation 映射](../../guides/bridge/#capabilities)。相对 Style 资源 URL 与禁用协议会被拒绝；保留的 baseline 引用不会获得新的网络 Authority。
 
 `analyzeGeoJson` 不会获取远程 GeoJSON。对于 URL 输入，它会返回成功的分析结果，其中 `available: false`、reason 为 `remote-url`，由调用方决定是否以及在何处授权获取。

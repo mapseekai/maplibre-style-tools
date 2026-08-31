@@ -31,6 +31,8 @@ HTTP binds to loopback (`127.0.0.1`) by default. A non-loopback bind requires `-
 
 Style sessions are bounded, in-memory document workflows. Open a validated Style into a session, operate on its revisioned document, and close it when finished. Session identifiers are application data, distinct from MCP transport-session identifiers. Session targets remain offline even when a browser map is also connected.
 
+For complete field-level MCP, session, and resource shapes, use the canonical [public DTO declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts), [resource URI contracts](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.ts), [MCP contract tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/contract.test.ts), and [resource tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.test.ts). This guide intentionally covers the supported workflow rather than duplicating every DTO.
+
 ## Live-map extension {#live-map-extension}
 
-The live-map extension lets MCP tools target a browser map connected through the [Browser Bridge](../bridge/). Start the MCP host with bridge options, then grant only the bridge capabilities and resource origins the page needs. The extension does not turn an offline session into a live map: a live target must be registered by a connected browser client.
+The live-map extension lets MCP tools target a browser map connected through the [Browser Bridge](../bridge/). Start the MCP host with bridge options, then grant only the bridge permissions and resource origins the page needs. The extension does not turn an offline session into a live map: a live target must be registered by a connected browser client.

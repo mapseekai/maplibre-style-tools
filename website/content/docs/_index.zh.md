@@ -1,6 +1,6 @@
 ---
 title: 文档
-description: 理解架构、完成集成，并查询精确的公开契约。
+description: 理解架构、完成集成，并浏览经过筛选的受支持契约指南。
 type: docs
 icon: fa-solid fa-book
 sidebar_root_for: self

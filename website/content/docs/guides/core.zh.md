@@ -41,4 +41,4 @@ const result = applyStyleTransaction(
 
 ## 原子失败 {#atomic-failure}
 
-事务在文档边界上是原子的。任何操作失败，或最终候选文档未通过样式验证时，`applyStyleTransaction` 都会以原始样式、空的变更图层/源列表和空 diff 返回 `ok: false`。不会返回部分转换的候选文档。成功准备后如需修改实时地图，请使用 [MapLibre 适配器](../maplibre/)。
+事务在文档边界上是原子的。任何操作失败，或最终候选文档未通过样式验证时，`applyStyleTransaction` 都会以原始样式、空的变更图层/源列表和空 diff 返回 `ok: false`。不会返回部分转换的候选文档。这个直接 core 判别字段与 capability 层的 `success: false` 封装不同；参见 [Core 与 capability 失败层](../../reference/results-and-errors/#core-capability-failures)。成功准备后如需修改实时地图，请使用 [MapLibre 适配器](../maplibre/)。
