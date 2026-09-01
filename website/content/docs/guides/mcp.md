@@ -11,7 +11,7 @@ weight: 50
 | Transport | For | Command |
 | --- | --- | --- |
 | stdio | A local host that launches the server | `maplibre-style-mcp --stdio` |
-| Streamable HTTP | Trusted clients that can keep a bearer secret | `maplibre-style-mcp --http --bearer-token "$TOKEN"` |
+| Streamable HTTP | Trusted clients that can protect a bearer token | `maplibre-style-mcp --http --bearer-token "$TOKEN"` |
 
 Both enforce the same bounded message policy and return the same capability envelopes.
 

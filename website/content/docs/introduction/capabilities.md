@@ -28,8 +28,8 @@ Write one branch on `success` (show `data`, or report `error.code` and `error.me
 
 ## Inputs and limits
 
-Inputs are plain JSON, objects and arrays and numbers as themselves, and the schemas are strict: unknown fields are rejected, and nested values must not be encoded as strings. The validation runs before anything reaches your map, so a malformed model output costs one specific error instead of a broken style.
+Inputs are plain JSON, with objects, arrays, and numbers passed as native values, and the schemas are strict: unknown fields are rejected, and nested values must not be encoded as strings. The validation runs before anything reaches your map, so a malformed model output produces one specific error instead of a broken style.
 
-Outputs are bounded too. Schemas and numeric caps (bytes, counts, depths) constrain what comes back; anything past a cap is truncated and marked as truncated rather than quietly overflowing a context window. The exact numbers are in [Limits and safety](../../reference/limits-and-safety/).
+Outputs are bounded as well. Schemas and numeric caps (bytes, counts, depths) constrain what comes back; anything past a cap is truncated and marked as truncated rather than silently exceeding a context window. The exact numbers are in [Limits and safety](../../reference/limits-and-safety/).
 
 Next: [install the package](../../getting-started/installation/).

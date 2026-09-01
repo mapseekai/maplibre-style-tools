@@ -17,7 +17,7 @@ pnpm run check:package         # 构建产物与包契约，含声明闭包
 pnpm run verify:e2e            # 浏览器桥接与 WebMCP 端到端套件
 ```
 
-## 网站也要验证
+## 网站检查
 
 文档改动之后，站点必须保持无警告构建：
 

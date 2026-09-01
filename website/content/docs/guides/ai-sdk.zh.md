@@ -41,7 +41,7 @@ const result = await tools.applyStyleTransaction.execute({
 });
 ```
 
-输入是原生 JSON 值。对象和数组按本身传入，不要编码成字符串；无论哪种方式，执行时校验照常进行。
+输入是原生 JSON 值。对象和数组按原生值传入，不要编码成字符串；无论哪种方式，执行时校验照常进行。
 
 ## 地图可用性
 

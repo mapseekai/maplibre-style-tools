@@ -25,7 +25,7 @@ if (!registration.supported) {
 
 ## 特性检测
 
-`supported: false` 表示这个浏览器没有暴露 `document.modelContext`，按特性检测的结果对待即可。WebMCP 仍是 Community Group 草案，请查看[草案规范](https://webmachinelearning.github.io/webmcp/)和 [Web Platform Tests 结果](https://wpt.fyi/results/webmcp)，不要依赖浏览器版本号。
+`supported: false` 表示这个浏览器没有暴露 `document.modelContext`。WebMCP 仍是 Community Group 草案，请查看[草案规范](https://webmachinelearning.github.io/webmcp/)和 [Web Platform Tests 结果](https://wpt.fyi/results/webmcp)，不要依赖浏览器版本号。
 
 ## 开启变更能力
 
@@ -37,12 +37,12 @@ await registerMapLibreWebMcpTools({
 });
 ```
 
-设置 `allowMutations: true` 会恰好增加三个工具：`applyStyleTransaction`、`applyStyleDocument`、`runMapCommand`。只在页面有意开放写入时开启，并配合 `authorizeInvocation` 回调，让页面对每次调用做决定。被拒绝的调用返回普通的有界失败，不会绕过页面。`onInvocation` 只用于观察。用 `signal` 把注册绑定到页面生命周期，页面不再持有地图时及时注销。
+设置 `allowMutations: true` 会恰好增加三个工具：`applyStyleTransaction`、`applyStyleDocument`、`runMapCommand`。只在页面有意开放写入时开启，并配合 `authorizeInvocation` 回调，让页面对每次调用做出决定。被拒绝的调用返回普通的有界失败，不会绕过页面。`onInvocation` 只用于观察。用 `signal` 把注册绑定到页面生命周期，页面不再持有地图时移除注册。
 
 ## 与 MCP 的区别
 
-WebMCP 把工具放进浏览器，服务的是正在和用户一起操作的页面内 Agent。[`/mcp`](../mcp/) 是给外部宿主的线协议服务器。WebMCP 默认只有两个只读页面工具；MCP 暴露全部五个能力，外加离线会话和桥接实时地图。
+WebMCP 把工具放进浏览器，服务的是正在与用户协作的页面内 Agent。[`/mcp`](../mcp/) 是面向外部宿主的线协议服务器。WebMCP 默认只有两个只读页面工具；MCP 暴露全部五个能力，外加离线会话和桥接实时地图。
 
-## 看它跑起来
+## 示例
 
 [WebMCP 示例](https://github.com/mapseekai/maplibre-style-tools/blob/main/examples/webmcp/README.md)开启了变更能力，并接受 Agent 的原生批注。

@@ -4,7 +4,7 @@ description: Validate and transform style documents in plain TypeScript, with no
 weight: 10
 ---
 
-`/core` is the foundation the other entry points build on. It validates styles, applies structured transactions, and handles inline GeoJSON, all on plain JSON documents. If your tooling works on style files rather than live maps, and especially if a model is producing the edits, this is the entry point for you.
+`/core` is the foundation the other entry points build on. It validates styles, applies structured transactions, and handles inline GeoJSON, all on plain JSON documents. If your tooling works on style files rather than live maps, and especially if a model is producing the edits, this is the appropriate entry point.
 
 ## Validate a style
 
@@ -36,7 +36,7 @@ const result = applyStyleTransaction(style, {
 
 A successful result includes a replayable [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) diff and the exact changed layer and source IDs, so whatever drove the transaction can be audited or replayed later.
 
-Transactions are atomic. If any operation fails, or the final candidate fails validation, you get the original style back untouched, with empty changed-ID lists and an empty diff. There is no half-applied state to clean up, which matters most when the caller is a model that will just try again.
+Transactions are atomic. If any operation fails, or the final candidate fails validation, you get the original style back untouched, with empty changed-ID lists and an empty diff. No partially applied state is left behind, which matters most when the caller is a model that will retry.
 
 Two details worth knowing: the core result uses `ok: false` for failure, which differs from the capability-level `success: false` envelope (see [core and capability failure layers](../../reference/results-and-errors/#core-capability-failures)). And the defaults are a 5 MiB style, a 1 MiB diff, and 100 operations per transaction, all overridable through `StyleTransactionOptions` when you own the boundary.
 

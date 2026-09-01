@@ -1,6 +1,6 @@
 ---
 title: 文档
-description: 评估、集成、随时查阅。
+description: 评估、集成与参考查阅。
 type: docs
 icon: fa-solid fa-book
 sidebar_root_for: self

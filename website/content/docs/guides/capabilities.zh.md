@@ -18,7 +18,7 @@ weight: 30
 | `runMapCommand` | 混合读写命令 | `runtimeCommands()` |
 | `queryMapFeatures` | 只读有界查询 | `querySourceFeatures()` / `queryRenderedFeatures()` |
 
-把注册表投影进你的传输层 —— OpenAI 工具定义、内部 RPC 层，或者其他形式 —— 语义都和官方接口完全一致。
+把注册表投影进你的传输层 —— 无论是 OpenAI 工具定义还是内部 RPC 层 —— 语义都和官方接口完全一致。
 
 ## 提供权威源，而不是地图
 

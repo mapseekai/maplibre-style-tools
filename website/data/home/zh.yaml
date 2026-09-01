@@ -4,33 +4,33 @@ hero:
   align: center
   eyebrow: MapLibre 样式工具
   title_lines:
-    - words: [{ text: 把地图交给 Agent。 }]
-    - words: [{ text: 样式始终安全。 }]
-  lead: 五个工具，让 AI Agent 谨慎地读取和修改 MapLibre 样式。同一套操作，AI SDK、MCP、WebMCP、CLI 通用。
+    - words: [{ text: 让 AI Agent 安全地 }]
+    - words: [{ text: 检查和编辑 MapLibre 样式 }]
+  lead: 五个操作，覆盖 MapLibre 样式的读取与修改，通过 AI SDK、MCP、WebMCP 与 CLI 提供。输入经过校验，编辑原子生效，结果有明确边界。
   actions:
     - { label: 阅读文档, url: docs/, icon: fa-solid fa-book, style: primary }
     - { label: 在 GitHub 查看, url: https://github.com/mapseekai/maplibre-style-tools, icon: fa-brands fa-github, style: ghost }
 
 cards:
-  eyebrow: 选择路径
-  title: 从你的处境出发
+  eyebrow: 文档
+  title: 选择路径
   columns: 3
   items:
-    - title: 它为什么存在
-      desc: 让 AI 直接改地图会出什么问题，五个有界的操作如何避免这些问题。
+    - title: 概览
+      desc: 这个包的目的、架构，以及所有接口共享的五个能力。
       icon: fa-solid fa-diagram-project
       url: docs/introduction/
-    - title: 准备集成？
-      desc: 先安装，再通过 AI SDK 或 CLI 快速上手，给 Agent 配上第一批工具。
+    - title: 快速开始
+      desc: 安装软件包，通过 AI SDK 或 CLI 快速上手完成首次集成。
       icon: fa-solid fa-rocket
       url: docs/getting-started/
-    - title: 挑选接口？
-      desc: 你的 Agent 跑在哪里？你的进程、浏览器页面，还是 MCP 宿主背后？每个入口一页指南。
+    - title: 选择接口
+      desc: 无论 Agent 运行在你的进程、浏览器页面，还是 MCP 宿主背后，每个入口都有对应的指南。
       icon: fa-solid fa-code-branch
       url: docs/guides/
 
 cta:
-  title: 想查点什么？
+  title: 参考
   text: 入口、能力契约、CLI 选项、错误码，以及每一条强制限制。
   label: 打开参考
   url: docs/reference/

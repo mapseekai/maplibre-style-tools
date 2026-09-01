@@ -63,4 +63,4 @@ The token travels in the first WebSocket frame, never in the URL. Hand it to the
 
 ## Next
 
-Live failure codes (`REVISION_CONFLICT`, `BRIDGE_DISCONNECTED`, and friends) are in [Results and errors](../../reference/results-and-errors/). Message and resource limits are in [Limits and safety](../../reference/limits-and-safety/).
+Live failure codes such as `REVISION_CONFLICT` and `BRIDGE_DISCONNECTED` are in [Results and errors](../../reference/results-and-errors/). Message and resource limits are in [Limits and safety](../../reference/limits-and-safety/).

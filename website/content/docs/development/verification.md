@@ -17,7 +17,7 @@ pnpm run check:package         # build output and package contracts, incl. decla
 pnpm run verify:e2e            # browser bridge and WebMCP end-to-end suites
 ```
 
-## The website, too
+## Website checks
 
 Documentation changes must leave the site building warning-free:
 

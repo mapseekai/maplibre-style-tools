@@ -1,6 +1,6 @@
 ---
 title: Docs
-description: Evaluate, integrate, and look things up.
+description: Evaluate the package, integrate it, and consult the reference.
 type: docs
 icon: fa-solid fa-book
 sidebar_root_for: self

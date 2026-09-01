@@ -11,7 +11,7 @@ weight: 50
 | 传输 | 适用 | 命令 |
 | --- | --- | --- |
 | stdio | 本地宿主直接拉起服务器 | `maplibre-style-mcp --stdio` |
-| Streamable HTTP | 能保管 bearer 密钥的可信客户端 | `maplibre-style-mcp --http --bearer-token "$TOKEN"` |
+| Streamable HTTP | 能够安全保管 bearer 令牌的可信客户端 | `maplibre-style-mcp --http --bearer-token "$TOKEN"` |
 
 两者执行同样的有界消息策略，返回同样的能力信封。
 

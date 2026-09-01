@@ -18,7 +18,7 @@ weight: 30
 | `runMapCommand` | Mixed read/write commands | `runtimeCommands()` |
 | `queryMapFeatures` | Read-only bounded query | `querySourceFeatures()` / `queryRenderedFeatures()` |
 
-Project this registry into your transport, whether that is OpenAI tool definitions, an internal RPC layer, or something else, and the semantics stay identical to the first-party interfaces.
+Project this registry into your transport, whether that is OpenAI tool definitions or an internal RPC layer, and the semantics stay identical to the first-party interfaces.
 
 ## Provide authorities, not maps
 

@@ -4,7 +4,7 @@ description: The eight import specifiers and what each one gives you.
 weight: 10
 ---
 
-The package publishes eight import specifiers. Rule of thumb: import the narrowest one that fits your host — that keeps unneeded globals and dependencies out of your build.
+The package publishes eight import specifiers. As a rule, import the narrowest entry point that fits your host; unneeded globals and dependencies then stay out of your build.
 
 | Specifier | What you get |
 | --- | --- |

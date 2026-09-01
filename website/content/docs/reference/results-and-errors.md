@@ -4,7 +4,7 @@ description: Read the result envelope, branch on codes, and interpret failures.
 weight: 40
 ---
 
-Capabilities do not throw for expected problems. Validation failures, missing layers, revision conflicts, and policy denials all come back as a normal result — you branch on one field and move on.
+Capabilities do not throw for expected problems. Validation failures, missing layers, revision conflicts, and policy denials all return as normal results that you handle by branching on `success`.
 
 ## The envelope
 

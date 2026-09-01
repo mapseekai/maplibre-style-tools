@@ -4,33 +4,33 @@ hero:
   align: center
   eyebrow: MapLibre style tooling
   title_lines:
-    - words: [{ text: Give agents the map. }]
-    - words: [{ text: Keep the style safe. }]
-  lead: Five tools that let an AI agent read and change a MapLibre style carefully. The same operations work over AI SDK, MCP, WebMCP, and the CLI.
+    - words: [{ text: Let AI agents inspect and edit }]
+    - words: [{ text: MapLibre styles safely. }]
+  lead: Five operations for reading and modifying MapLibre styles, available over AI SDK, MCP, WebMCP, and the CLI. Inputs are validated, edits are atomic, and results are bounded.
   actions:
     - { label: Read the docs, url: docs/, icon: fa-solid fa-book, style: primary }
     - { label: View on GitHub, url: https://github.com/mapseekai/maplibre-style-tools, icon: fa-brands fa-github, style: ghost }
 
 cards:
-  eyebrow: Choose a path
-  title: Start where you are
+  eyebrow: Documentation
+  title: Choose a path
   columns: 3
   items:
-    - title: Why it exists
-      desc: What goes wrong when an AI edits a map directly, and how five bounded operations prevent it.
+    - title: Overview
+      desc: The purpose of the package, its architecture, and the five capabilities every interface shares.
       icon: fa-solid fa-diagram-project
       url: docs/introduction/
-    - title: Ready to integrate?
-      desc: Install the package, then give an agent its first tools through the AI SDK or CLI quick start.
+    - title: Get started
+      desc: Install the package and complete a first integration with the AI SDK or CLI quick start.
       icon: fa-solid fa-rocket
       url: docs/getting-started/
-    - title: Picking an interface?
-      desc: Where does your agent run, in your process, in a browser page, or behind an MCP host? One guide per entry point.
+    - title: Choose an interface
+      desc: Whether the agent runs in your process, in a browser page, or behind an MCP host, each entry point has its own guide.
       icon: fa-solid fa-code-branch
       url: docs/guides/
 
 cta:
-  title: Looking something up?
+  title: Reference
   text: Entry points, capability contracts, CLI options, error codes, and every enforced limit.
   label: Open the reference
   url: docs/reference/
