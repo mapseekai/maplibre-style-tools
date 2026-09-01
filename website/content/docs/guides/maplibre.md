@@ -4,35 +4,35 @@ description: Apply validated changes to a live map and query it safely.
 weight: 20
 ---
 
-`/maplibre` connects the document semantics of `/core` to a running MapLibre `Map`. Your application owns the map; the adapter makes sure every change is validated, applied against the revision it was prepared from, and confirmed before it reports success.
+`/maplibre` connects the document semantics of `/core` to a running MapLibre `Map`. Your application owns the map; the adapter makes sure each change is validated, applied against the revision it was prepared from, and confirmed before it reports success.
 
-## Preview or one-step, your choice
+## Prepare, then apply
 
-`prepareTransactionForMap` validates the map's current style and computes an immutable prepared transaction — without calling `map.setStyle`. Inspect `prepared.view.transactionResult` first if you want to show a preview, then commit.
+`prepareTransactionForMap` validates the map's current style and computes an immutable prepared transaction, without calling `map.setStyle`. If you want to show a preview before committing, inspect `prepared.view.transactionResult` first.
 
 `applyTransactionToMap` does the same preparation and applies in one call. Its `diff` option passes through to MapLibre and defaults to `true`; `timeoutMs` defaults to 10,000 ms.
 
-## The result tells you what is trustworthy
+## Reading the result
 
 A completed apply reports which style authority it can vouch for:
 
-- `current` — the live map's style, read after load/hash confirmation
-- `pre-operation` — only the baseline you started from is reliable
+- `current` — the live map's style, read after load and hash confirmation
+- `pre-operation` — only the baseline you prepared from is reliable
 - `unavailable` — no validated style can be supplied
 
-Branch on it before treating the mutation as confirmed.
+Check this field before treating a mutation as confirmed.
 
-## Conflicts are detected, not overwritten
+## Revision conflicts
 
-Preparation records a canonical baseline. If the live style changed between preparation and commit — another tab, another tool, the user — you get `REVISION_CONFLICT` instead of silently clobbering the newer state. A failed apply also attempts to restore the baseline; the result authority tells you which state is actually reportable.
+Preparation records a canonical baseline. If the live style changes between preparation and commit, because of another tab, another tool, or the user, you get `REVISION_CONFLICT` instead of silently overwriting the newer state. A failed apply also attempts to restore the baseline, and the result authority tells you which state is actually reportable.
 
-## Feature queries that cannot run away
+## Feature queries
 
-`querySourceFeaturesBounded` and `queryRenderedFeaturesBounded` project features into plain JSON snapshots and truncate at configured limits — telling you so with a `FEATURE_QUERY_TRUNCATED` warning. Use them, not MapLibre's raw queries, whenever results feed application logic or a model.
+`querySourceFeaturesBounded` and `queryRenderedFeaturesBounded` project features into plain JSON snapshots and truncate at configured limits, reporting `FEATURE_QUERY_TRUNCATED` when they do. Use these instead of MapLibre's raw queries whenever the results feed application logic or a model context; a raw query can return an unbounded object graph.
 
-## Incremental GeoJSON updates, validated
+## Incremental GeoJSON updates
 
-For `GeoJSONSource.updateData`, validate the diff before calling MapLibre. The runtime schema accepts `removeAll`, `remove`, `add`, and `update` actions; IDs must be unique within `remove` and within `update`, property keys unique per update, and IDs may be reused across actions.
+Before calling `GeoJSONSource.updateData`, validate the diff with the runtime schema. It accepts `removeAll`, `remove`, `add`, and `update` actions. IDs must be unique within `remove` and within `update`, and property keys must be unique per update; IDs may be reused across actions.
 
 ```ts
 import { runtimeGeoJsonSourceDiffSchema } from 'maplibre-style-tools/maplibre';
@@ -49,8 +49,8 @@ if (parsed.success) {
 }
 ```
 
-The schema checks shape; `updateData` stays your call against a compatible source. If the change is not an incremental source diff, apply a full [transaction](../core/) instead.
+The schema validates shape only; `updateData` remains your call against a compatible source. If the change is not an incremental source diff, apply a full [transaction](../core/) instead.
 
 ## Next
 
-Exposing these operations to a model? The [AI SDK guide](../ai-sdk/) wraps them as five tools.
+To expose these operations to a model, the [AI SDK guide](../ai-sdk/) wraps them as five tools.

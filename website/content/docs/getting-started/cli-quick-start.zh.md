@@ -46,6 +46,6 @@ maplibre-style apply style.json --operations operations.json --dry-run
 maplibre-style apply style.json --operations operations.json --output next-style.json
 ```
 
-CLI 不会给你意外：`--output` 拒绝覆盖已存在的文件；只有 `--in-place` 能修改输入文件；`--in-place --backup` 会把原文件保留为 `style.json.bak`。
+所有写入都有明确的保护：`--output` 拒绝覆盖已存在的文件；只有 `--in-place` 能修改输入文件；`--in-place --backup` 会把原文件保留为 `style.json.bak`。
 
 退出码：`0` 成功；`1` 请求合法但被样式或事务语义拒绝；`2` 参数或输入错误；`3` 输出或内部故障。详见 [CLI 参考](../../reference/cli/)。

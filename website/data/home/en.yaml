@@ -4,9 +4,9 @@ hero:
   align: center
   eyebrow: MapLibre style tooling
   title_lines:
-    - words: [{ text: Inspect styles. }]
-    - words: [{ text: Change them with confidence. }]
-  lead: Five bounded style operations, defined once — callable from AI SDK, MCP, WebMCP, or the CLI.
+    - words: [{ text: Give agents the map. }]
+    - words: [{ text: Keep the style safe. }]
+  lead: Five tools that let an AI agent read and change a MapLibre style carefully. The same operations work over AI SDK, MCP, WebMCP, and the CLI.
   actions:
     - { label: Read the docs, url: docs/, icon: fa-solid fa-book, style: primary }
     - { label: View on GitHub, url: https://github.com/mapseekai/maplibre-style-tools, icon: fa-brands fa-github, style: ghost }
@@ -16,21 +16,21 @@ cards:
   title: Start where you are
   columns: 3
   items:
-    - title: New to the package?
-      desc: What it does, how it is organized, and the five capabilities every interface shares.
+    - title: Why it exists
+      desc: What goes wrong when an AI edits a map directly, and how five bounded operations prevent it.
       icon: fa-solid fa-diagram-project
       url: docs/introduction/
     - title: Ready to integrate?
-      desc: Install it, then follow the AI SDK or CLI quick start to your first result.
+      desc: Install the package, then give an agent its first tools through the AI SDK or CLI quick start.
       icon: fa-solid fa-rocket
       url: docs/getting-started/
     - title: Picking an interface?
-      desc: Core, MapLibre, AI SDK, MCP, WebMCP, bridge, and CLI — one guide each.
+      desc: Where does your agent run, in your process, in a browser page, or behind an MCP host? One guide per entry point.
       icon: fa-solid fa-code-branch
       url: docs/guides/
 
 cta:
-  title: Need exact numbers?
+  title: Looking something up?
   text: Entry points, capability contracts, CLI options, error codes, and every enforced limit.
   label: Open the reference
   url: docs/reference/

@@ -18,19 +18,19 @@ weight: 30
 | `runMapCommand` | Mixed read/write commands | `runtimeCommands()` |
 | `queryMapFeatures` | Read-only bounded query | `querySourceFeatures()` / `queryRenderedFeatures()` |
 
-Project this registry into your transport — OpenAI tools, an internal RPC layer, whatever you are building — and semantics stay identical to the first-party interfaces.
+Project this registry into your transport, whether that is OpenAI tool definitions, an internal RPC layer, or something else, and the semantics stay identical to the first-party interfaces.
 
 ## Provide authorities, not maps
 
-Document capabilities need a `StyleAuthority`; live-map capabilities additionally need a `RuntimeAuthority`. Your `AuthoritySource` may return `null` — execution then returns the ordinary `MAP_NOT_READY` failure rather than picking an authority on the caller's behalf.
+Document capabilities need a `StyleAuthority`; live-map capabilities additionally need a `RuntimeAuthority`. Your `AuthoritySource` may return `null`, in which case execution returns the ordinary `MAP_NOT_READY` failure rather than picking an authority on the caller's behalf.
 
-## Two schemas per capability, on purpose
+## Two schemas per capability
 
-`inputSchema` is the strict boundary your executor validates against; `modelInputSchema` is the shape a model tool definition advertises. The model schema guides generation — execution always re-validates — so an imaginative model cannot bypass the boundary by inventing fields.
+`inputSchema` is the strict boundary your executor validates against; `modelInputSchema` is the shape a model tool definition advertises. The model schema guides generation, and execution always re-validates, so a model cannot bypass the boundary by inventing fields.
 
-## Schema-only projections for OpenAI and Anthropic
+## Schema projections for OpenAI and Anthropic
 
-`createOpenAiFunctionTools()` and `createAnthropicTools()` project the registry into OpenAI function-tool and Anthropic tool definitions for direct LLM API integrations. They define the tools; they do not attach a map or execute anything. Pair the definitions with an authority and invoke the matching registry executor in your own handler.
+`createOpenAiFunctionTools()` and `createAnthropicTools()` project the registry into OpenAI function-tool and Anthropic tool definitions for direct LLM API integrations. They define the tools and nothing more: no map attached, nothing executed. Pair the definitions with an authority and invoke the matching registry executor in your own handler.
 
 ## Next
 

@@ -4,9 +4,9 @@ description: The five operations, what they need, and what they return.
 weight: 30
 ---
 
-Every interface exposes the same five capabilities. Three work on style documents; two need a live map.
+Every interface described so far exposes the same five operations. Three work on the style document, and two need a live map attached.
 
-| Capability | What it does | Needs a live map |
+| Capability | What it does | Live map |
 | --- | --- | --- |
 | `inspectStyle` | Read or validate a style and get a compact projection back | No |
 | `applyStyleTransaction` | Apply an atomic list of structured edits | No |
@@ -14,9 +14,9 @@ Every interface exposes the same five capabilities. Three work on style document
 | `runMapCommand` | Run a bounded command against a live map | Yes |
 | `queryMapFeatures` | Query source or rendered features, with explicit truncation | Yes |
 
-## One result shape everywhere
+## The result envelope
 
-Every capability — through every interface — resolves to the same envelope:
+Instead of a different result format per interface, every capability returns the same structure:
 
 ```ts
 type CapabilityResult<TData> =
@@ -24,12 +24,12 @@ type CapabilityResult<TData> =
   | { success: false; message: string; error: StyleToolError };
 ```
 
-Handle success and failure once, and the same code works whether the call came from the AI SDK, MCP, or the CLI. The error codes are in [Results and errors](../../reference/results-and-errors/).
+Write one branch on `success` (show `data`, or report `error.code` and `error.message`) and it is correct whether the call came from the AI SDK, MCP, or the CLI. A failure carries a `StyleToolError` created by the package: a stable machine-readable `code`, an optional RFC 6901 `path` pointing at the rejected value, and optional JSON `details`. The full code list is in [Results and errors](../../reference/results-and-errors/).
 
-## Inputs are plain JSON, checked strictly
+## Inputs and limits
 
-Pass objects, arrays, numbers, and booleans as native JSON values — never stringified. Unknown fields are rejected before anything runs, so a malformed call fails fast with `INVALID_INPUT` instead of reaching your map.
+Inputs are plain JSON, objects and arrays and numbers as themselves, and the schemas are strict: unknown fields are rejected, and nested values must not be encoded as strings. The validation runs before anything reaches your map, so a malformed model output costs one specific error instead of a broken style.
 
-"Bounded" is a promise, too: inputs and outputs are capped by explicit schemas and limits (bytes, counts, depths), and output that would exceed a cap is truncated and marked as such. The numbers are in [Limits and safety](../../reference/limits-and-safety/).
+Outputs are bounded too. Schemas and numeric caps (bytes, counts, depths) constrain what comes back; anything past a cap is truncated and marked as truncated rather than quietly overflowing a context window. The exact numbers are in [Limits and safety](../../reference/limits-and-safety/).
 
 Next: [install the package](../../getting-started/installation/).

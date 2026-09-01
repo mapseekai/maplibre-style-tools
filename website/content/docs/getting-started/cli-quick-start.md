@@ -46,6 +46,6 @@ maplibre-style apply style.json --operations operations.json --dry-run
 maplibre-style apply style.json --operations operations.json --output next-style.json
 ```
 
-The CLI never surprises you: `--output` refuses to overwrite an existing file, `--in-place` is the only way to modify the input file, and `--in-place --backup` preserves the original as `style.json.bak`.
+Nothing happens silently: `--output` refuses to overwrite an existing file, `--in-place` is the only way to modify the input file, and `--in-place --backup` preserves the original as `style.json.bak`.
 
 Exit codes: `0` success, `1` the request was valid but the style or transaction rejected it, `2` bad arguments or input, `3` output or internal failure. Details in the [CLI reference](../../reference/cli/).

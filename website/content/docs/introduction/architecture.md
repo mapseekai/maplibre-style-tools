@@ -1,10 +1,10 @@
 ---
 title: Architecture
-description: One capability layer, thin interfaces, and the authority that owns the style.
+description: How the package is organized, and why.
 weight: 20
 ---
 
-The package has one rule: the five capabilities are defined once, and every interface — AI SDK, MCP, WebMCP, CLI — is a thin projection of that same definition. Nothing re-implements style semantics per interface.
+The package has three layers, and understanding the layering explains most of its behavior.
 
 ```text
 your code · an AI model · an MCP host
@@ -22,22 +22,28 @@ your code · an AI model · an MCP host
  style document  |  live MapLibre map
 ```
 
-## The pieces
+## The capability registry
 
-**The capability registry** holds each capability's name, description, input schema, and executor. When a new interface appears, it projects the registry instead of inventing new operations — which is why a transaction means the same thing whether it arrives from the CLI or from an AI SDK tool call.
+Each of the five operations is defined exactly once, in `capabilityRegistry`: its name, its description for the model, its input schema, and the executor that runs it. Every interface is a projection of that definition into its own transport.
 
-**A StyleAuthority decides where the style lives.** The built-in choices are an in-process map (AI SDK), an MCP document session, a bridged browser map, or a local file (CLI). You can implement your own.
+The reason is drift. If each interface wrote its own tool descriptions and schemas, the five tools would slowly diverge, and a filter would end up meaning one thing over MCP and another over the CLI. With a single registry, using two interfaces against the same style gives you the same behavior, because it is the same code.
 
-**A RuntimeAuthority exists only while a live map is attached.** The two capabilities that need one (`runMapCommand`, `queryMapFeatures`) report `MAP_NOT_READY` when there is none; document work keeps working without a map.
+## Authorities
 
-## Type boundaries you can rely on
+An authority answers the question "who owns the style?" The same `applyStyleTransaction` call works against a local file (the CLI), an in-memory document session (MCP), your own map object (the AI SDK), or a bridged browser map, because each of those implements the same small interface: read the style, supply context, apply a transaction, apply a document. That interface is `StyleAuthority`.
+
+Adding a new integration therefore rarely touches style semantics. Implement the authority, and the five operations work against it.
+
+Two capabilities, `runMapCommand` and `queryMapFeatures`, additionally need a live map through `RuntimeAuthority`. When there is none, they fail with `MAP_NOT_READY` instead of pretending. Document work never needs a map, which is why the CLI can do everything it does offline.
+
+## Type boundaries
 
 Each entry point declares which ambient types it may surface, and the build tests enforce it:
 
-- `/core` — pure ES. No DOM, no Node types.
-- `/maplibre`, `/capabilities`, `/webmcp`, `/bridge` — DOM types allowed, Node types never.
-- `/ai`, `/mcp` — Node types where needed.
+- `/core` is pure ES: no DOM, no Node types.
+- `/maplibre`, `/capabilities`, `/webmcp`, and browser `/bridge` allow DOM types but never Node types.
+- `/ai` and `/mcp` may use Node types where they need them.
 
-Import the narrowest entry point that fits your host, and the wrong globals can never leak into your build.
+If you import the narrowest entry point that fits your host, the wrong globals cannot leak into your build.
 
 Next: [Capabilities](../capabilities/).
