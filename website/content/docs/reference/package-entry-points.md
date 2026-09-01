@@ -1,41 +1,39 @@
 ---
 title: Package Entry Points
-description: Choose among the eight supported import specifiers.
+description: The eight import specifiers and what each one gives you.
 weight: 10
 ---
 
-The package exposes eight supported import specifiers. Choose the narrowest entry point that owns the environment and authority your integration needs.
+The package publishes eight import specifiers. Rule of thumb: import the narrowest one that fits your host — that keeps unneeded globals and dependencies out of your build.
 
-## Entry points {#entry-points}
-
-| Specifier | Role |
+| Specifier | What you get |
 | --- | --- |
-| `maplibre-style-tools` | Non-AI convenience exports |
+| `maplibre-style-tools` | The root entry: core types plus `applyStyleTransaction` and `validateStyleDocument` |
 | `maplibre-style-tools/core` | Pure validation, transactions, GeoJSON, analysis, and discovery |
-| `maplibre-style-tools/maplibre` | Live MapLibre mutation, runtime commands, and bounded feature queries |
-| `maplibre-style-tools/capabilities` | Five executors, schemas, registry, result envelope, and authorities |
+| `maplibre-style-tools/maplibre` | Live-map transactions, runtime commands, bounded feature queries |
+| `maplibre-style-tools/capabilities` | The five executors, schemas, registry, result envelope, and authority interfaces |
 | `maplibre-style-tools/ai` | AI SDK tool factory over an in-process map |
-| `maplibre-style-tools/webmcp` | Browser-native page-scoped Site tools |
-| `maplibre-style-tools/mcp` | MCP server, sessions, transports, resources, and live extension |
-| `maplibre-style-tools/bridge` | Browser-safe live map client, protocol, hashing, and resource policy |
+| `maplibre-style-tools/webmcp` | Browser page-scoped Site tools |
+| `maplibre-style-tools/mcp` | MCP server, sessions, transports, resources, live extension |
+| `maplibre-style-tools/bridge` | Browser-side bridge client, protocol, hashing, resource policy |
 
-The root entry is intentionally small: it re-exports core types plus `applyStyleTransaction` and `validateStyleDocument`. Import interface-specific factories and adapters from their explicit subpath.
+The root entry is deliberately small. For anything interface-specific, import the explicit subpath.
 
-## Ambient and runtime boundaries {#ambient-runtime-boundaries}
+## What each entry needs from its host
 
-| Specifier | DOM ambient | Node ambient | Runtime dependency |
-| --- | ---: | ---: | --- |
-| root | No | No | Pure core only |
-| `/core` | No | No | None |
-| `/maplibre` | Yes | No | In-process MapLibre map |
-| `/capabilities` | Yes | No | Caller-provided authorities |
-| `/ai` | Through dependencies | Yes | AI SDK and in-process map |
-| `/webmcp` | Yes | No | Browser `document.modelContext` and in-process map |
-| `/mcp` | No | Yes | Node MCP host and optional bridge server |
-| `/bridge` | Yes | No | Browser map and protected WebSocket endpoint |
+| Specifier | DOM types | Node types | Needs at runtime |
+| --- | --- | --- | --- |
+| root | No | No | Nothing — pure core |
+| `/core` | No | No | Nothing |
+| `/maplibre` | Yes | No | A MapLibre map |
+| `/capabilities` | Yes | No | Authorities you provide |
+| `/ai` | Via dependencies | Yes | AI SDK 6 and a map |
+| `/webmcp` | Yes | No | `document.modelContext` and a map |
+| `/mcp` | No | Yes | Node.js |
+| `/bridge` | Yes | No | A browser map and the bridge endpoint |
 
-“Ambient” describes the TypeScript global libraries visible through the public declaration boundary. It does not mean every import immediately performs runtime work. The `/capabilities` declarations expose `AbortSignal` and export `MapStyleAuthority`, whose declaration imports MapLibre types, so consumers need DOM ambient types even when they provide a different authority; the boundary does not require Node ambient types.
+"DOM types" and "Node types" mean which ambient type libraries can surface through the public declarations — not that every import performs runtime work. `/capabilities` lists DOM because its public closure includes `AbortSignal` and MapLibre-backed authority declarations, even when you supply a different authority; it never needs Node types.
 
-## Selection rules {#selection-rules}
+## Selection rules
 
-Use `/core` for transport-neutral Style documents, `/maplibre` when application code already owns a `Map`, and `/capabilities` in a DOM-capable host when building a custom interface over caller-provided authorities. Use `/ai`, `/webmcp`, or `/mcp` for their named integration. Use `/bridge` only for the browser side of a protected live-map connection; the Node bridge server is exported by `/mcp`.
+Style documents in Node or a bundler: `/core`. Your code already owns a `Map`: `/maplibre`. Building a custom interface over your own authorities: `/capabilities`. Otherwise the named integration does what it says — `/ai`, `/webmcp`, `/mcp` — and `/bridge` is the browser side of the live-map connection whose server lives in `/mcp`.

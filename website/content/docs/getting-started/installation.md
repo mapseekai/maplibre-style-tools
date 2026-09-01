@@ -1,18 +1,27 @@
 ---
 title: Installation
-description: Install the package from npm or a local checkout.
+description: Install from npm, or from a local checkout.
 weight: 20
 ---
-
-Install the package and its MapLibre peer dependency from npm:
 
 ```bash
 npm install maplibre-style-tools maplibre-gl
 ```
 
-## Install from a local checkout {#install-from-a-local-checkout}
+That one install gives you:
 
-Build a sibling checkout once, then add it to your project:
+- the eight library entry points — `maplibre-style-tools`, `/core`, `/maplibre`, `/capabilities`, `/ai`, `/webmcp`, `/mcp`, `/bridge`
+- two executables on your `PATH`: `maplibre-style` (validate, inspect, and transform style files) and `maplibre-style-mcp` (an MCP server)
+
+`maplibre-gl` is the peer dependency you install alongside for anything map-related.
+
+## ESM and CommonJS
+
+The package ships ESM only; there are no `.cjs` artifacts. On Node 22.13 or newer, CommonJS code can load it directly through Node's `require(esm)` support.
+
+## Install from a local checkout
+
+Working on the package itself? Build it once, then add it from a sibling project:
 
 ```bash
 cd ../maplibre-style-tools
@@ -23,8 +32,6 @@ pnpm add ../maplibre-style-tools
 pnpm add maplibre-gl
 ```
 
-## ESM and CommonJS {#esm-and-commonjs}
+## Next
 
-The published package is ESM-only. On supported Node.js versions, CommonJS code can load it with `require(esm)` through Node support, but no `.cjs` artifact is published.
-
-Next, choose [AI SDK Quick Start](../ai-sdk-quick-start/) for a live map or [CLI Quick Start](../cli-quick-start/) for a Style file.
+Follow the [AI SDK quick start](../ai-sdk-quick-start/) if your app owns a live map, or the [CLI quick start](../cli-quick-start/) if you work with style files.

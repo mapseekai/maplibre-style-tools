@@ -1,38 +1,45 @@
 ---
 title: MCP 服务器
-description: 通过 stdio 或受保护的 HTTP 提供有边界的样式会话与实时地图。
+description: 通过 stdio 或受保护的 HTTP，提供有界的样式会话与实时地图。
 weight: 50
 ---
 
-当 MCP host 需要有边界的离线 Style 会话，或通过实时地图扩展使用已连接浏览器地图时，请使用 `/mcp`。它公开五项共享能力和会话管理工具；不接受 Style 路径或 URL，也不会获取网络输入。
+`/mcp` 运行一个 MCP 服务器，供外部宿主 —— Claude Desktop、IDE、你自己的 Agent —— 连接。它暴露五个能力外加会话管理，还能通过[桥接](../bridge/)操作实时浏览器地图。它不接受样式路径或 URL，也不发起任何网络请求。
 
-## 选择传输方式 {#choose-a-transport}
+## 选择传输方式
 
-对于启动服务器的本地 MCP host，请使用 stdio。仅在可信客户端能够持有 bearer secret 时使用受保护的 Streamable HTTP。两种传输都执行相同的有边界消息策略和能力结果封装。
+| 传输 | 适用 | 命令 |
+| --- | --- | --- |
+| stdio | 本地宿主直接拉起服务器 | `maplibre-style-mcp --stdio` |
+| Streamable HTTP | 能保管 bearer 密钥的可信客户端 | `maplibre-style-mcp --http --bearer-token "$TOKEN"` |
 
-## Stdio {#stdio}
+两者执行同样的有界消息策略，返回同样的能力信封。
+
+## stdio 保持 stdout 干净
 
 ```bash
 maplibre-style-mcp --stdio
 ```
 
-stdout 仅用于换行分隔的协议消息。启动诊断信息写入 stderr，因此 host 可以在没有日志污染的情况下解析 stdout。默认 MCP 消息限制为 5 MiB；嵌入方可以将 `maxMessageBytes` 配置为 128 KiB 至 64 MiB。
+stdout 只承载换行分隔的协议消息；启动诊断走 stderr，宿主解析 stdout 时不用过滤日志。默认消息上限 5 MiB，可通过 `maxMessageBytes` 在 128 KiB 到 64 MiB 之间配置。
 
-## 受保护的 HTTP {#protected-http}
+## HTTP 默认受保护
 
 ```bash
 TOKEN='replace-with-a-random-secret'
 maplibre-style-mcp --http --bearer-token "$TOKEN"
 ```
 
-HTTP 默认绑定到 loopback（`127.0.0.1`）。非 loopback 绑定需要 `--allow-non-loopback`，并且必须保留 bearer 与 origin 检查。每个请求都需要 bearer token 和精确的绑定 `Host`；浏览器发送 `Origin` 时，它必须匹配绑定 origin 或显式 allowed-origin 条目。服务器会在读取 body 或分配 MCP transport 前检查这些 header。
+监听器默认绑定 `127.0.0.1` 的随机端口；绑定其他接口需要 `--allow-non-loopback`。每个请求必须携带 bearer token 和完全匹配的 `Host`；浏览器发来的 `Origin` 必须等于绑定源或显式白名单条目。这些检查在读取请求体、分配传输之前完成。
 
-## 文档会话 {#document-sessions}
+## 文档会话：离线样式工作流
 
-Style 会话是有边界的内存文档工作流。将已验证的 Style 打开为会话，在带 revision 的文档上操作，并在结束时关闭它。会话标识符属于应用数据，与 MCP transport-session 标识符不同。即使同时连接了浏览器地图，会话目标仍保持离线。
+把校验过的样式打开成会话，对着它做带 revision 的事务，用完关闭。会话有界、驻留内存，与任何已连接的实时地图完全隔离。会话 ID 是应用数据，与 MCP 传输自身的会话 ID 是两回事。
 
-完整的字段级 MCP、session 与 resource 形状应以规范的[公开 DTO 声明](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts)、[resource URI 契约](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.ts)、[MCP contract tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/contract.test.ts)和 [resource tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.test.ts)为准。本指南有意覆盖受支持工作流，而不重复每个 DTO。
+## 实时地图经桥接接入
 
-## 实时地图扩展 {#live-map-extension}
+宿主带上桥接参数启动后，浏览器页面可以把自己的地图注册为实时目标 —— 见[浏览器桥接指南](../bridge/)。只有注册之后，实时地图类能力才会作用于它；连接了的浏览器不会把离线会话变成实时地图。
 
-实时地图扩展让 MCP 工具可以定位到通过[浏览器桥接](../bridge/)连接的浏览器地图。使用 bridge 选项启动 MCP host，然后仅授予页面所需的 bridge permission 与资源 origin。该扩展不会把离线会话变成实时地图：实时目标必须由已连接的浏览器客户端注册。
+## 下一步
+
+字段级 DTO 形状见权威的 [MCP/会话类型](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts)；桥接配置见[浏览器桥接](../bridge/)。

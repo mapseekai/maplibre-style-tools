@@ -1,32 +1,38 @@
 ---
 title: MapLibre 适配器
-description: 对实时地图应用已准备的修改并执行有边界的操作。
+description: 把校验过的变更应用到实时地图，并安全地查询地图。
 weight: 20
 ---
 
-`/maplibre` 入口将 `/core` 的文档语义连接到实时 MapLibre `Map`。它是进程内适配器：当应用程序拥有地图实例，并需要应用样式事务、发出有界的运行时操作或查询地图要素时使用它。选择面向浏览器的入口前，请阅读[环境要求](../../getting-started/requirements/)。
+`/maplibre` 把 `/core` 的文档语义接到运行中的 MapLibre `Map` 上。地图由你的应用持有；适配器保证每次变更都经过校验、基于制备时的 revision 应用、并在确认之后才报告成功。
 
-## 变更前先准备 {#prepare-before-mutation}
+## 要预览还是要一步，自己选
 
-`prepareTransactionForMap` 会读取并验证当前样式，计算不可变的已准备事务，并记录稍后应用所需的基线。它不会调用 `map.setStyle`。这样应用程序可以在决定修改前检查 `prepared.view.transactionResult`。`applyTransactionToMap` 为单步流程完成同样的准备。
+`prepareTransactionForMap` 校验地图当前样式并计算一个不可变的事务句柄 —— 不调用 `map.setStyle`。想先展示预览，就检查 `prepared.view.transactionResult`，然后再提交。
 
-## 应用并等待 {#apply-and-await}
+`applyTransactionToMap` 做同样的制备并一步应用。`diff` 选项透传给 MapLibre，默认 `true`；`timeoutMs` 默认 10,000 毫秒。
 
-`applyTransactionToMap` 会验证当前样式、准备不可变事务、检测版本冲突，并且仅在基线仍为当前版本时调用 MapLibre；它会等待样式确认后才报告成功。其 `diff` 选项会传给 MapLibre 样式应用，默认值为 `true`；`timeoutMs` 默认值为 10,000 ms。
+## 结果会告诉你什么是可信的
 
-结果会报告可用的样式 Authority：可以返回当前样式时为 `current`；只有基线可靠时为 `pre-operation`；无法提供已验证样式时为 `unavailable`。在将修改视为已确认前，始终先分支处理结果。
+应用完成后，结果报告它可以担保哪种样式来源：
 
-## 版本冲突 {#revision-conflicts}
+- `current` —— 确认之后读到的地图当前样式
+- `pre-operation` —— 只有制备时的基线可信
+- `unavailable` —— 无法提供任何经过校验的样式
 
-准备会记录规范化基线。如果实时地图在准备与修改之间发生变化，适配器会返回 `REVISION_CONFLICT`，而不是将候选文档应用到不同版本。应用失败时也会尝试恢复基线；结果 Authority 会说明当前地图样式、操作前样式或两者皆不可用时，哪一种可以安全报告。
+把它当作判断依据，再确认变更是否生效。
 
-## 有界要素查询 {#bounded-feature-queries}
+## 冲突会被检测，而不是被覆盖
 
-使用 `querySourceFeaturesBounded` 或 `queryRenderedFeaturesBounded` 获取要素结果。它们会根据配置限制投影并截断结果，并在达到限制时返回 `FEATURE_QUERY_TRUNCATED` 警告。不要将无界要素查询作为应用程序的数据导出。
+制备时会记录一个规范基线。如果在制备和提交之间地图变了 —— 另一个标签页、另一个工具、用户本人 —— 你会得到 `REVISION_CONFLICT`，而不是悄悄覆盖更新的状态。失败的 apply 还会尝试恢复基线；结果中的 authority 字段告诉你哪种状态实际可信。
 
-## 增量 GeoJSON {#incremental-geojson}
+## 不会失控的要素查询
 
-在调用 MapLibre 的 `updateData` 前，使用运行时 Schema 验证增量 GeoJSON 源变更。Schema 接受一个或多个有效的 `removeAll`、`remove`、`add` 或 `update` 操作。`remove` 内部和 `update` 内部的 ID 必须唯一，每个更新内的属性键也必须唯一；ID 可以在 `remove`、`add` 和 `update` 之间复用，`add` 不要求唯一 ID。
+`querySourceFeaturesBounded` 和 `queryRenderedFeaturesBounded` 把要素投影成纯 JSON 快照，达到配置上限就截断 —— 并用 `FEATURE_QUERY_TRUNCATED` 警告告诉你。只要结果要喂给应用逻辑或模型，就用它们，别用 MapLibre 的原始查询。
+
+## 增量 GeoJSON 更新，先校验
+
+调用 `GeoJSONSource.updateData` 之前，先校验 diff。运行时 schema 接受 `removeAll`、`remove`、`add`、`update` 四种操作；ID 在 `remove` 内、`update` 内各自必须唯一，每次 update 内属性键必须唯一，ID 可以跨操作复用。
 
 ```ts
 import { runtimeGeoJsonSourceDiffSchema } from 'maplibre-style-tools/maplibre';
@@ -43,4 +49,8 @@ if (parsed.success) {
 }
 ```
 
-该 Schema 验证数据形状；`updateData` 仍是针对兼容 GeoJSON 源的 MapLibre 调用。当预期修改不是增量源 diff 时，请使用完整样式替换。
+schema 只负责校验形状；`updateData` 仍是你对兼容 GeoJSON 源的调用。如果改动不是增量源 diff，就改用完整[事务](../core/)。
+
+## 下一步
+
+要把这些操作暴露给模型？[AI SDK 指南](../ai-sdk/)把它们包装成五个工具。

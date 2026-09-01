@@ -1,30 +1,55 @@
 ---
 title: AI SDK Quick Start
-description: Inspect a live MapLibre Style through the AI SDK interface.
+description: Give an AI model five safe tools over your live MapLibre map.
 weight: 30
 ---
 
-Use this path after your application has created a live MapLibre `map` instance. The factory returns exactly five tools: `inspectStyle`, `applyStyleTransaction`, `applyStyleDocument`, `runMapCommand`, and `queryMapFeatures`.
+This quick start assumes your application already creates a MapLibre `map` instance. If you work with style files instead, see the [CLI quick start](cli-quick-start/).
 
-## Create the tools {#create-the-tools}
+## 1. Install
+
+```bash
+npm install maplibre-style-tools maplibre-gl
+```
+
+## 2. Create the tools
 
 ```ts
 import { createMapLibreStyleTools } from 'maplibre-style-tools/ai';
 
 const tools = createMapLibreStyleTools({ getMap: () => map });
+```
+
+That is the whole setup. You get exactly five tools: `inspectStyle`, `applyStyleTransaction`, `applyStyleDocument`, `runMapCommand`, and `queryMapFeatures`.
+
+## 3. Let the model use them
+
+```ts
+import { generateText } from 'ai';
+
+const { text } = await generateText({
+  model,
+  prompt: 'Make the roads stand out more.',
+  tools,
+});
+```
+
+The model sees the five tool definitions and decides when to call them. Map access stays behind your `getMap` callback — the tools can never reach anything else in your application.
+
+## 4. Or call a tool yourself
+
+```ts
 const result = await tools.inspectStyle.execute({ action: 'getLayerCount' });
 
-if (!result.success) {
+if (result.success) {
+  console.log(result.data);
+} else {
   console.error(result.error.code, result.error.message);
 }
 ```
 
-Pass `tools` to an AI SDK tools set, or call an individual tool’s `.execute(input)` method as shown.
+Every tool resolves to the same envelope: branch on `result.success`, then read `result.data` or `result.error`. If `getMap()` returns `null` — the page is still loading, the map was disposed — you get a normal `MAP_NOT_READY` failure, not an exception.
 
-## Execute an inspection {#execute-an-inspection}
+## Next
 
-`inspectStyle.execute({ action: 'getLayerCount' })` inspects the current Style through the live map and returns the shared result envelope. Use the other named tools when you need a transaction, document replacement, bounded map command, or feature query.
-
-## Handle the result {#handle-the-result}
-
-Always branch on `result.success`. If `getMap()` returns `null`, the call produces a normal failure envelope; it does not expose arbitrary application state. See [Capabilities](../introduction/capabilities/) for the common result contract.
+The [AI SDK guide](../../guides/ai-sdk/) covers map availability, mutation safety, and result handling in depth.

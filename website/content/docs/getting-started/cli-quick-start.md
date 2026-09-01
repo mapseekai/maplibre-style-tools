@@ -1,35 +1,51 @@
 ---
 title: CLI Quick Start
-description: Validate, inspect, and preview a Style transaction from the command line.
+description: Validate, inspect, and safely rewrite a style file from your terminal.
 weight: 40
 ---
 
-Use the `maplibre-style` binary with local JSON Style and operations files. It uses the same strict core transactions as the library.
+The `maplibre-style` CLI works on local style files with no network access, using the same validation and transactions as the library.
 
-## Validate {#validate}
+## Validate a file
 
 ```bash
 maplibre-style validate style.json
 ```
 
-## Inspect {#inspect}
+Every command writes exactly one JSON result to stdout:
+
+```json
+{ "success": true, "message": "…", "data": { "…": "…" } }
+```
+
+Diagnostics go to stderr, so you can pipe stdout straight into `jq`.
+
+## Inspect what is inside
 
 ```bash
 maplibre-style inspect style.json --query road
+maplibre-style inspect style.json --layer road-primary
+maplibre-style inspect style.json --source-layers
 ```
 
-## Preview a transaction {#preview-a-transaction}
+Search layers by text, read one layer, or list the source layers in use. All options are in the [CLI reference](../../reference/cli/).
+
+## Preview a change
+
+Describe your edits in a JSON operations file, then preview what they would do:
 
 ```bash
 maplibre-style apply style.json --operations operations.json --dry-run
 ```
 
-`--dry-run` returns the mutation receipt and optional semantic diff without writing. It never returns a complete candidate Style or `data.style`.
+`--dry-run` writes nothing. You get the mutation receipt and a semantic diff of the changes.
 
-## Write intentionally {#write-intentionally}
+## Apply it
 
 ```bash
 maplibre-style apply style.json --operations operations.json --output next-style.json
 ```
 
-`apply` does not mutate the input unless `--in-place` is explicit. `--output` never overwrites an existing path, and `--backup` never replaces a pre-existing backup.
+The CLI never surprises you: `--output` refuses to overwrite an existing file, `--in-place` is the only way to modify the input file, and `--in-place --backup` preserves the original as `style.json.bak`.
+
+Exit codes: `0` success, `1` the request was valid but the style or transaction rejected it, `2` bad arguments or input, `3` output or internal failure. Details in the [CLI reference](../../reference/cli/).

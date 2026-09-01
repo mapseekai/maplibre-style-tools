@@ -1,35 +1,37 @@
 ---
 title: 能力注册表
-description: 使用传输无关的执行器、Schema 与 Authority 接口。
+description: 在五个执行器、schema 和权威源接口之上，构建你自己的传输层。
 weight: 30
 ---
 
-`/capabilities` 入口提供各接口专用软件包背后的传输无关层。当集成需要相同的命名操作与结果语义，而不采用 AI SDK、MCP、WebMCP 或 CLI 的呈现细节时，它很有用。共享结果封装请参阅[能力概览](../../introduction/capabilities/)。
+`/capabilities` 面向这样的集成：需要五个操作及其精确语义，但不想绑定 AI SDK、MCP、WebMCP 或 CLI 的现成外壳。你提供权威源，注册表负责其余部分。
 
-## 注册表存在的原因 {#why-the-registry-exists}
+## 注册表就是契约
 
-`capabilityRegistry` 是能力名称、描述、Schema、运行时要求和执行的单一来源。集成会将此注册表投影到自己的传输层，而不会重新定义这五项操作。
+`capabilityRegistry` 保存每个能力的名称、描述、执行 schema、面向模型的 schema、运行时要求和执行器：
 
-| Capability | `requiresRuntime` | Mutation behavior | Authority member |
-| --- | ---: | --- | --- |
-| `inspectStyle` | `false` | Read-only | `readStyle()` and `context()` |
-| `applyStyleTransaction` | `false` | Mutates atomically | `applyTransaction()` |
-| `applyStyleDocument` | `false` | Replaces the Style | `applyDocument()` |
-| `runMapCommand` | `true` | Mixed read/write commands | `runtimeCommands()` |
-| `queryMapFeatures` | `true` | Read-only bounded query | `querySourceFeatures()` or `queryRenderedFeatures()` |
+| 能力 | 变更行为 | 权威源成员 |
+| --- | --- | --- |
+| `inspectStyle` | 只读 | `readStyle()` / `context()` |
+| `applyStyleTransaction` | 原子变更 | `applyTransaction()` |
+| `applyStyleDocument` | 整体替换 | `applyDocument()` |
+| `runMapCommand` | 混合读写命令 | `runtimeCommands()` |
+| `queryMapFeatures` | 只读有界查询 | `querySourceFeatures()` / `queryRenderedFeatures()` |
 
-## Authority 接口 {#authority-interfaces}
+把注册表投影进你的传输层 —— OpenAI 工具、内部 RPC，随你 —— 语义都和官方接口完全一致。
 
-为面向文档的能力提供 `StyleAuthority`。它读取已验证的样式、提供上下文、应用事务并应用完整样式文档。仅为实时地图命令和要素查询添加 `RuntimeAuthority`。`AuthoritySource` 可以返回 `null`；此时能力执行会返回正常的 `MAP_NOT_READY` 失败，而不会替调用方选择样式 Authority。
+## 提供权威源，而不是地图
 
-## 严格的模型 Schema {#strict-model-schemas}
+文档类能力需要 `StyleAuthority`；实时地图类能力还需要 `RuntimeAuthority`。你的 `AuthoritySource` 可以返回 `null` —— 此时执行返回普通的 `MAP_NOT_READY` 失败，不会替调用方挑选权威源。
 
-每个注册表项目都带有执行用的 `inputSchema` 和面向模型的 `modelInputSchema`。模型 Schema 会为模型工具定义投影输入形状，而执行 Schema 仍然是严格验证边界。应将已公布的 Schema 视为生成指导，而不是跳过能力验证的许可。
+## 每个能力两个 schema，各司其职
 
-## 直接 OpenAI Schema {#direct-openai-schemas}
+`inputSchema` 是执行器校验的严格边界；`modelInputSchema` 是模型工具定义对外公布的形状。模型 schema 引导生成 —— 执行时依然会重新校验 —— 所以模型再怎么"有创意"，也无法靠编造字段绕过边界。
 
-`createOpenAiFunctionTools()` 会将注册表投影为不可变的 OpenAI 函数工具定义。它提供能力名称、描述和 JSON Schema 参数，但不会替调用方选择样式 Authority。请将这些定义与 Authority 配对，并在自己的传输处理程序中调用相应的注册表执行器。
+## OpenAI 与 Anthropic 的纯 schema 投影
 
-## 直接 Anthropic Schema {#direct-anthropic-schemas}
+`createOpenAiFunctionTools()` 和 `createAnthropicTools()` 把注册表投影成 OpenAI function-tool 与 Anthropic 工具定义，适合直接集成 LLM API。它们只负责定义工具：不挂地图、不执行任何东西。把定义和权威源配对，在你的处理器里调用对应的注册表执行器。
 
-`createAnthropicTools()` 会将同一定义投影为带有 `name`、`description` 和 `input_schema` 的 Anthropic 工具对象。和 OpenAI 帮助函数一样，它仅是定义投影：不会附加地图、选择 Authority 或执行能力。
+## 下一步
+
+结果信封见[能力概览](../../introduction/capabilities/)；失败处理见[结果与错误](../../reference/results-and-errors/)。

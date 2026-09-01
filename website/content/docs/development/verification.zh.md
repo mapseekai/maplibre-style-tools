@@ -1,32 +1,25 @@
 ---
 title: 验证
-description: 运行仓库、示例、E2E、模块与文档检查。
+description: 验证类型、lint、测试、示例、契约与 E2E 的命令。
 weight: 30
 ---
 
-应运行覆盖本次修改路径的检查。仓库命令覆盖类型边界、lint、测试、示例、package contract 与浏览器 E2E 流程。
-
-## 仓库检查 {#repository-checks}
+改动覆盖到哪，就跑哪部分检查：
 
 ```bash
-pnpm run typecheck
-pnpm run lint
-pnpm run test
-pnpm run test:example:ai-chat
-pnpm run test:example:bridge
-pnpm run test:example:webmcp
-pnpm run check:package
-pnpm run verify:e2e
+pnpm run typecheck             # TypeScript 工程与 ambient 类型边界
+pnpm run lint                  # 对手写 JS/TS 跑 ESLint
+pnpm run test                  # 编译并运行完整测试套件
+pnpm run test:example:ai-chat  # 可运行的 AI 聊天示例
+pnpm run test:example:bridge   # 可运行的桥接示例
+pnpm run test:example:webmcp   # 可运行的 WebMCP 示例
+pnpm run check:package         # 构建产物与包契约，含声明闭包
+pnpm run verify:e2e            # 浏览器桥接与 WebMCP 端到端套件
 ```
 
-- `pnpm run typecheck` 验证 TypeScript project 及其 ambient-type 边界。
-- `pnpm run lint` 使用 ESLint 检查编写的 JavaScript 与 TypeScript 源码。
-- `pnpm run test` 编译并运行仓库测试套件。
-- `pnpm run test:example:ai-chat`、`pnpm run test:example:bridge` 和 `pnpm run test:example:webmcp` 验证可运行集成。
-- `pnpm run check:package` 验证构建输出与 package contract，包括公开声明闭包。
-- `pnpm run verify:e2e` 运行 browser bridge 与 WebMCP 端到端套件。
+## 网站也要验证
 
-## 网站检查 {#website-checks}
+文档改动之后，站点必须保持无警告构建：
 
 ```bash
 cd website
@@ -34,4 +27,4 @@ go mod verify
 hugo --cleanDestinationDir --gc --minify --environment production --printPathWarnings --panicOnWarning
 ```
 
-修改公开文档时应同时运行两项网站检查：`go mod verify` 验证 Go-module checksums，Hugo 命令验证并构建生产站点。将 Hugo warnings 视为 failures，以保持生成站点的导航与链接安全。
+Hugo 警告被有意当作失败处理：导航和链接必须始终完好。

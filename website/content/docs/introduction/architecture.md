@@ -1,44 +1,43 @@
 ---
 title: Architecture
-description: How the core, capability registry, authorities, and interfaces fit together.
+description: One capability layer, thin interfaces, and the authority that owns the style.
 weight: 20
 ---
 
-The architecture separates capability semantics from the interface that presents them and from the place that owns a style or map.
-
-## System map {#system-map}
+The package has one rule: the five capabilities are defined once, and every interface — AI SDK, MCP, WebMCP, CLI — is a thin projection of that same definition. Nothing re-implements style semantics per interface.
 
 ```text
-AI SDK | MCP | WebMCP | CLI
+your code · an AI model · an MCP host
               |
               v
-      capabilityRegistry
+   AI SDK | MCP | WebMCP | CLI            thin interfaces
               |
               v
- StyleAuthority + RuntimeAuthority
+        capabilityRegistry                one source of truth:
+              |                           names, schemas, executors
+              v
+  StyleAuthority + RuntimeAuthority       who owns the style or map?
               |
               v
- Core document | live MapLibre map | browser bridge
+ style document  |  live MapLibre map
 ```
 
-The `capabilityRegistry` is the shared catalogue of descriptions, strict input schemas, runtime requirements, and executors. Thin interfaces project the applicable subset of that catalogue into their own tool format instead of defining divergent operations; the CLI and default WebMCP surface intentionally expose subsets.
+## The pieces
 
-## Style authorities {#style-authorities}
+**The capability registry** holds each capability's name, description, input schema, and executor. When a new interface appears, it projects the registry instead of inventing new operations — which is why a transaction means the same thing whether it arrives from the CLI or from an AI SDK tool call.
 
-A `StyleAuthority` owns style-level work: it reads a validated style, supplies contextual selection data, applies a transaction, and applies a complete style document. Implementations can be an in-process MapLibre map, an MCP session store, a bridged live map, or a local CLI style file.
+**A StyleAuthority decides where the style lives.** The built-in choices are an in-process map (AI SDK), an MCP document session, a bridged browser map, or a local file (CLI). You can implement your own.
 
-This boundary lets the core keep style semantics consistent while each interface decides where the current style lives and how it is applied.
+**A RuntimeAuthority exists only while a live map is attached.** The two capabilities that need one (`runMapCommand`, `queryMapFeatures`) report `MAP_NOT_READY` when there is none; document work keeps working without a map.
 
-## Runtime authorities {#runtime-authorities}
+## Type boundaries you can rely on
 
-A `RuntimeAuthority` is available only when a live map exists. It supplies runtime map commands plus bounded source and rendered feature queries. The registry marks capabilities that require it, so document-oriented environments can still use the first three operations without attaching a map.
+Each entry point declares which ambient types it may surface, and the build tests enforce it:
 
-## Ambient type boundaries {#ambient-type-boundaries}
+- `/core` — pure ES. No DOM, no Node types.
+- `/maplibre`, `/capabilities`, `/webmcp`, `/bridge` — DOM types allowed, Node types never.
+- `/ai`, `/mcp` — Node types where needed.
 
-- `/core` is ES-only.
-- `/maplibre`, `/capabilities`, `/webmcp`, and browser `/bridge` are DOM-capable without Node ambient types.
-- `/mcp` and `/ai` are Node-capable where required.
+Import the narrowest entry point that fits your host, and the wrong globals can never leak into your build.
 
-These boundaries are part of the public integration contract: import the narrowest entry point that fits the host environment. `/capabilities` exposes `AbortSignal` and MapLibre-backed authority declarations, so its public declaration closure needs DOM types even when a caller supplies another authority.
-
-Next, see the [shared capability model](../capabilities/).
+Next: [Capabilities](../capabilities/).

@@ -1,12 +1,12 @@
 ---
 title: 结果与错误
-description: 理解成功封装、失败、错误码、路径与详细信息。
+description: 读懂结果信封、按错误码分支、正确理解失败。
 weight: 40
 ---
 
-对于预期的验证、语义、可用性与策略失败，能力会返回可区分结果，而不是抛出异常。
+能力调用对预期内的问题不抛异常。校验失败、图层不存在、revision 冲突、策略拒绝，全部作为普通结果返回 —— 分支一次就能继续。
 
-## 结果封装 {#result-envelope}
+## 信封
 
 ```ts
 type CapabilityResult<TData> =
@@ -14,66 +14,46 @@ type CapabilityResult<TData> =
   | { success: false; message: string; error: StyleToolError };
 ```
 
-读取 `data` 或 `error` 前应先检查 `success`。成功结果包含能力专用的投影或回执。失败结果包含软件包创建的 `StyleToolError`；顶层 `message` 是该失败的公开摘要。
+先看 `result.success`。成功时 `data` 是该能力的投影或回执；失败时 `error` 是包创建的 `StyleToolError`，顶层的 `message` 是给人看的摘要。
 
-## Core 与 capability 失败层 {#core-capability-failures}
+## 两层失败，两个判别字段 {#core-capability-failures}
 
-Core 文档函数与 capability interface 使用不同判别字段，因为它们属于不同层：
+直接调用 `/core` 和调用能力接口的失败形状不同 —— 它们是不同的层：
 
-| Layer | Failure discriminator | Meaning |
+| 层 | 失败的样子 | 返回什么 |
 | --- | --- | --- |
-| 直接 `/core` 事务 | `ok: false` | Core transaction result 保留原始 Style、空的 changed-object list、空 diff、warnings 与其 `error`。 |
-| Capability 与 interface | `success: false` | Capability 边界把预期的 core 或 Authority failure 投影为共享 `CapabilityResult`，其中包含公开 `message` 与 `error`，且不存在成功 `data`。 |
+| 直接的 `/core` 事务 | `ok: false` | 原始样式、空变更列表、空 diff、警告，以及一个 `error` |
+| 能力接口（AI SDK、MCP、WebMCP、CLI） | `success: false` | 共享信封：公开的 `message` 和 `error`，没有 `data` |
 
-应根据所调用的 API 选择判别字段。Interface adapter 不会把失败的 core result 变成成功的 capability data。规范形状位于 [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts)与[能力契约](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts)中。
+你调的是哪层 API，就分支哪个字段。适配器绝不会把失败的核心结果包装成成功的能力数据。
 
-## 错误字段 {#error-fields}
+## 错误字段
 
-| Field | Type | Meaning |
+| 字段 | 类型 | 用途 |
 | --- | --- | --- |
-| `code` | `StyleToolErrorCode` | Stable machine-readable category |
-| `message` | `string` | Public human-readable explanation |
-| `path` | `string` (optional) | RFC 6901 JSON Pointer to the rejected value |
-| `details` | `JsonObject` (optional) | JSON metadata for bounded diagnostics |
+| `code` | `StyleToolErrorCode` | 分支判断 —— 稳定的机器可读类别 |
+| `message` | `string` | 给人看的说明；不要当程序判别用 |
+| `path` | `string`（可选） | 用 RFC 6901 JSON Pointer 定位被拒绝的值 |
+| `details` | `JsonObject`（可选） | 补充的 JSON 诊断信息 |
 
-应将 `message` 视为解释性文本，而不是程序分支标识。请按 `code` 分支；用 `path` 定位输入或文档数据；仅将 `details` 用作补充 JSON 元数据。
+## 错误码
 
-## 错误码 {#error-codes}
-
-```text
-INVALID_INPUT
-STYLE_INVALID
-NOT_FOUND
-CONFLICT
-DEPENDENCY_CONFLICT
-UNSUPPORTED_SOURCE
-REVISION_CONFLICT
-MAP_NOT_READY
-BRIDGE_DISCONNECTED
-CAPABILITY_DENIED
-IO_ERROR
-TIMEOUT
-INTERNAL
-```
-
-| Code | Typical interpretation |
+| 错误码 | 含义 |
 | --- | --- |
-| `INVALID_INPUT` | Input shape, value, or configured boundary is invalid |
-| `STYLE_INVALID` | Style specification validation failed |
-| `NOT_FOUND` | Requested layer, source, session, map, or other resource is absent |
-| `CONFLICT` | The requested semantic change conflicts with current state |
-| `DEPENDENCY_CONFLICT` | A dependent Style object prevents the change |
-| `UNSUPPORTED_SOURCE` | The source type cannot perform the requested operation |
-| `REVISION_CONFLICT` | The Style or map changed after the caller's baseline |
-| `MAP_NOT_READY` | A required live-map authority is unavailable |
-| `BRIDGE_DISCONNECTED` | The live bridge is not connected |
-| `CAPABILITY_DENIED` | Authority or resource policy denied the operation |
-| `IO_ERROR` | A filesystem or transport I/O operation failed |
-| `TIMEOUT` | The bounded operation exceeded its deadline |
-| `INTERNAL` | An unexpected implementation failure occurred |
+| `INVALID_INPUT` | 输入形状、取值或配置边界非法 |
+| `STYLE_INVALID` | 样式未通过规范校验 |
+| `NOT_FOUND` | 请求的图层、源、会话、地图等资源不存在 |
+| `CONFLICT` | 请求的变更与当前状态冲突 |
+| `DEPENDENCY_CONFLICT` | 有依赖的样式对象阻止了该变更 |
+| `UNSUPPORTED_SOURCE` | 该源类型无法执行请求的操作 |
+| `REVISION_CONFLICT` | 样式或地图在你的基线之后被改过 —— 重新读取再提交 |
+| `MAP_NOT_READY` | 所需的实时地图当前不可用 |
+| `BRIDGE_DISCONNECTED` | 实时桥接未连接 |
+| `CAPABILITY_DENIED` | 权威源或资源策略拒绝了该操作 |
+| `IO_ERROR` | 文件系统或传输 I/O 失败 |
+| `TIMEOUT` | 有界操作超出时限 |
+| `INTERNAL` | 未预期的实现错误 |
 
-## 失败类别 {#failure-classes}
+## 什么抛异常，什么不抛
 
-验证与语义失败是正常的 `CapabilityResult` 失败：能力输入格式错误、Style 无效、对象缺失、依赖冲突、源不受支持、修订冲突以及能力被拒绝，都不要求用异常处理。
-
-I/O 与运行失败描述的是环境而非 Style 语义。MCP 与能力适配器仍会通过 `StyleToolError` 投影预期失败；CLI 则另外使用退出码 `2` 表示参数、输入或 JSON 错误，使用退出码 `3` 表示输出或内部失败。能力封装之外，意外的程序或宿主失败仍可能抛出异常。
+样式和输入问题从不抛异常 —— 它们是 `success: false` 的结果，CLI 对应退出码 `1`。I/O 和环境问题同样以 `StyleToolError` 失败的形式出现，CLI 用退出码 `2` 表示参数/输入错误、`3` 表示输出或内部故障。只有未预期的编程或宿主错误才可能在信封之外抛出。

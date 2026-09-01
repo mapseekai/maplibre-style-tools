@@ -1,32 +1,22 @@
 ---
 title: Capabilities
-description: The five shared operations, result envelope, and runtime requirements.
+description: The five operations, what they need, and what they return.
 weight: 30
 ---
 
-The capability layer defines one set of named operations, strict schemas, and bounded results. Each interface exposes the subset that applies to its host.
+Every interface exposes the same five capabilities. Three work on style documents; two need a live map.
 
-Here, **bounded** means that inputs and outputs are constrained by explicit schemas plus byte, count, depth, timeout, and authority limits. Depending on the boundary, an oversized or unauthorized value is rejected, or an output projection is truncated and marked as such. See [Limits and Safety](../../reference/limits-and-safety/).
+| Capability | What it does | Needs a live map |
+| --- | --- | --- |
+| `inspectStyle` | Read or validate a style and get a compact projection back | No |
+| `applyStyleTransaction` | Apply an atomic list of structured edits | No |
+| `applyStyleDocument` | Replace the whole style document | No |
+| `runMapCommand` | Run a bounded command against a live map | Yes |
+| `queryMapFeatures` | Query source or rendered features, with explicit truncation | Yes |
 
-## Shared registry {#shared-registry}
+## One result shape everywhere
 
-`capabilityRegistry` is the transport-neutral source of truth for a capability’s description, input schema, model input schema, runtime requirement, and executor. AI SDK, MCP, WebMCP, and CLI integrations project the applicable registry contracts into their own transport without changing their semantics. This is semantic consistency, not a promise that every interface exposes all five names: the CLI is document-oriented, and default WebMCP exposes two read-only tools.
-
-## The five capabilities {#five-capabilities}
-
-| Capability | `requiresRuntime` | Purpose |
-| --- | ---: | --- |
-| `inspectStyle` | `false` | Inspect or validate a style-oriented document and produce a bounded projection. |
-| `applyStyleTransaction` | `false` | Apply a structured, atomic style transaction through a style authority. |
-| `applyStyleDocument` | `false` | Replace a style document through a style authority. |
-| `runMapCommand` | `true` | Run a bounded command against a live map. |
-| `queryMapFeatures` | `true` | Query bounded source or rendered features from a live map. |
-
-The first three capabilities work with a `StyleAuthority`. `runMapCommand` and `queryMapFeatures` also require a live-map `RuntimeAuthority`; when no map is ready, they cannot run.
-
-## Result envelope {#result-envelope}
-
-Every capability returns the same public result contract:
+Every capability — through every interface — resolves to the same envelope:
 
 ```ts
 type CapabilityResult<TData> =
@@ -34,10 +24,12 @@ type CapabilityResult<TData> =
   | { success: false; message: string; error: StyleToolError };
 ```
 
-Success results contain `data`. Failure results contain a package-created `StyleToolError`, so callers can handle success and failure consistently across interfaces.
+Handle success and failure once, and the same code works whether the call came from the AI SDK, MCP, or the CLI. The error codes are in [Results and errors](../../reference/results-and-errors/).
 
-## Runtime requirements {#runtime-requirements}
+## Inputs are plain JSON, checked strictly
 
-Inputs are strict native JSON. Nested values must not be JSON-encoded strings: pass objects, arrays, booleans, numbers, and `null` as their native JSON values. Invalid input is rejected before a capability handler or map is invoked.
+Pass objects, arrays, numbers, and booleans as native JSON values — never stringified. Unknown fields are rejected before anything runs, so a malformed call fails fast with `INVALID_INPUT` instead of reaching your map.
 
-Use `inspectStyle`, `applyStyleTransaction`, and `applyStyleDocument` for document-oriented work; reserve `runMapCommand` and `queryMapFeatures` for a live MapLibre runtime.
+"Bounded" is a promise, too: inputs and outputs are capped by explicit schemas and limits (bytes, counts, depths), and output that would exceed a cap is truncated and marked as such. The numbers are in [Limits and safety](../../reference/limits-and-safety/).
+
+Next: [install the package](../../getting-started/installation/).

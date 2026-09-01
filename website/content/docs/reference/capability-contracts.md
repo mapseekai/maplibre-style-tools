@@ -1,14 +1,14 @@
 ---
 title: Capability Contracts
-description: Compare curated input/output guidance, authority needs, and interface availability.
+description: What each capability accepts, returns, and where it is available.
 weight: 30
 ---
 
-The five public capabilities share one registry, strict schemas, and a common result envelope. This page is a curated compatibility guide to their public input and success-data types; it is not an exhaustive field-level API reference.
+The five capabilities share one registry, strict schemas, and one result envelope. This page tells you what each one accepts and returns and where it is available; exact field types are linked at the bottom.
 
-## Capability matrix {#capability-matrix}
+## Capability matrix
 
-| Capability | Input type | Success data | Runtime | AI SDK | MCP | WebMCP | CLI |
+| Capability | Input type | Success data | Live map | AI SDK | MCP | WebMCP | CLI |
 | --- | --- | --- | ---: | ---: | ---: | --- | --- |
 | `inspectStyle` | [`InspectStyleInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts#L21) | `InspectionProjection` | No | Yes | Yes | Default | `inspect`; `validate` covers validation actions |
 | `applyStyleTransaction` | [`ApplyStyleTransactionInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `StyleMutationReceipt` | No | Yes | Yes | `allowMutations` | `apply` |
@@ -16,50 +16,44 @@ The five public capabilities share one registry, strict schemas, and a common re
 | `runMapCommand` | [`RunMapCommandInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `MapCommandReceipt` | Yes | Yes | Yes | `allowMutations` | No |
 | `queryMapFeatures` | [`QueryMapFeaturesInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) | `FeatureQueryProjection` | Yes | Yes | Yes | Default | No |
 
-“Runtime” means a live MapLibre map is required. The AI SDK facade supplies all five tools over an in-process map. MCP exposes all five capability names and additionally exposes session management.
+The AI SDK facade supplies all five tools over an in-process map. MCP exposes all five names and adds session management.
 
-## Authority requirements {#authority-requirements}
+## What each capability needs from you
 
 | Capability | Required authority |
 | --- | --- |
-| `inspectStyle` | `StyleAuthority`; authority-free for document and transaction validation or GeoJSON analysis |
+| `inspectStyle` | A `StyleAuthority` — except `validateDocument`, `validateTransaction`, and `analyzeGeoJson`, which work on their supplied input |
 | `applyStyleTransaction` | `StyleAuthority.applyTransaction()` |
 | `applyStyleDocument` | `StyleAuthority.applyDocument()` |
 | `runMapCommand` | `RuntimeAuthority.runtimeCommands()` |
-| `queryMapFeatures` | `RuntimeAuthority.querySourceFeatures()` or `RuntimeAuthority.queryRenderedFeatures()` |
+| `queryMapFeatures` | `RuntimeAuthority.querySourceFeatures()` or `queryRenderedFeatures()` |
 
-An `AuthoritySource` resolves lazily and may return `null`; authority-dependent execution then returns `MAP_NOT_READY`. MCP may select either a Style session authority or a live bridged map authority. Runtime-only capabilities require a map target.
+Authorities resolve lazily and may return `null`; authority-dependent calls then fail with `MAP_NOT_READY`.
 
-## Input schemas {#input-schemas}
+## Input rules
 
-Capability schemas accept native JSON values and use strict objects, so unknown fields are rejected. `capabilityRegistry` provides both the execution `inputSchema` and a model-facing `modelInputSchema`; execution always validates again at the capability boundary.
+Schemas accept native JSON values and strict objects — unknown fields are rejected, and nested values must not be JSON-encoded strings. `ApplyStyleTransactionInput` carries a transaction plus optional `dryRun` and `diff`; `ApplyStyleDocumentInput` selects an inline style or an absolute URL; runtime command and feature-query inputs are discriminated by `action` or `target`.
 
-[`InspectStyleInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts#L21) is the canonical complete inspection-action union. `ApplyStyleTransactionInput` carries a transaction plus optional `dryRun` and `diff`. `ApplyStyleDocumentInput` selects an inline Style or absolute URL. Runtime command and feature-query inputs are discriminated by `action` or `target`.
+## `inspectStyle` actions
 
-For every complete field and discriminator, use the canonical [capability type declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts), [execution schemas](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.ts), and [schema tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.test.ts). Transaction operation variants and core result shapes are defined in [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts) and exercised by the adjacent core schema and operation tests.
+Pick the action that matches the projection you need. `validateDocument`, `validateTransaction`, and `analyzeGeoJson` run without an authority; the rest read the current style from the selected authority.
 
-## `inspectStyle` action catalogue {#inspect-style-actions}
-
-Use the action that matches the projection or validation you need. `validateDocument`, `validateTransaction`, and `analyzeGeoJson` operate on their supplied input without resolving an Authority; the other actions read the current Style from the selected Authority.
-
-| Action | Intent | Key selector or required input |
+| Action | What you get | Key input |
 | --- | --- | --- |
-| `listLayers` | Search or list compact layer summaries | Optional `query`, `type`, `source`, `sourceLayer`, and `limit` |
-| `listSources` | List source definitions | Optional `limit` |
-| `getLayer` | Read one layer projection | Required `layerId`; optional `fields` from `paint`, `layout`, `filter`, and `zoom` |
-| `getSource` | Read one source definition | Required `sourceId` |
-| `getRoot` | Read Style root properties without layer/source collections | No selector |
-| `getContext` | Build a compact Style context, including Authority-provided selection context | Optional `layerLimit` |
-| `inspectLayers` | Read detailed projections for selected layers, or the bounded leading set | Optional `layerIds`, `fields`, and `limit` |
-| `getLayerCount` | Count layers without returning their definitions | No selector |
-| `validateDocument` | Validate a supplied Style document | Required `style` |
-| `validateCurrentMap` | Confirm that the selected Authority exposes a currently valid Style | No extra input; requires a ready Authority |
-| `validateTransaction` | Validate a non-empty transaction without applying it | Required `transaction` |
-| `analyzeGeoJson` | Analyze supplied inline GeoJSON, or report a remote URL as unavailable without fetching | Required `data`; optional `options` |
-| `listSourceLayers` | List source-layer usage, optionally for one source | Optional `sourceId` |
+| `listLayers` | Compact layer summaries | Optional `query`, `type`, `source`, `sourceLayer`, `limit` |
+| `listSources` | Source definitions | Optional `limit` |
+| `getLayer` | One layer projection | `layerId`; optional `fields` from `paint`, `layout`, `filter`, `zoom` |
+| `getSource` | One source definition | `sourceId` |
+| `getRoot` | Root properties without layer/source collections | — |
+| `getContext` | Compact style context, including authority-provided selection context | Optional `layerLimit` |
+| `inspectLayers` | Detailed projections for selected layers, or the bounded leading set | Optional `layerIds`, `fields`, `limit` |
+| `getLayerCount` | The number of layers | — |
+| `validateDocument` | Validation of a supplied style | `style` |
+| `validateCurrentMap` | Confirmation that the authority exposes a currently valid style | Requires a ready authority |
+| `validateTransaction` | Validation of a non-empty transaction, without applying it | `transaction` |
+| `analyzeGeoJson` | Analysis of supplied inline GeoJSON; URLs report `available: false` without fetching | `data`; optional `options` |
+| `listSourceLayers` | Source-layer usage, optionally for one source | Optional `sourceId` |
 
-The canonical [`InspectStyleInput`](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts#L21), [execution schema](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.ts), and [executor](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/inspect.ts) remain authoritative for exact field types and projection behavior.
+## Where the exact shapes live
 
-## Interface availability {#interface-availability}
-
-WebMCP registers `inspectStyle` and `queryMapFeatures` by default. Its mutation tools are opt-in: `applyStyleTransaction`, `applyStyleDocument`, and `runMapCommand` are registered only when `allowMutations` is `true`. The CLI is intentionally document-oriented and does not expose whole-document replacement or live-runtime operations.
+Complete field and discriminator types: the canonical [capability declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts), [execution schemas](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.ts), and [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts).

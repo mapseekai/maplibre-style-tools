@@ -1,44 +1,43 @@
 ---
 title: 架构
-description: 理解核心、能力注册表、Authority 与各接口如何协作。
+description: 一个能力层，薄接口，以及持有样式的权威源。
 weight: 20
 ---
 
-该架构将能力语义、呈现能力的接口，以及拥有样式或地图的位置分离开来。
-
-## 系统地图 {#system-map}
+这个包只有一条规则：五个能力只定义一次，AI SDK、MCP、WebMCP、CLI 都是对同一份定义的薄投影。没有任何接口各自实现一套样式语义。
 
 ```text
-AI SDK | MCP | WebMCP | CLI
+your code · an AI model · an MCP host
               |
               v
-      capabilityRegistry
+   AI SDK | MCP | WebMCP | CLI            thin interfaces
               |
               v
- StyleAuthority + RuntimeAuthority
+        capabilityRegistry                one source of truth:
+              |                           names, schemas, executors
+              v
+  StyleAuthority + RuntimeAuthority       who owns the style or map?
               |
               v
- Core document | live MapLibre map | browser bridge
+ style document  |  live MapLibre map
 ```
 
-`capabilityRegistry` 是共享目录，包含描述、严格输入 Schema、运行时要求和执行器。轻量接口把该目录中适用的子集投影为各自的工具格式，而不是定义彼此不同的操作；CLI 与默认 WebMCP 表面有意只公开子集。
+## 组成部分
 
-## 样式 Authority {#style-authorities}
+**能力注册表（capabilityRegistry）** 保存每个能力的名称、描述、输入 schema 和执行器。新接口接入时直接投影注册表，而不是另起炉灶 —— 所以同一个事务，无论来自 CLI 还是 AI SDK 工具调用，语义完全一致。
 
-`StyleAuthority` 负责样式级工作：读取已验证的样式、提供上下文中的选中数据、应用事务，以及应用完整样式文档。其实现可以是进程内 MapLibre 地图、MCP 会话存储、桥接的实时地图或本地 CLI 样式文件。
+**样式权威源（StyleAuthority）决定样式在哪里。** 内置选项：进程内地图（AI SDK）、MCP 文档会话、桥接的浏览器地图、本地文件（CLI）。你也可以自己实现。
 
-这个边界让核心保持一致的样式语义，同时让每个接口决定当前样式存放的位置及其应用方式。
+**运行时权威源（RuntimeAuthority）只在挂载了实时地图时存在。** 需要它的两个能力（`runMapCommand`、`queryMapFeatures`）在没有地图时返回 `MAP_NOT_READY`；文档类工作完全不受影响。
 
-## 运行时 Authority {#runtime-authorities}
+## 可以依赖的类型边界
 
-`RuntimeAuthority` 仅在存在实时地图时可用。它提供运行时地图命令，以及有界的源要素和已渲染要素查询。注册表会标记需要它的能力，因此面向文档的环境无需附加地图也能使用前三项操作。
+每个入口声明了自己可能暴露的 ambient 类型，构建测试强制执行：
 
-## Ambient 类型边界 {#ambient-type-boundaries}
+- `/core` —— 纯 ES，无 DOM、无 Node 类型。
+- `/maplibre`、`/capabilities`、`/webmcp`、`/bridge`（浏览器端）—— 允许 DOM，禁止 Node。
+- `/ai`、`/mcp` —— 按需允许 Node。
 
-- `/core` 仅限 ES。
-- `/maplibre`、`/capabilities`、`/webmcp` 和浏览器 `/bridge` 支持 DOM，但不包含 Node ambient 类型。
-- `/mcp` 与 `/ai` 在需要时支持 Node。
+选择适配宿主的最窄入口，错误的全局变量就进不了你的构建。
 
-这些边界是公开集成契约的一部分：应导入与宿主环境匹配的最窄入口点。`/capabilities` 公开 `AbortSignal` 与 MapLibre-backed Authority 声明，因此即使调用方提供其他 Authority，其公开声明闭包仍需要 DOM 类型。
-
-接下来请阅读[共享能力模型](../capabilities/)。
+下一步：[能力](../capabilities/)。

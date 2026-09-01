@@ -1,16 +1,12 @@
 ---
-title: WebMCP Site tools
-description: 以只读默认值和显式写入授权注册页面级浏览器工具。
+title: WebMCP Site Tools
+description: 让页面内的 AI Agent 驱动页面自己的地图 —— 无需服务器。
 weight: 60
 ---
 
-当浏览器向页面公开 `document.modelContext` 时，请使用 `/webmcp`。WebMCP Site tools 是带描述与结构化 Schema 的 JavaScript 函数；浏览器会让与该页面协作的 Agent 发现并调用它们。注册是页面级且仅限浏览器；它既不需要 MCP server 进程，也不需要浏览器桥接。
+WebMCP Site tools 是浏览器暴露给同一页面内 AI Agent 的 JavaScript 函数。`registerMapLibreWebMcpTools` 把地图工具加到这个入口上：页面作用域、纯浏览器，不需要 MCP 服务器，也不需要桥接。
 
-## 何时使用 WebMCP {#when-to-use-webmcp}
-
-WebMCP 用于实时的页面内交互，其中页面仍是地图访问的 authority。所需的浏览器表面是 `document.modelContext`；支持情况在注册时进行 feature detection。当外部 MCP host 需要 wire-protocol server 时请使用 [MCP](../mcp/)；仅当该 host 必须访问浏览器地图时才使用[浏览器桥接](../bridge/)。
-
-## 只读注册 {#read-only-registration}
+## 注册工具
 
 ```ts
 import { registerMapLibreWebMcpTools } from 'maplibre-style-tools/webmcp';
@@ -21,20 +17,32 @@ const registration = await registerMapLibreWebMcpTools({
 });
 
 if (!registration.supported) {
-  console.info('This browser does not expose WebMCP Site tools.');
+  // 此浏览器未暴露 document.modelContext。
 }
 ```
 
-默认注册只公开 `inspectStyle` 和 `queryMapFeatures`。`document.modelContext` 不可用时，注册会以 `supported: false` 结束；应将其视为预期的 feature-detection 结果，而不是错误或默默添加另一种传输方式的许可。WebMCP 仍是演进中的 Community Group draft，因此不要从固定的浏览器版本列表推断支持情况；请查看权威的 [WebMCP draft](https://webmachinelearning.github.io/webmcp/)与当前 [Web Platform Test 结果](https://wpt.fyi/results/webmcp)。
+默认注册是只读的：只暴露 `inspectStyle` 和 `queryMapFeatures`，仅此而已。
 
-## 显式写入授权 {#mutation-opt-in}
+## 靠特性检测，而不是浏览器版本
 
-仅在页面有意公开写入功能时设置 `allowMutations: true`。它恰好添加三个支持变更的工具：`applyStyleTransaction`、`applyStyleDocument` 和 `runMapCommand`。请将此 opt-in 与适当的调用授权和资源策略配对；该 flag 本身不是授权边界。
+`supported: false` 表示这个浏览器没有暴露 `document.modelContext`，按特性检测的结果对待即可。WebMCP 仍是 Community Group 草案，请查看[草案规范](https://webmachinelearning.github.io/webmcp/)和 [Web Platform Tests 结果](https://wpt.fyi/results/webmcp)，不要依赖浏览器版本号。
 
-## 调用授权 {#invocation-authorization}
+## 变更能力需要显式开启
 
-提供 `authorizeInvocation` 以便页面为每一次调用作出决定，并仅使用 `onInvocation` 进行观察。被拒绝的调用会返回有边界的能力结果，而不会绕过页面 authority。使用 `signal` 将注册绑定到页面生命周期，并在页面不再拥有地图时关闭它。
+```ts
+await registerMapLibreWebMcpTools({
+  getMap: () => map,
+  signal: pageLifetime.signal,
+  allowMutations: true,
+});
+```
 
-## 与 MCP 的区别 {#how-it-differs-from-mcp}
+`allowMutations: true` 会恰好增加三个工具：`applyStyleTransaction`、`applyStyleDocument`、`runMapCommand`。只在页面有意开放写入时才开启，并配合 `authorizeInvocation` 回调让页面对每次调用做决定 —— 被拒绝的调用返回普通的有界失败，不会绕过页面。`onInvocation` 只用于观察。用 `signal` 把注册绑定到页面生命周期，页面不再持有地图时及时注销。
 
-WebMCP 会在支持该表面的浏览器中，把适用的共享注册表契约注册为 JavaScript 工具。`/mcp` 是通过 stdio 或受保护 HTTP 使用 MCP wire protocol 的 server。WebMCP 默认是两个只读页面工具；MCP 公开全部五个 capability 名称，还可以管理有边界的离线会话和已注册的实时地图目标。
+## 与 MCP 的区别
+
+WebMCP 把工具放进浏览器，服务的是正在和用户一起操作的页面内 Agent；[`/mcp`](../mcp/) 是给外部宿主的线协议服务器。WebMCP 默认只有两个只读页面工具；MCP 暴露全部五个能力，外加离线会话和桥接实时地图。
+
+## 看它跑起来
+
+[WebMCP 示例](https://github.com/mapseekai/maplibre-style-tools/blob/main/examples/webmcp/README.md)开启了变更能力，并接受 Agent 的原生批注。

@@ -1,42 +1,33 @@
 ---
 title: AI SDK
-description: Expose the five shared capabilities as AI SDK tools over an in-process map.
+description: Five ready-made tools over an in-process map.
 weight: 40
 ---
 
-Use `/ai` when the application owns a live MapLibre map and wants an AI SDK-compatible tool set in the same process. This facade wraps the shared [capability registry](../capabilities/); it does not create a network transport or select a map outside the accessor you provide.
+`/ai` turns the capability registry into an AI SDK 6 tool set over a map your application owns. One factory call: the model gets five well-described tools, and your map stays behind a callback you control.
 
-## Create the tool set {#create-the-tool-set}
+## Create and pass the tools
 
 ```ts
 import { createMapLibreStyleTools } from 'maplibre-style-tools/ai';
-
-const tools = createMapLibreStyleTools({
-  getMap: () => map,
-});
-```
-
-The factory returns exactly five tools: `inspectStyle`, `applyStyleTransaction`, `applyStyleDocument`, `runMapCommand`, and `queryMapFeatures`. Their names, descriptions, model schemas, and execution semantics come from the same registry used by the other interfaces.
-
-## Pass tools to a model {#pass-tools-to-a-model}
-
-Pass the returned object as the AI SDK `tools` option. The model receives the bounded tool definitions; map access remains inside the `getMap` callback.
-
-```ts
 import { generateText } from 'ai';
 
-const response = await generateText({
+const tools = createMapLibreStyleTools({ getMap: () => map });
+
+const { text } = await generateText({
   model,
-  prompt: 'Make roads easier to see.',
+  prompt: 'Make the roads easier to see.',
   tools,
 });
 ```
 
-Choose the model and any loop or approval policy in the host application. A tool definition is not an authorization policy for mutations.
+You get exactly `inspectStyle`, `applyStyleTransaction`, `applyStyleDocument`, `runMapCommand`, and `queryMapFeatures` — names, descriptions, and schemas projected from the same registry the other interfaces use.
 
-## Execute directly {#execute-directly}
+Choosing the model, approval flows, and when mutations are allowed is your application's policy. A tool definition is not an authorization policy.
 
-Use a tool's `execute` method when the application, rather than a model, supplies a validated intent.
+## Call tools directly when the intent is already validated
+
+No model required — every tool exposes `execute`:
 
 ```ts
 const result = await tools.applyStyleTransaction.execute({
@@ -50,14 +41,16 @@ const result = await tools.applyStyleTransaction.execute({
 });
 ```
 
-Inputs are native JSON values, not JSON-encoded strings. Capability validation still runs at execution time.
+Inputs are native JSON values — pass objects and arrays as themselves, never as JSON-encoded strings. Validation still runs at execution time.
 
-## Map availability {#map-availability}
+## Map availability follows your application's lifecycle
 
-`getMap` is evaluated when a tool runs. It may return `null`, or safely fail while the page is changing; the tool then returns the normal `MAP_NOT_READY` failure envelope. Use this to keep tool availability aligned with the application lifecycle instead of retaining a stale map reference.
+`getMap` runs when a tool executes. Return `null` while the page loads or after teardown, and callers get the normal `MAP_NOT_READY` failure — no stale map references, no crashes.
 
-## Result handling {#result-handling}
+## Results need one pattern
 
-Each tool returns the shared discriminated result envelope: a success has `data`, while a failure has a package-created `StyleToolError`. Check `success` before using `data`.
+Success has `data`; failure has a package-created `StyleToolError`. Check `result.success`, then read accordingly. Inspections return compact projections — read a full style document through [`/core`](../core/) or the Map instance when you actually need it.
 
-The AI facade never accepts `getState`, never returns arbitrary application state, and never returns a complete Style document or `data.style`. Read a full Style through the [core boundary](../core/) or the MapLibre map when the application genuinely needs it.
+## Next
+
+For a minimal end-to-end setup, see the [quick start](../../getting-started/ai-sdk-quick-start/). To expose tools without an AI SDK dependency, compare [WebMCP](../webmcp/) and [MCP](../mcp/).

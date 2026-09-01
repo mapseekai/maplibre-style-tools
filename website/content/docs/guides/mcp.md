@@ -1,38 +1,45 @@
 ---
 title: MCP Server
-description: Serve bounded Style sessions and live maps over stdio or protected HTTP.
+description: Bounded style sessions and live maps over stdio or protected HTTP.
 weight: 50
 ---
 
-Use `/mcp` for an MCP host that needs bounded offline Style sessions, or a connected browser map through the live-map extension. It exposes the five shared capabilities plus session-management tools; it does not accept a Style path or URL and does not fetch network input.
+`/mcp` runs an MCP server that external hosts — Claude Desktop, an IDE, your own agent — connect to. It exposes the five capabilities plus session management, and can additionally act on a live browser map through the [bridge](../bridge/). It accepts no style paths or URLs and performs no network fetches.
 
-## Choose a transport {#choose-a-transport}
+## Pick a transport
 
-Use stdio for a local MCP host that launches the server. Use protected Streamable HTTP only for trusted clients that can keep a bearer secret. Both transports enforce the same bounded message policy and capability result envelopes.
+| Transport | For | Command |
+| --- | --- | --- |
+| stdio | A local host that launches the server | `maplibre-style-mcp --stdio` |
+| Streamable HTTP | Trusted clients that can keep a bearer secret | `maplibre-style-mcp --http --bearer-token "$TOKEN"` |
 
-## Stdio {#stdio}
+Both enforce the same bounded message policy and return the same capability envelopes.
+
+## stdio keeps stdout clean
 
 ```bash
 maplibre-style-mcp --stdio
 ```
 
-Stdout is reserved for newline-delimited protocol messages. Startup diagnostics go to stderr, so a host can parse stdout without log contamination. The default MCP message limit is 5 MiB; embedders may configure `maxMessageBytes` from 128 KiB through 64 MiB.
+Stdout carries only newline-delimited protocol messages; startup diagnostics go to stderr, so your host can parse stdout without filtering log lines. The default message ceiling is 5 MiB, configurable from 128 KiB through 64 MiB via `maxMessageBytes`.
 
-## Protected HTTP {#protected-http}
+## HTTP is protected by default
 
 ```bash
 TOKEN='replace-with-a-random-secret'
 maplibre-style-mcp --http --bearer-token "$TOKEN"
 ```
 
-HTTP binds to loopback (`127.0.0.1`) by default. A non-loopback bind requires `--allow-non-loopback` and must retain bearer and origin checks. Every request needs the bearer token and exact bound `Host`; when a browser sends `Origin`, it must match the bound origin or an explicit allowed-origin entry. These headers are checked before the body is read or an MCP transport is allocated.
+The listener binds `127.0.0.1` on a random port; other interfaces require `--allow-non-loopback`. Every request must carry the bearer token and the exact bound `Host`, and a browser `Origin` must equal the bound origin or an explicit allowlist entry. These checks run before the body is read or a transport is allocated.
 
-## Document sessions {#document-sessions}
+## Document sessions: offline style workflows
 
-Style sessions are bounded, in-memory document workflows. Open a validated Style into a session, operate on its revisioned document, and close it when finished. Session identifiers are application data, distinct from MCP transport-session identifiers. Session targets remain offline even when a browser map is also connected.
+Open a validated style into a session, apply revisioned transactions against it, close it when done. Sessions are bounded, in-memory, and fully separate from any connected live map. Session IDs are application data, distinct from the MCP transport's own session IDs.
 
-For complete field-level MCP, session, and resource shapes, use the canonical [public DTO declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts), [resource URI contracts](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.ts), [MCP contract tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/contract.test.ts), and [resource tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/resources.test.ts). This guide intentionally covers the supported workflow rather than duplicating every DTO.
+## Live maps arrive through the bridge
 
-## Live-map extension {#live-map-extension}
+Start the host with bridge options and a browser page can register its map as a live target — see the [Browser Bridge guide](../bridge/). Only then do live-map capabilities operate on it; a connected browser never turns an offline session into a live map.
 
-The live-map extension lets MCP tools target a browser map connected through the [Browser Bridge](../bridge/). Start the MCP host with bridge options, then grant only the bridge permissions and resource origins the page needs. The extension does not turn an offline session into a live map: a live target must be registered by a connected browser client.
+## Next
+
+Field-level DTO shapes: the canonical [MCP/session types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts). Bridge setup: [Browser Bridge](../bridge/).

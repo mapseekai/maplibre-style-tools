@@ -1,21 +1,17 @@
 ---
 title: Ambient Type Boundaries
-description: Preserve ES-only, DOM-capable, and Node-capable declaration boundaries.
+description: The ES-only, DOM-capable, and Node-capable lines every change must respect.
 weight: 20
 ---
 
-Ambient types are part of the package compatibility contract. Keep each source area within its intended host environment.
+Ambient types are part of the public contract: the declarations an entry point exposes must not drag in globals its consumers never signed up for. Tests enforce these rows.
 
-## Boundary table {#boundary-table}
-
-| Area | Allowed ambient types |
+| Area | Ambient types allowed |
 | --- | --- |
-| `/core` | ES only; no DOM or Node |
-| `/maplibre`, `/capabilities`, `/webmcp`, browser `/bridge` | DOM allowed; Node forbidden |
-| `/mcp`, `/ai` | Node allowed where required |
+| `/core` | None — pure ES |
+| `/maplibre`, `/capabilities`, `/webmcp`, browser `/bridge` | DOM, never Node |
+| `/mcp`, `/ai` | Node where needed |
 
-## Declaration closure {#declaration-closure}
+`/capabilities` sits in the DOM row by design: its public closure exposes `AbortSignal` and MapLibre-backed authority declarations. It stays Node-independent.
 
-Public declaration closure is tested. Generic refactors must not leak ambient types across these boundaries: an ES-only consumer must not acquire DOM or Node declarations, and browser-facing declarations must not acquire Node declarations. `/capabilities` is deliberately in the DOM-capable row because its public closure exposes `AbortSignal` and MapLibre-backed authority declarations; it remains Node-independent.
-
-Use the narrowest public entry point for the host environment, and keep host-specific imports behind the corresponding boundary.
+When you refactor, keep each area inside its row — an ES-only consumer must never acquire DOM or Node declarations, and browser-facing declarations must never acquire Node ones.

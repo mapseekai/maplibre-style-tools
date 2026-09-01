@@ -1,41 +1,39 @@
 ---
-title: 软件包入口
-description: 在八个受支持的导入入口之间做出选择。
+title: 包入口
+description: 八个导入路径，各自提供什么。
 weight: 10
 ---
 
-软件包公开八个受支持的导入入口。请选择能够覆盖集成所需环境与 Authority 的最窄入口。
+包发布了八个导入路径。经验法则：选适配宿主的最窄入口 —— 不需要的全局变量和依赖就进不了你的构建。
 
-## 入口 {#entry-points}
-
-| Specifier | Role |
+| 路径 | 提供什么 |
 | --- | --- |
-| `maplibre-style-tools` | Non-AI convenience exports |
-| `maplibre-style-tools/core` | Pure validation, transactions, GeoJSON, analysis, and discovery |
-| `maplibre-style-tools/maplibre` | Live MapLibre mutation, runtime commands, and bounded feature queries |
-| `maplibre-style-tools/capabilities` | Five executors, schemas, registry, result envelope, and authorities |
-| `maplibre-style-tools/ai` | AI SDK tool factory over an in-process map |
-| `maplibre-style-tools/webmcp` | Browser-native page-scoped Site tools |
-| `maplibre-style-tools/mcp` | MCP server, sessions, transports, resources, and live extension |
-| `maplibre-style-tools/bridge` | Browser-safe live map client, protocol, hashing, and resource policy |
+| `maplibre-style-tools` | 根入口：核心类型加上 `applyStyleTransaction` 和 `validateStyleDocument` |
+| `maplibre-style-tools/core` | 纯净的校验、事务、GeoJSON、分析与发现 |
+| `maplibre-style-tools/maplibre` | 实时地图事务、运行时命令、有界要素查询 |
+| `maplibre-style-tools/capabilities` | 五个执行器、schema、注册表、结果信封与权威源接口 |
+| `maplibre-style-tools/ai` | 作用于进程内地图的 AI SDK 工具工厂 |
+| `maplibre-style-tools/webmcp` | 浏览器页面作用域 Site tools |
+| `maplibre-style-tools/mcp` | MCP 服务器、会话、传输、资源、实时扩展 |
+| `maplibre-style-tools/bridge` | 浏览器侧桥接客户端、协议、哈希与资源策略 |
 
-根入口有意保持精简：它重新导出 core 类型以及 `applyStyleTransaction` 和 `validateStyleDocument`。接口专用工厂与适配器应从对应的显式子路径导入。
+根入口刻意很小。任何接口相关的东西，都从对应的显式子路径引入。
 
-## Ambient 与运行时边界 {#ambient-runtime-boundaries}
+## 各入口对宿主的要求
 
-| Specifier | DOM ambient | Node ambient | Runtime dependency |
-| --- | ---: | ---: | --- |
-| root | No | No | Pure core only |
-| `/core` | No | No | None |
-| `/maplibre` | Yes | No | In-process MapLibre map |
-| `/capabilities` | Yes | No | Caller-provided authorities |
-| `/ai` | Through dependencies | Yes | AI SDK and in-process map |
-| `/webmcp` | Yes | No | Browser `document.modelContext` and in-process map |
-| `/mcp` | No | Yes | Node MCP host and optional bridge server |
-| `/bridge` | Yes | No | Browser map and protected WebSocket endpoint |
+| 路径 | DOM 类型 | Node 类型 | 运行时需要 |
+| --- | --- | --- | --- |
+| 根入口 | 否 | 否 | 无 —— 纯核心 |
+| `/core` | 否 | 否 | 无 |
+| `/maplibre` | 是 | 否 | 一个 MapLibre 地图 |
+| `/capabilities` | 是 | 否 | 你提供的权威源 |
+| `/ai` | 经依赖引入 | 是 | AI SDK 6 和地图 |
+| `/webmcp` | 是 | 否 | `document.modelContext` 和地图 |
+| `/mcp` | 否 | 是 | Node.js |
+| `/bridge` | 是 | 否 | 浏览器地图和桥接端点 |
 
-“Ambient” 描述通过公开声明边界可见的 TypeScript 全局库，并不表示每次导入都会立即执行运行时工作。`/capabilities` 声明公开了 `AbortSignal`，并导出 `MapStyleAuthority`；后者的声明会导入 MapLibre 类型，因此即使消费者提供其他 Authority，也需要 DOM ambient 类型；该边界不需要 Node ambient 类型。
+"DOM 类型"/"Node 类型"指公开声明可能带出的 ambient 类型库 —— 不代表每次导入都会执行运行时工作。`/capabilities` 列 DOM 是因为它的公开闭包含 `AbortSignal` 和 MapLibre 权威源声明，即使你提供别的权威源也是如此；它永远不需要 Node 类型。
 
-## 选择规则 {#selection-rules}
+## 选择规则
 
-面向传输无关的 Style 文档时使用 `/core`；应用代码已持有 `Map` 时使用 `/maplibre`；在支持 DOM 的宿主中为调用方提供的 Authority 构建自定义接口时使用 `/capabilities`。需要对应集成时使用 `/ai`、`/webmcp` 或 `/mcp`。`/bridge` 只用于受保护实时地图连接的浏览器端；Node bridge server 由 `/mcp` 导出。
+在 Node 或打包器里处理样式文档：`/core`。代码已经持有 `Map`：`/maplibre`。基于自己的权威源构建自定义接口：`/capabilities`。其余按名字对号入座 —— `/ai`、`/webmcp`、`/mcp` —— 而 `/bridge` 是实时地图连接的浏览器侧，Node 侧服务器在 `/mcp` 里。

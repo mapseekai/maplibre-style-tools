@@ -1,55 +1,57 @@
 ---
 title: 限制与安全
-description: 查询字节、数量、深度、传输和资源策略边界。
+description: 每条边界上强制执行的字节、数量、深度、传输与资源策略上限。
 weight: 50
 ---
 
-下列数值是公开兼容性边界。字节限制在对应边界处按 UTF-8 数据或 UTF-8 JSON 序列化计算。“可覆盖默认值”表示直接 API 或已配置 Authority 可以用正安全整数替换该值；它不会绕过更严格的接口 Schema、协商 ceiling 或固定入站最大值。
+这个包的每条边界都是显式且被强制执行的 —— 超限的值不会悄无声息地穿过。下表是全部已发布的数值。
 
-## 默认限制 {#default-limits}
+"可覆盖默认值"指直接 API 选项或配置的权威源可以用正安全整数替换该值，但永远不会绕过更严格的接口 schema、协商上限或固定准入最大值。字节限制按命名边界上的 UTF-8 数据或 UTF-8 JSON 序列化计算。
 
-| Boundary | Published value | Classification | Configuration and scope |
+## 默认限制
+
+| 边界 | 公布值 | 分类 | 配置与适用范围 |
 | --- | ---: | --- | --- |
-| Style JSON | 5 MiB | 可覆盖默认值；固定 CLI 输入 cap | 直接 core/MapLibre 与 MCP session option 接受正安全整数 `maxStyleBytes`；bridge peer 根据 server ceiling 协商。CLI Style 输入仍限制为 5 MiB，接口还可施加更低的有效限制。 |
-| Semantic diff | 1 MiB | 可覆盖默认值；固定 CLI cap | 直接 core/MapLibre 与 MCP session option 接受正安全整数 `maxDiffBytes`；bridge peer 根据 server ceiling 协商。CLI 与其他未配置路径保持 1 MiB。 |
-| Operations per transaction | 100 | 可覆盖的 core/Authority 默认值；接口 Schema cap | 直接 core/MapLibre、MCP session 与 bridge 有效限制可以替换 `maxOperations`。默认 capability model Schema 与 CLI 最多接纳 100 项，除非已配置 Authority 应用更低限制。 |
-| Inline GeoJSON | 5 MiB | 可覆盖的 standalone 默认值；transaction 接口 cap | `validateInlineGeoJson` 与 `analyzeGeoJson` 接受正安全整数 `maxBytes` override。嵌入 transaction 的验证使用该公开 cap；runtime GeoJSON diff 改用独立的 1 MiB diff-byte cap。 |
-| GeoJSON features | 100,000 | 可覆盖的 standalone 默认值；transaction/runtime 接口 cap | Standalone 验证/分析可替换正安全整数 `maxFeatures`；嵌入 transaction 与 runtime-diff 的验证使用 100,000。 |
-| Coordinate positions | 1,000,000 | 可覆盖的 standalone 默认值；transaction/runtime 接口 cap | Standalone 验证/分析可替换正安全整数 `maxCoordinatePositions`；嵌入 transaction 与 runtime-diff 的验证使用 1,000,000。 |
-| Geometry depth | 16 | 可覆盖的 standalone 默认值；transaction/runtime 接口 cap | Standalone 验证/分析可替换正安全整数 `maxGeometryDepth`；嵌入 transaction 与 runtime-diff 的验证使用 16。 |
-| Property depth | 32 | 可覆盖的 standalone 默认值；transaction/runtime 接口 cap | Standalone 验证/分析可替换正安全整数 `maxPropertyDepth`；嵌入 transaction 与 runtime-diff 的验证使用 32。 |
-| Feature query | 100 features and 1 MiB serialized | Direct-adapter 默认值；capability/bridge 最大值 | 直接 adapter 可以提供不同的正安全整数 `FeatureQueryLimits`。公开 capability input 与 bridge runtime 将请求限制在 100 和 1 MiB；`limit` 与 `maxSerializedBytes` 只能降低这些值，输出会被截断。 |
-| Runtime list | 直接 adapter：300 default、500 maximum；共享 `runMapCommand`：100 default and maximum | 特定于边界的默认值与固定请求最大值 | 直接 MapLibre adapter 的 `listImages`/`listSprites` 在省略 `limit` 时使用 300，并接受 1–500。AI SDK、MCP 与 WebMCP 使用的共享 capability 在省略时提供 100，并拒绝高于 100 的请求。 |
-| Bridge message | 5 MiB | 可配置且协商的默认 ceiling | Server 公开一个正安全整数 ceiling；client 可以显式选择不超过它的数值，否则使用 5 MiB 与 server ceiling 中较低者。单独 frame field 在声明处仍保留更小的固定最大值。 |
-| MCP message | 5 MiB default; 128 KiB–64 MiB configurable range | 具有固定范围的可配置默认值 | `maxMessageBytes` 可配置为 128 KiB 至硬性 64 MiB 最大值；envelope reserve 会减少 application-result bytes。 |
-| MCP request ID | 256 bytes | 固定入站最大值 | 按 UTF-8 JSON bytes 计量；不可配置。 |
-| MCP method | 128 bytes | 固定入站最大值 | 按 UTF-8 bytes 计量；不可配置。 |
-| MCP resource URI | 8 KiB | 固定入站最大值 | 在 canonical-namespace admission 前按 UTF-8 bytes 计量；不可配置。 |
-| Style session ID | 512 bytes | 固定入站最大值 | 非空 ID 不得包含 lone surrogate，且必须保持在 512 UTF-8 bytes 以内；其外层 resource URI 另受 8 KiB URI 最大值约束。不可配置。 |
-| HTTP bearer token | 4 KiB | 固定入站最大值 | Token 必须非空、不含 ASCII whitespace/control character，并保持在 4 KiB UTF-8 以内；不可配置。 |
+| 样式 JSON | 5 MiB | 可覆盖默认；CLI 固定上限 | 核心/MapLibre 直连与 MCP 会话选项接受正安全 `maxStyleBytes`；bridge 双端向服务器上限协商。CLI 样式输入固定 5 MiB，接口可施加更低的实际限制。 |
+| 语义 diff | 1 MiB | 可覆盖默认；CLI 固定上限 | 核心/MapLibre 直连与 MCP 会话选项接受正安全 `maxDiffBytes`；bridge 双端向服务器上限协商。CLI 与未配置路径保持 1 MiB。 |
+| 每事务操作数 | 100 | 核心/权威源可覆盖默认；接口 schema 上限 | 核心/MapLibre 直连、MCP 会话与 bridge 的实际限制可替换 `maxOperations`。默认能力模型 schema 和 CLI 最多接受 100，除非配置的权威源设了更低的限制。 |
+| 内联 GeoJSON | 5 MiB | 独立可覆盖默认；事务接口上限 | `validateInlineGeoJson` 和 `analyzeGeoJson` 接受正安全 `maxBytes` 覆盖。嵌入事务的校验使用公布上限；运行时 GeoJSON diff 单独适用 1 MiB diff 上限。 |
+| GeoJSON feature 数 | 100,000 | 独立可覆盖默认；事务/运行时接口上限 | 独立校验/分析可替换正安全 `maxFeatures`；嵌入事务与运行时 diff 校验使用 100,000。 |
+| 坐标位置数 | 1,000,000 | 独立可覆盖默认；事务/运行时接口上限 | 独立校验/分析可替换正安全 `maxCoordinatePositions`；嵌入事务与运行时 diff 校验使用 1,000,000。 |
+| 几何深度 | 16 | 独立可覆盖默认；事务/运行时接口上限 | 独立校验/分析可替换正安全 `maxGeometryDepth`；嵌入事务与运行时 diff 校验使用 16。 |
+| 属性深度 | 32 | 独立可覆盖默认；事务/运行时接口上限 | 独立校验/分析可替换正安全 `maxPropertyDepth`；嵌入事务与运行时 diff 校验使用 32。 |
+| 要素查询 | 100 个要素且序列化 1 MiB | 直连适配器默认；能力/bridge 最大值 | 直连适配器可提供不同的正安全 `FeatureQueryLimits`。公开能力输入和 bridge 运行时把请求上限锁在 100 与 1 MiB；`limit` 和 `maxSerializedBytes` 只能调低，输出会截断。 |
+| 运行时列表 | 直连适配器：默认 300、最大 500；共享 `runMapCommand`：默认即最大 100 | 边界各自默认；请求固定上限 | 直连 MapLibre 适配器的 `listImages`/`listSprites` 省略 `limit` 时用 300，接受 1–500。AI SDK、MCP、WebMCP 共用的能力省略时给 100，超过 100 直接拒绝。 |
+| Bridge 消息 | 5 MiB | 可配置的协商默认上限 | 服务器公布正安全上限；客户端可以显式选择不高于它的值，否则取 5 MiB 与服务器上限的较小者。个别帧字段在声明处保留更小的固定上限。 |
+| MCP 消息 | 默认 5 MiB；可配置 128 KiB–64 MiB | 可配置默认，固定区间 | `maxMessageBytes` 可在 128 KiB 到硬性 64 MiB 上限之间配置；信封预留会减少应用结果的可用字节。 |
+| MCP 请求 ID | 256 字节 | 固定准入上限 | 按 UTF-8 JSON 字节计；不可配置。 |
+| MCP 方法名 | 128 字节 | 固定准入上限 | 按 UTF-8 字节计；不可配置。 |
+| MCP 资源 URI | 8 KiB | 固定准入上限 | 按规范命名空间准入前的 UTF-8 字节计；不可配置。 |
+| 样式会话 ID | 512 字节 | 固定准入上限 | 非空、不含孤立代理对、不超过 512 UTF-8 字节；外层资源 URI 另受 8 KiB 上限约束。不可配置。 |
+| HTTP bearer token | 4 KiB | 固定准入上限 | 非空、不含 ASCII 空白/控制字符、不超过 4 KiB UTF-8；不可配置。 |
 
-Style、diff、事务、GeoJSON、要素查询与传输限制会在超限值跨越对应边界前执行。有效限制取适用的已配置默认值、接口 cap、协商 ceiling 或固定最大值中最严格者。以上分类以规范的 [core transaction limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/transaction.ts)、[GeoJSON limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/geojson.ts)、[feature-query Schema](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/adapters/maplibre/schemas.ts)、[bridge negotiation](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/client.ts)、[MCP message policy](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/message-boundary.ts)、[session limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/session-store.ts)和 [HTTP admission](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/http.ts)为准。
+实际生效的永远是其中最严格的一个：配置的默认值、接口上限、协商上限或固定最大值。权威来源：[核心事务限制](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/transaction.ts)、[GeoJSON 限制](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/geojson.ts)、[要素查询 schema](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/adapters/maplibre/schemas.ts)、[bridge 协商](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/client.ts)。
 
-## Schema 与投影安全 {#schema-and-projection-safety}
+## Schema 与投影安全
 
-公开能力 Schema 使用严格对象与原生 JSON 值。未知属性、非有限数值、格式错误的判别字段以及超过声明限制的值，会在 Authority 执行前被拒绝。
+公开能力 schema 使用严格对象和原生 JSON 值：未知属性、非有限数字、畸形判别字段和超限值，都会在权威源执行之前被拒绝。
 
-检查投影与要素查询投影同时报告 `returned` 和 `truncated`。列表形式的运行时命令结果在嵌套的 `BoundedCollection` 上公开这两个字段。变更回执与 `acknowledgement` 形式的运行时命令回执公开 `truncated`，但没有 `returned`。这些有界输出会保留有界 warnings，并让要素查询序列化保持在调用方允许值和公开最大值以内。
+有界输出会告诉你它截断了：检查与要素查询投影带 `returned` 和 `truncated`；变更回执与确认型运行时回执带 `truncated`。要素查询的序列化始终在你允许的值与公开上限之内。
 
-## 事务与修订安全 {#transaction-and-revision-safety}
+## 事务与 revision 安全
 
-Core Style 事务在文档边界上是原子的。如果某项操作或最终验证失败，失败结果会保留原始 Style，并且不公开部分 changed-object 列表或语义 diff。
+核心事务是原子的：操作失败或最终校验失败，返回原始样式，没有部分变更列表，也没有 diff。
 
-实时地图应用会比较准备阶段的 baseline 与当前地图；MCP session 会比较 `expectedRevision` 与当前 session revision。baseline 已变化时会产生 `REVISION_CONFLICT`，而不会覆盖更新状态。
+实时地图在提交前比较制备基线与当前地图；MCP 会话比较 `expectedRevision` 与会话 revision。任一不匹配都返回 `REVISION_CONFLICT`，绝不覆盖更新的状态。
 
-## 传输入站许可 {#transport-admission}
+## 传输准入
 
-Bridge server 与 Streamable HTTP MCP 默认绑定 loopback。非 loopback HTTP 绑定需要显式选择。HTTP MCP 要求 bearer token，在不泄露 token 内容的情况下进行比较，验证请求 authority，并拒绝不是绑定 origin 或未列入显式允许的精确 HTTP(S) origin。Bridge 连接同样会验证受保护 WebSocket endpoint 的身份与允许 origin。
+bridge 服务器与 Streamable HTTP MCP 监听器默认绑定 loopback；离开 loopback 需要显式开启。HTTP MCP 要求 bearer token、校验请求 authority，浏览器 `Origin` 只有等于绑定源或命中显式白名单才放行。bridge 连接以同样方式认证 WebSocket 端点并校验允许来源。
 
-MCP 会验证有界 request ID、method、resource URI、session ID、完整 message 与 response envelope。Resource URI namespace 必须在 admission registry 冻结前注册，且每个入站 URI 都必须是其已注册 namespace 的规范形式。
+MCP 还对请求 ID、方法名、资源 URI、会话 ID、消息总数和响应信封做有界校验。资源 URI 命名空间必须在准入注册表冻结之前注册，每个入站 URI 必须是其命名空间的规范形式。
 
-## 资源策略 {#resource-policy}
+## 资源策略
 
-只有连接具备附加的 `network.load` permission，且解析后的 URL 符合配置的 origin、prefix、data URL 或已注册自定义协议策略时，bridge resource policy 才允许新的网络引用。`network.load` 本身不授权任何可调用操作；参见 [bridge permission-to-operation 映射](../../guides/bridge/#capabilities)。相对 Style 资源 URL 与禁用协议会被拒绝；保留的 baseline 引用不会获得新的网络 Authority。
+bridge 连接只有在具备 `network.load` 权限时才能加载新的网络资源，且解析后的 URL 必须匹配你配置的来源、前缀、data-URL 或已注册的自定义协议策略。`network.load` 允许与不允许什么，见[权限映射](../../guides/bridge/#capabilities)。相对样式资源 URL 和被禁止的协议会被拒绝；继承自基线的资源不会获得新的网络权限。
 
-`analyzeGeoJson` 不会获取远程 GeoJSON。对于 URL 输入，它会返回成功的分析结果，其中 `available: false`、reason 为 `remote-url`，由调用方决定是否以及在何处授权获取。
+`analyzeGeoJson` 从不抓取网络数据。传入 URL 时返回 `available: false`、原因 `remote-url`，由你决定是否、以及经由哪个边界去抓取。

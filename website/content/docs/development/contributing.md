@@ -1,17 +1,17 @@
 ---
 title: Contributing
-description: Make focused changes without breaking public contracts.
+description: Make focused changes that hold the line on public contracts.
 weight: 40
 ---
 
-Contributions should be surgical: every changed line should support the requested behavior, without unrelated cleanup or speculative abstractions.
+## Keep changes surgical
 
-## Focused changes {#focused-changes}
+Every changed line should serve the requested behavior. Preserve the existing architecture and terminology; keep shared semantics in the capability contracts rather than reimplementing them inside an interface; skip unrelated cleanup and speculative abstraction. Add or update tests with any behavior change — the suite runs on Node's built-in `node:test` runner.
 
-Preserve the existing architecture and terminology. Keep shared capability semantics in their contracts, and avoid reimplementing them in an interface. Add or update focused tests with a behavior change; the repository uses the existing Node.js `node:test` infrastructure.
+## Public contracts are compatibility commitments
 
-## Compatibility commitments {#compatibility-commitments}
+Public exports, capability schemas, result envelopes, bridge protocol messages, and public DTOs are compatibility-sensitive. Before changing any of them, review the canonical declarations and their tests: the [capability contracts](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts) with their [schema tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.test.ts), the [bridge protocol](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.ts) with its [tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.test.ts), and the [MCP/session types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts).
 
-Public exports, capability schemas, result envelopes, bridge protocol messages, and public DTOs are compatibility-sensitive. Treat changes to them cautiously. This site summarizes supported contracts; review the canonical [capability declarations and DTOs](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts), [capability schema tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/schemas.test.ts), [bridge protocol declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.ts), [bridge protocol tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.test.ts), [MCP/session DTOs](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts), and [MCP contract tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/contract.test.ts) before changing a field-level shape. Preserve the ESM-only `tsc -b` build, package formats, runtime requirements, and testing frameworks unless the change explicitly requires a migration.
+## Before you start
 
-Before opening or selecting work, review the [issue tracker](https://github.com/mapseekai/maplibre-style-tools/issues). Record user-visible changes in the [CHANGELOG](https://github.com/mapseekai/maplibre-style-tools/blob/main/CHANGELOG.md) when the repository's release process calls for it.
+Check the [issue tracker](https://github.com/mapseekai/maplibre-style-tools/issues) for existing work. Record user-visible changes in the [CHANGELOG](https://github.com/mapseekai/maplibre-style-tools/blob/main/CHANGELOG.md) when the release process calls for it.

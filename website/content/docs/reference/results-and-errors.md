@@ -1,12 +1,12 @@
 ---
 title: Results and Errors
-description: Interpret success envelopes, failures, error codes, paths, and details.
+description: Read the result envelope, branch on codes, and interpret failures.
 weight: 40
 ---
 
-Capabilities return a discriminated result instead of throwing for expected validation, semantic, availability, and policy failures.
+Capabilities do not throw for expected problems. Validation failures, missing layers, revision conflicts, and policy denials all come back as a normal result — you branch on one field and move on.
 
-## Result envelope {#result-envelope}
+## The envelope
 
 ```ts
 type CapabilityResult<TData> =
@@ -14,66 +14,44 @@ type CapabilityResult<TData> =
   | { success: false; message: string; error: StyleToolError };
 ```
 
-Check `success` before reading `data` or `error`. A success contains the capability-specific projection or receipt. A failure contains a package-created `StyleToolError`; the top-level `message` is the public summary of that failure.
+Check `result.success` first. On success, `data` holds the capability's projection or receipt. On failure, `error` holds a package-created `StyleToolError`, and the top-level `message` is its human-readable summary.
 
-## Core and capability failure layers {#core-capability-failures}
+## Two failure layers, two discriminators {#core-capability-failures}
 
-Core document functions and capability interfaces use different discriminators because they are different layers:
-
-| Layer | Failure discriminator | Meaning |
+| Layer | Failure looks like | What you get back |
 | --- | --- | --- |
-| Direct `/core` transaction | `ok: false` | The core transaction result retains the original Style, empty changed-object lists, an empty diff, warnings, and its `error`. |
-| Capability and interface | `success: false` | The capability boundary projects an expected core or Authority failure into the shared `CapabilityResult` with public `message` and `error`; there is no success `data`. |
+| Direct `/core` transaction | `ok: false` | The original style, empty changed-object lists, an empty diff, warnings, and an `error` |
+| Capability (AI SDK, MCP, WebMCP, CLI) | `success: false` | The shared envelope with a public `message` and `error`; no `data` |
 
-Choose the discriminator for the API you called. Interface adapters do not turn a failed core result into successful capability data. The canonical shapes are in [core types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/types.ts) and [capability contracts](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts).
+Branch on whichever the API you called uses. Adapters never turn a failed core result into successful capability data.
 
-## Error fields {#error-fields}
+## Error fields
 
-| Field | Type | Meaning |
+| Field | Type | Use it for |
 | --- | --- | --- |
-| `code` | `StyleToolErrorCode` | Stable machine-readable category |
-| `message` | `string` | Public human-readable explanation |
-| `path` | `string` (optional) | RFC 6901 JSON Pointer to the rejected value |
-| `details` | `JsonObject` (optional) | JSON metadata for bounded diagnostics |
+| `code` | `StyleToolErrorCode` | Branching — the stable, machine-readable category |
+| `message` | `string` | Showing to humans; not a programmatic discriminator |
+| `path` | `string` (optional) | Locating the rejected value via an RFC 6901 JSON Pointer |
+| `details` | `JsonObject` (optional) | Supplementary JSON diagnostics |
 
-Treat `message` as explanatory text, not as a programmatic discriminator. Branch on `code`; use `path` to locate input or document data, and inspect `details` only for supplementary JSON metadata.
+## Error codes
 
-## Error codes {#error-codes}
-
-```text
-INVALID_INPUT
-STYLE_INVALID
-NOT_FOUND
-CONFLICT
-DEPENDENCY_CONFLICT
-UNSUPPORTED_SOURCE
-REVISION_CONFLICT
-MAP_NOT_READY
-BRIDGE_DISCONNECTED
-CAPABILITY_DENIED
-IO_ERROR
-TIMEOUT
-INTERNAL
-```
-
-| Code | Typical interpretation |
+| Code | Means |
 | --- | --- |
-| `INVALID_INPUT` | Input shape, value, or configured boundary is invalid |
-| `STYLE_INVALID` | Style specification validation failed |
-| `NOT_FOUND` | Requested layer, source, session, map, or other resource is absent |
-| `CONFLICT` | The requested semantic change conflicts with current state |
-| `DEPENDENCY_CONFLICT` | A dependent Style object prevents the change |
-| `UNSUPPORTED_SOURCE` | The source type cannot perform the requested operation |
-| `REVISION_CONFLICT` | The Style or map changed after the caller's baseline |
-| `MAP_NOT_READY` | A required live-map authority is unavailable |
+| `INVALID_INPUT` | Input shape, value, or a configured boundary was invalid |
+| `STYLE_INVALID` | The style failed spec validation |
+| `NOT_FOUND` | The requested layer, source, session, map, or other resource does not exist |
+| `CONFLICT` | The requested change conflicts with current state |
+| `DEPENDENCY_CONFLICT` | A dependent style object blocks the change |
+| `UNSUPPORTED_SOURCE` | That source type cannot do the requested operation |
+| `REVISION_CONFLICT` | The style or map changed after your baseline — re-read and resubmit |
+| `MAP_NOT_READY` | A required live map is unavailable right now |
 | `BRIDGE_DISCONNECTED` | The live bridge is not connected |
-| `CAPABILITY_DENIED` | Authority or resource policy denied the operation |
+| `CAPABILITY_DENIED` | The authority or resource policy denied the operation |
 | `IO_ERROR` | A filesystem or transport I/O operation failed |
 | `TIMEOUT` | The bounded operation exceeded its deadline |
-| `INTERNAL` | An unexpected implementation failure occurred |
+| `INTERNAL` | An unexpected implementation failure |
 
-## Failure classes {#failure-classes}
+## What throws, what does not
 
-Validation and semantic failures are normal `CapabilityResult` failures: malformed capability input, invalid Styles, missing objects, dependency conflicts, unsupported sources, revision conflicts, and denied capabilities do not require exception handling.
-
-I/O and operational failures describe the environment rather than Style semantics. MCP and capability adapters still project expected failures through `StyleToolError`; the CLI separately uses exit code `2` for argument/input/JSON errors and exit code `3` for output or internal failures. Unexpected programmer or host failures may still throw outside a capability envelope.
+Style and input problems never throw — they are `success: false` results, and the CLI mirrors them with exit code `1`. I/O and environment problems surface as projected `StyleToolError` failures too, with the CLI using exit `2` for argument/input errors and `3` for output or internal failures. Only unexpected programmer or host failures may still throw outside an envelope.

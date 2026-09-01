@@ -1,21 +1,22 @@
 ---
 title: Requirements
-description: Runtime, peer dependency, and interface-specific requirements.
+description: What your runtime needs before you install.
 weight: 10
 ---
 
-Review these requirements before choosing an interface. For the shared vocabulary, see the [Overview](../introduction/overview/) and [Capabilities](../introduction/capabilities/).
+Two things to check before you install:
 
-## Runtime {#runtime}
+- **Node.js 22.13 or newer.** The package is ESM-only. CommonJS projects on a supported Node version can still load it directly with `require()`.
+- **`maplibre-gl` 6.3 or newer — only if you touch a map.** It is a peer dependency, so your application picks the version and the package never bundles its own copy.
 
-`maplibre-style-tools` is ESM-only and requires Node.js `>=22.13.0`. Use an ESM-aware toolchain when importing the package.
+## Per-interface extras
 
-## Peer dependencies {#peer-dependencies}
+| If you use | You also need |
+| --- | --- |
+| `/ai` | An AI SDK 6 host (`ai` `^6.0.141`) and an in-process `map` |
+| `/webmcp` | A browser that exposes `document.modelContext` |
+| `/maplibre`, `/bridge` | A browser or MapLibre host environment |
+| `/mcp`, the CLI | Node.js only |
+| `/core`, `/capabilities` | Whatever host provides your styles; no map required |
 
-Install `maplibre-gl` `^6.3.0` in projects that use the MapLibre integration. The package declares it as a peer dependency so your application owns the MapLibre runtime version.
-
-## Interface-specific requirements {#interface-specific-requirements}
-
-The browser-oriented `/maplibre`, `/bridge`, and `/webmcp` entry points belong in a browser or MapLibre host. `/webmcp` additionally requires the evolving `document.modelContext` browser surface; registration returns `supported: false` when it is unavailable. See the [WebMCP guide](../../guides/webmcp/), authoritative [draft](https://webmachinelearning.github.io/webmcp/), and current [Web Platform Test results](https://wpt.fyi/results/webmcp) rather than relying on a pinned browser-version list. The Node-oriented `/ai` and `/mcp` entry points may use Node types; the CLI also runs on Node.js. The AI SDK interface needs a Node-capable AI SDK 6 host and AI SDK `^6.0.141`.
-
-Choose the interface whose authority matches your task: `/ai` when the host application owns an in-process map, `/webmcp` for browser-mediated page tools, `/bridge` when a separate loopback MCP host must reach that browser map, or the CLI for a local Style file.
+`document.modelContext` support is detected at registration time: on a browser without it, registration resolves with `supported: false` instead of failing. WebMCP is still a draft, so check the [specification](https://webmachinelearning.github.io/webmcp/) and [Web Platform Test results](https://wpt.fyi/results/webmcp) rather than a browser-version list.

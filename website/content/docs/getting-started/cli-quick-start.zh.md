@@ -1,35 +1,51 @@
 ---
-title: CLI 快速开始
-description: 从命令行验证、检查并预览样式事务。
+title: CLI 快速上手
+description: 在终端里校验、检查、安全地重写样式文件。
 weight: 40
 ---
 
-将 `maplibre-style` 二进制程序用于本地 JSON Style 与操作文件。它使用与库相同的严格核心事务。
+`maplibre-style` 处理本地样式文件，全程无网络，校验与事务逻辑和库完全一致。
 
-## 验证 {#validate}
+## 校验文件
 
 ```bash
 maplibre-style validate style.json
 ```
 
-## 检查 {#inspect}
+每条命令向 stdout 恰好写出一个 JSON 结果：
+
+```json
+{ "success": true, "message": "…", "data": { "…": "…" } }
+```
+
+诊断信息走 stderr，所以 stdout 可以直接管道给 `jq`。
+
+## 看看里面有什么
 
 ```bash
 maplibre-style inspect style.json --query road
+maplibre-style inspect style.json --layer road-primary
+maplibre-style inspect style.json --source-layers
 ```
 
-## 预览事务 {#preview-a-transaction}
+按文本搜索图层、读取单个图层、列出在用的 source-layer。全部选项见 [CLI 参考](../../reference/cli/)。
+
+## 预览改动
+
+把操作写进 JSON 文件，先预览效果：
 
 ```bash
 maplibre-style apply style.json --operations operations.json --dry-run
 ```
 
-`--dry-run` 返回变更收据和可选的语义差异，但不会写入文件。它绝不会返回完整的候选 Style 或 `data.style`。
+`--dry-run` 不写任何文件，只给你变更回执和语义 diff。
 
-## 有意地写入 {#write-intentionally}
+## 正式应用
 
 ```bash
 maplibre-style apply style.json --operations operations.json --output next-style.json
 ```
 
-除非明确提供 `--in-place`，否则 `apply` 不会修改输入文件。`--output` 绝不会覆盖现有路径，`--backup` 也绝不会替换已存在的备份。
+CLI 不会给你意外：`--output` 拒绝覆盖已存在的文件；只有 `--in-place` 能修改输入文件；`--in-place --backup` 会把原文件保留为 `style.json.bak`。
+
+退出码：`0` 成功；`1` 请求合法但被样式或事务语义拒绝；`2` 参数或输入错误；`3` 输出或内部故障。详见 [CLI 参考](../../reference/cli/)。

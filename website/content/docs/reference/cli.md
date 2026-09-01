@@ -1,12 +1,12 @@
 ---
 title: CLI Reference
-description: Look up commands, options, stdin rules, mutation safeguards, and exit codes.
+description: Commands, options, stdin rules, mutation safeguards, and exit codes.
 weight: 20
 ---
 
-The `maplibre-style` executable exposes three commands and writes JSON result envelopes to stdout. Diagnostics go to stderr.
+`maplibre-style` has three commands. Every command writes one JSON result envelope to stdout and diagnostics to stderr.
 
-## Command surface {#command-surface}
+## Commands
 
 ```text
 maplibre-style validate STYLE
@@ -14,11 +14,11 @@ maplibre-style inspect STYLE [OPTIONS]
 maplibre-style apply STYLE --operations OPERATIONS [OPTIONS]
 ```
 
-`validate` validates one Style document. `inspect` projects selected Style information. `apply` validates and applies a JSON array of Style operations.
+`validate` checks one style document. `inspect` projects the parts you ask for. `apply` validates and applies a JSON array of style operations.
 
-## Inspect options {#inspect-options}
+## Inspect options
 
-| Option | Meaning |
+| Option | Effect |
 | --- | --- |
 | `--query QUERY` | Filter layers by text query |
 | `--type TYPE` | Filter layers by layer type |
@@ -27,36 +27,36 @@ maplibre-style apply STYLE --operations OPERATIONS [OPTIONS]
 | `--layer LAYER_ID` | Get one layer |
 | `--source-id SOURCE_ID` | Get one source |
 | `--source-layers` | List referenced source layers |
-| `--analyze-geojson SOURCE_ID` | Analyze one GeoJSON source |
+| `--analyze-geojson SOURCE_ID` | Analyze one inline GeoJSON source |
 
-`--layer`, `--source-id`, `--source-layers`, and `--analyze-geojson` are mutually exclusive exact modes. Exact modes cannot be combined with search filters, except that `--source-layers` may be scoped by `--source`.
+`--layer`, `--source-id`, `--source-layers`, and `--analyze-geojson` are mutually exclusive exact modes and cannot combine with search filters — except that `--source-layers` may be scoped by `--source`.
 
-## Apply options {#apply-options}
+## Apply options
 
-| Option | Meaning |
+| Option | Effect |
 | --- | --- |
-| `--dry-run` | Return the receipt and diff without writing |
-| `--output FILE` | Write the resulting Style to a new file |
-| `--in-place` | Atomically replace the Style input file |
+| `--dry-run` | Return the receipt and diff without writing anything |
+| `--output FILE` | Write the resulting style to a new file |
+| `--in-place` | Atomically replace the input file |
 | `--backup` | Preserve the original as `.bak`; requires `--in-place` |
 
-`--output` and `--in-place` are mutually exclusive. `--dry-run` cannot be combined with file-output options. `--in-place` requires `STYLE` to be a file path, and `--backup` refuses to overwrite an existing backup.
+`--output` and `--in-place` are mutually exclusive. `--dry-run` cannot combine with file-output options, `--in-place` requires `STYLE` to be a file path, and `--backup` never overwrites an existing backup.
 
-## Stdin rules {#stdin-rules}
+## Stdin rules
 
-`-` may replace one input path. It may stand for `STYLE` on any command or for `OPERATIONS` on `apply`, but `STYLE` and `OPERATIONS` cannot both use stdin. An stdin-backed Style cannot be used with `--in-place`.
+`-` replaces exactly one input path — the `STYLE` on any command, or the `OPERATIONS` on `apply`. One invocation cannot read both from stdin, and an stdin-backed style cannot be used with `--in-place`.
 
-## Mutation safeguards {#mutation-safeguards}
+## Mutation safeguards
 
-`apply` produces no file mutation unless the capability transaction succeeds. `--dry-run` leaves the input untouched. `--output` creates a separate file, while `--in-place` uses atomic replacement and can preserve the original bytes with `--backup`.
+`apply` changes no file unless the transaction succeeds. `--dry-run` leaves the input untouched. `--output` creates a separate file, `--in-place` replaces the input atomically (write to a same-directory temp file, sync, rename, sync), and `--backup` keeps the original bytes as `.bak`.
 
-## Exit codes {#exit-codes}
+If a write commits and a later step fails, the CLI says so on stderr — an exit code `3` does not mean nothing was written, so check the destination before retrying.
+
+## Exit codes
 
 | Code | Meaning |
 | ---: | --- |
 | `0` | Success |
-| `1` | Valid request rejected by semantics |
+| `1` | Valid request rejected by style or transaction semantics |
 | `2` | Argument, input, or JSON error |
 | `3` | Output or internal failure |
-
-A code `1` result is a structured capability failure. Code `3` also covers failures that occur while committing or acknowledging file output; read stderr before deciding whether a write can be retried.

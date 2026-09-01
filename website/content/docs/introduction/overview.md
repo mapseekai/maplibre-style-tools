@@ -1,34 +1,38 @@
 ---
 title: Overview
-description: What the package does, which environments it supports, and which interface to choose.
+description: What the package does and which interface fits your project.
 weight: 10
 ---
 
-`maplibre-style-tools` helps software and AI agents inspect and edit MapLibre styles. It exposes a transport-neutral core, five shared capabilities, and thin AI SDK, MCP, WebMCP, and CLI interfaces. The package is ESM-only and requires Node.js `>=22.13.0`.
+`maplibre-style-tools` lets your application — and the AI agents inside it — inspect and edit MapLibre GL styles through five well-defined operations. Instead of exposing raw `map.setStyle()` to a model, you hand it tools with strict input validation, atomic edits, and results you can reason about.
 
-## What this package does {#what-it-does}
+## What you can do
 
-Use the core to validate style documents and apply structured style transactions without tying that work to a transport or a live map. The capability layer defines five shared registry contracts and strict input validation; each interface projects the subset that applies to its host. MapLibre integration supports a live map when one is available.
+- **Inspect styles** — list and search layers, read a single layer or source, count layers, analyze inline GeoJSON. Pure reads; nothing renders.
+- **Edit styles safely** — describe changes as a transaction (`setLayerProperties`, `setLayerFilter`, `addGeoJsonLayer`, …). Each transaction is validated, applied atomically, and returns an RFC 6901 diff plus the exact layer and source IDs that changed.
+- **Work with live maps** — run bounded map commands and query source or rendered features, with explicit truncation instead of unbounded results.
 
-Core and CLI validation perform no network fetches. A URL passed to a capability is handled by its authority; the file-based CLI authority does not accept style URLs.
+Inspection and validation never touch the network. When a style references a URL, the authority you chose decides what happens — the CLI, for example, reads only local files.
 
-## Choose an interface {#choose-an-interface}
+## Which interface should I use?
 
-| Interface | Runtime | Recommended use |
+All interfaces run the same five capabilities. Pick by where your code runs:
+
+| Interface | Import | Your situation |
 | --- | --- | --- |
-| Core (`/core`) | ES-only | Validate documents, inspect data, and apply transactions in a transport-neutral integration. |
-| MapLibre (`/maplibre`) | Browser or MapLibre host | Apply prepared work to a live MapLibre map and use bounded live-map helpers. |
-| Capabilities (`/capabilities`) | DOM-capable authority-providing host | Reuse the five executors, schemas, registry, and result envelope across transports; its public declaration closure needs DOM but not Node ambient types. |
-| AI SDK (`/ai`) | Node-capable AI SDK 6 host | Expose the five capabilities as AI SDK 6 tools over an in-process map. |
-| WebMCP (`/webmcp`) | Browser with `document.modelContext` | Register page-scoped WebMCP Site tools for an in-browser MapLibre map. |
-| MCP (`/mcp`) | Node.js | Run the bounded MCP server, session store, and optional live bridge. |
-| Bridge (`/bridge`) | Browser | Connect a browser MapLibre map to the supported loopback MCP bridge host with browser-safe protocol support. |
-| CLI (`maplibre-style`) | Node.js | Validate, inspect, and transform local style files from scripts or a terminal. |
+| Core | `maplibre-style-tools/core` | You want validation and transactions on style documents, in Node or a bundler, with no map. |
+| MapLibre adapter | `maplibre-style-tools/maplibre` | Your application owns a `map` and applies changes to it in-process. |
+| Capabilities | `maplibre-style-tools/capabilities` | You build your own transport on top of the five executors and their schemas. |
+| AI SDK | `maplibre-style-tools/ai` | You use the AI SDK and want five ready-made tools over an in-process map. |
+| WebMCP | `maplibre-style-tools/webmcp` | You want an in-page AI agent in a supporting browser to drive the page's own map — no server involved. |
+| MCP server | `maplibre-style-tools/mcp` | An external MCP host should handle offline style sessions, or reach a live map through the bridge. |
+| Browser bridge | `maplibre-style-tools/bridge` | Your page connects its map to that MCP host. |
+| CLI | `maplibre-style` | You validate, inspect, or rewrite style files from scripts or the terminal. |
 
-The MapLibre peer dependency is `maplibre-gl` `^6.3.0`. Choose `/ai` when the host application owns the map and wants to expose bounded tools to an AI SDK 6 consumer. Choose `/webmcp` when that page can register browser-mediated Site tools through `document.modelContext`. Choose `/bridge` only when a separate loopback MCP host process must reach the browser map. Choose `/mcp` for server or offline-session workflows, and the CLI for local files.
+The [Guides](../../guides/) have a page for each library entry point; the [CLI reference](../../reference/cli/) covers the command line.
 
-## Compatibility contracts {#compatibility-contracts}
+## Where the exact types live
 
-The package’s exports, capability schemas, result envelopes, bridge messages, and public DTOs are compatibility-sensitive. This site gives curated supported-contract guidance rather than an exhaustive field reference. For complete shapes, use the canonical [capability declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts), [bridge protocol](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.ts), and [MCP/session DTOs](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts), together with their adjacent tests. Inputs must be JSON-shaped data accepted by the public schemas; pass structured objects and arrays as native values rather than serializing them into strings.
+This site explains the supported contracts in prose. For exact field-level shapes, the reference pages link the canonical TypeScript declarations — the [capability contracts](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/capabilities/contracts.ts), the [bridge protocol](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.ts), and the [MCP/session types](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/types.ts) — so you never have to guess.
 
-For a common vocabulary before integrating, continue to [Architecture](../architecture/) and [Capabilities](../capabilities/).
+Next: [Architecture](../architecture/) for the big picture, or jump straight to [Installation](../../getting-started/installation/).

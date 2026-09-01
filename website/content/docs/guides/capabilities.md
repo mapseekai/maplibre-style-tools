@@ -1,35 +1,37 @@
 ---
 title: Capability Registry
-description: Use the transport-neutral executors, schemas, and authority interfaces.
+description: Build your own transport on the five executors, schemas, and authority interfaces.
 weight: 30
 ---
 
-The `/capabilities` entry point supplies the transport-neutral layer behind the interface-specific packages. It is useful when an integration needs the same named operations and result semantics without adopting AI SDK, MCP, WebMCP, or CLI presentation details. See the [capability overview](../../introduction/capabilities/) for the shared result envelope.
+`/capabilities` is for integrations that need the five operations and their exact semantics without adopting the AI SDK, MCP, WebMCP, or CLI packaging. You supply the authorities; the registry does the rest.
 
-## Why the registry exists {#why-the-registry-exists}
+## The registry is the contract
 
-`capabilityRegistry` is the single source for capability names, descriptions, schemas, runtime requirements, and execution. Integrations project this registry into their own transport instead of redefining the five operations.
+`capabilityRegistry` holds each capability's name, description, execution schema, model-facing schema, runtime requirement, and executor:
 
-| Capability | `requiresRuntime` | Mutation behavior | Authority member |
-| --- | ---: | --- | --- |
-| `inspectStyle` | `false` | Read-only | `readStyle()` and `context()` |
-| `applyStyleTransaction` | `false` | Mutates atomically | `applyTransaction()` |
-| `applyStyleDocument` | `false` | Replaces the Style | `applyDocument()` |
-| `runMapCommand` | `true` | Mixed read/write commands | `runtimeCommands()` |
-| `queryMapFeatures` | `true` | Read-only bounded query | `querySourceFeatures()` or `queryRenderedFeatures()` |
+| Capability | Mutation behavior | Authority member |
+| --- | --- | --- |
+| `inspectStyle` | Read-only | `readStyle()` / `context()` |
+| `applyStyleTransaction` | Atomic mutation | `applyTransaction()` |
+| `applyStyleDocument` | Full replacement | `applyDocument()` |
+| `runMapCommand` | Mixed read/write commands | `runtimeCommands()` |
+| `queryMapFeatures` | Read-only bounded query | `querySourceFeatures()` / `queryRenderedFeatures()` |
 
-## Authority interfaces {#authority-interfaces}
+Project this registry into your transport — OpenAI tools, an internal RPC layer, whatever you are building — and semantics stay identical to the first-party interfaces.
 
-Provide a `StyleAuthority` for document-oriented capabilities. It reads a validated Style, supplies context, applies transactions, and applies full Style documents. Add a `RuntimeAuthority` only for live-map commands and feature queries. An `AuthoritySource` may return `null`; capability execution then returns the normal `MAP_NOT_READY` failure instead of selecting a Style authority on the caller's behalf.
+## Provide authorities, not maps
 
-## Strict model schemas {#strict-model-schemas}
+Document capabilities need a `StyleAuthority`; live-map capabilities additionally need a `RuntimeAuthority`. Your `AuthoritySource` may return `null` — execution then returns the ordinary `MAP_NOT_READY` failure rather than picking an authority on the caller's behalf.
 
-Each registry item carries an execution `inputSchema` and a model-facing `modelInputSchema`. The model schema projects input shape for a model tool definition, while the execution schema remains the strict validation boundary. Treat an advertised schema as guidance for generation, not permission to skip capability validation.
+## Two schemas per capability, on purpose
 
-## Direct OpenAI schemas {#direct-openai-schemas}
+`inputSchema` is the strict boundary your executor validates against; `modelInputSchema` is the shape a model tool definition advertises. The model schema guides generation — execution always re-validates — so an imaginative model cannot bypass the boundary by inventing fields.
 
-`createOpenAiFunctionTools()` projects the registry into immutable OpenAI function-tool definitions. It provides the capability name, description, and JSON Schema parameters, but does not select a Style authority for the caller. Pair the definitions with an authority and invoke the corresponding registry executor in your own transport handler.
+## Schema-only projections for OpenAI and Anthropic
 
-## Direct Anthropic schemas {#direct-anthropic-schemas}
+`createOpenAiFunctionTools()` and `createAnthropicTools()` project the registry into OpenAI function-tool and Anthropic tool definitions for direct LLM API integrations. They define the tools; they do not attach a map or execute anything. Pair the definitions with an authority and invoke the matching registry executor in your own handler.
 
-`createAnthropicTools()` projects the same definitions into Anthropic tool objects with `name`, `description`, and `input_schema`. Like the OpenAI helper, it is a definition projection only: it does not attach a map, choose an authority, or execute a capability.
+## Next
+
+The [capability overview](../../introduction/capabilities/) covers the result envelope; [Results and errors](../../reference/results-and-errors/) covers failure handling.

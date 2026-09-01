@@ -1,32 +1,25 @@
 ---
 title: Verification
-description: Run repository, example, E2E, module, and documentation checks.
+description: The commands that verify types, lint, tests, examples, contracts, and E2E.
 weight: 30
 ---
 
-Run the checks that cover the paths affected by a change. The repository commands cover type boundaries, lint, tests, examples, package contracts, and browser E2E flows.
-
-## Repository checks {#repository-checks}
+Run the checks that cover what you changed:
 
 ```bash
-pnpm run typecheck
-pnpm run lint
-pnpm run test
-pnpm run test:example:ai-chat
-pnpm run test:example:bridge
-pnpm run test:example:webmcp
-pnpm run check:package
-pnpm run verify:e2e
+pnpm run typecheck             # TypeScript projects and their ambient-type boundaries
+pnpm run lint                  # ESLint over authored JS/TS
+pnpm run test                  # compile plus the full test suite
+pnpm run test:example:ai-chat  # runnable AI chat example
+pnpm run test:example:bridge   # runnable bridge example
+pnpm run test:example:webmcp   # runnable WebMCP example
+pnpm run check:package         # build output and package contracts, incl. declaration closure
+pnpm run verify:e2e            # browser bridge and WebMCP end-to-end suites
 ```
 
-- `pnpm run typecheck` verifies the TypeScript projects and their ambient-type boundaries.
-- `pnpm run lint` checks authored JavaScript and TypeScript source with ESLint.
-- `pnpm run test` compiles and runs the repository test suite.
-- `pnpm run test:example:ai-chat`, `pnpm run test:example:bridge`, and `pnpm run test:example:webmcp` verify the runnable integrations.
-- `pnpm run check:package` verifies build output and package contracts, including public declaration closure.
-- `pnpm run verify:e2e` runs the browser bridge and WebMCP end-to-end suites.
+## The website, too
 
-## Website checks {#website-checks}
+Documentation changes must leave the site building warning-free:
 
 ```bash
 cd website
@@ -34,4 +27,4 @@ go mod verify
 hugo --cleanDestinationDir --gc --minify --environment production --printPathWarnings --panicOnWarning
 ```
 
-When changing public documentation, run both website checks: `go mod verify` verifies Go-module checksums, and the Hugo command validates and builds the production site. Treat Hugo warnings as failures so the generated site remains navigation- and link-safe.
+Hugo warnings are treated as failures on purpose: navigation and links have to stay intact.

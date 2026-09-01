@@ -1,16 +1,14 @@
 ---
 title: Browser Bridge
-description: Connect a browser MapLibre map to the MCP live-map extension safely.
+description: Let the MCP live-map extension act on a map running in your page.
 weight: 70
 ---
 
-Use `/bridge` when an MCP live-map extension needs to act on a MapLibre map that already runs in a browser page. In the supported example and default topology, the browser client registers that one map with a separate MCP process on the same machine through a protected loopback WebSocket. It is not a general browser-to-Node export or a promise of arbitrary cross-machine access.
+The bridge connects a MapLibre map in a browser page to the live-map extension of `maplibre-style-mcp` over a protected loopback WebSocket. The browser stays the authority: the page decides what to expose, authenticates with a token, and every new network resource passes your resource policy.
 
-## When to use the bridge {#when-to-use-the-bridge}
+The supported topology is a browser and the MCP process on the same machine — for example your dev server on `http://127.0.0.1:5173` and the bridge on `ws://127.0.0.1:7788`. If the AI tools can run in the same process as the map, prefer [`/ai`](../ai-sdk/) instead.
 
-Use the bridge after a loopback MCP host needs a connected live map. Use [`/ai`](../ai-sdk/) when the host application owns the map and the AI SDK tools run in the same process. For page-scoped browser tools with no MCP host, use [WebMCP](../webmcp/) instead. Offline MCP Style sessions remain separate document workflows even while a bridge-connected map is available.
-
-## Connect a map {#connect-a-map}
+## Connect from the page
 
 ```ts
 import { connectMapLibreBridge } from 'maplibre-style-tools/bridge';
@@ -29,24 +27,24 @@ const connection = connectMapLibreBridge(map, {
 await connection.whenReady();
 ```
 
-`whenReady()` resolves only after authentication and registration complete. The page supplies the map ID, connection token, the API property named `capabilities`, and resource policy; these are not inferred from model requests. The six literal values in `capabilities` are bridge authorization permissions, not the five callable registry capabilities.
+`whenReady()` resolves only after authentication and registration succeed. Nothing about the connection is inferred from model requests — your page names the map, supplies the token, and picks the permissions.
 
-## Bridge permissions {#capabilities}
+## Grant permissions explicitly {#capabilities}
 
-Grant the smallest permission set that supports the intended operations. The `capabilities` property accepts these six bridge permissions:
+The `capabilities` property takes six bridge permissions; grant the smallest set the use case needs:
 
-| Bridge permission | Registry capability or actions admitted |
+| Permission | Admits |
 | --- | --- |
-| `style.read` | `inspectStyle` live-map reads; `runMapCommand` actions `listImages` and `listSprites`; Style snapshots in permitted bridge results |
-| `style.write` | `applyStyleTransaction`, `applyStyleDocument`, and `runMapCommand` action `updateGeoJsonData` |
-| `features.query` | `queryMapFeatures` source and rendered targets |
-| `runtime.state` | `runMapCommand` actions `setSourceTileLodParams`, `setFeatureState`, `removeFeatureState`, and `setGlobalState` |
-| `assets.write` | `runMapCommand` image and sprite mutation actions: `addImageFromUrl`, `removeImage`, `addSprite`, and `removeSprite` |
-| `network.load` | Additional admission for new URL-backed Style documents/resources, images, or sprites; it never grants an operation by itself and the URL must also pass resource policy |
+| `style.read` | `inspectStyle` live reads; `runMapCommand` `listImages`/`listSprites`; style snapshots in permitted results |
+| `style.write` | `applyStyleTransaction`, `applyStyleDocument`, and `runMapCommand` `updateGeoJsonData` |
+| `features.query` | `queryMapFeatures` (source and rendered targets) |
+| `runtime.state` | `runMapCommand` state actions: `setSourceTileLodParams`, `setFeatureState`, `removeFeatureState`, `setGlobalState` |
+| `assets.write` | `runMapCommand` image and sprite actions: `addImageFromUrl`, `removeImage`, `addSprite`, `removeSprite` |
+| `network.load` | Extra admission for new URL-backed style documents, images, and sprites — never an operation by itself; URLs must also pass resource policy |
 
-This mapping follows the canonical [command permission switch](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/capabilities.ts), [resource policy](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/resource-policy.ts), and [mapping tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/outbound.test.ts). `allowedResourceOrigins` is a separate resource policy: an empty list does not grant cross-origin resource loading. The complete bridge frame and command shapes live in the canonical [protocol declarations](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.ts) and [protocol tests](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/protocol.test.ts).
+`allowedResourceOrigins` is a separate resource policy: an empty list blocks new cross-origin resource loading. The canonical mapping lives in the [permission switch](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/capabilities.ts) and [resource policy](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/resource-policy.ts).
 
-## Start the MCP bridge host {#start-the-mcp-bridge-host}
+## Start the MCP side
 
 ```bash
 maplibre-style-mcp --stdio \
@@ -55,10 +53,14 @@ maplibre-style-mcp --stdio \
   --bridge-origin http://127.0.0.1:5173
 ```
 
-The MCP binary owns the loopback WebSocket server and live registry. Its bridge handoff is written to stderr, while stdio protocol traffic remains on stdout. Supply the exact page origin with `--bridge-origin` so the host can admit only that browser origin. This documented example keeps the browser and MCP bridge process on the same machine; it does not describe a non-loopback bridge deployment.
+The MCP binary owns the loopback WebSocket server and the live registry. Once both components are ready, stderr carries exactly one handoff record (`event: "bridge_listening"` with the bound `wsUrl`); stdout stays reserved for MCP protocol traffic. Supply `--bridge-origin` so the host admits only that browser origin.
 
-## Token and origin safety {#token-and-origin-safety}
+## Handle the token like a secret
 
-The token is sent in the first WebSocket frame, never in the URL. Supply it to the page through a process-controlled channel and do not put it in page URLs, storage, logs, status text, or errors. Keep the bridge host on loopback and allow only explicit origins.
+The token travels in the first WebSocket frame — never the URL. Hand it to the page through a channel your process controls, and keep it out of page URLs, storage, logs, status text, and errors.
 
-`/bridge` is browser-only and does not export the Node WebSocket server or live registry. The Node server is deliberately owned by the MCP binary, so importing `/bridge` in a page cannot create an unprotected server.
+`/bridge` is browser-only and exports no server: importing it in a page cannot open a socket. The Node side belongs to the MCP binary.
+
+## Next
+
+Live failure codes (`REVISION_CONFLICT`, `BRIDGE_DISCONNECTED`, …): [Results and errors](../../reference/results-and-errors/). Message and resource limits: [Limits and safety](../../reference/limits-and-safety/).

@@ -1,7 +1,7 @@
 ---
 title: 参考
-description: 浏览经过筛选的受支持契约指南、命令、错误与限制。
+description: 入口、能力契约、CLI 命令、错误码与限制。
 weight: 40
 ---
 
-浏览受支持入口、capability availability、命令、错误与限制的精选指南。完整的字段级声明与测试由相关页面直接链接，而不在此重复。
+查什么都从这里进：八个[入口](package-entry-points/)、每个[能力](capability-contracts/)接受什么返回什么、全部 [CLI 命令](cli/)与选项、如何解读[结果与错误码](results-and-errors/)，以及每条边界上强制执行的[限制](limits-and-safety/)。

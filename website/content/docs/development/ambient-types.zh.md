@@ -1,21 +1,17 @@
 ---
-title: Ambient Type 边界
-description: 保持 ES-only、DOM-capable 与 Node-capable 声明边界。
+title: Ambient 类型边界
+description: 每次改动都必须遵守的 ES-only、DOM、Node 分界线。
 weight: 20
 ---
 
-Ambient 类型是 package compatibility contract 的一部分。每个源码区域都应保持在其预期的宿主环境内。
+Ambient 类型是公开契约的一部分：每个入口暴露的声明，不能带出消费者从未同意的全局类型。测试强制执行下表。
 
-## 边界表 {#boundary-table}
-
-| Area | Allowed ambient types |
+| 区域 | 允许的 ambient 类型 |
 | --- | --- |
-| `/core` | ES only; no DOM or Node |
-| `/maplibre`, `/capabilities`, `/webmcp`, browser `/bridge` | DOM allowed; Node forbidden |
-| `/mcp`, `/ai` | Node allowed where required |
+| `/core` | 无 —— 纯 ES |
+| `/maplibre`、`/capabilities`、`/webmcp`、浏览器端 `/bridge` | 允许 DOM，禁止 Node |
+| `/mcp`、`/ai` | 按需允许 Node |
 
-## 声明闭包 {#declaration-closure}
+`/capabilities` 划在 DOM 行是设计使然：它的公开闭包含 `AbortSignal` 和 MapLibre 权威源声明，同时保持不依赖 Node。
 
-公开声明闭包会被测试。通用重构不得让 ambient 类型跨越这些边界：ES-only consumer 不得获得 DOM 或 Node 声明，browser-facing 声明不得获得 Node 声明。`/capabilities` 有意位于 DOM-capable 行，因为其公开闭包暴露 `AbortSignal` 与 MapLibre-backed Authority 声明；它仍与 Node 无关。
-
-应为宿主环境使用最窄的公开入口点，并将宿主专用 import 保持在相应边界之后。
+重构时让每个区域留在自己的行内 —— 纯 ES 消费者绝不能带进 DOM 或 Node 声明，面向浏览器的声明绝不能带进 Node 声明。

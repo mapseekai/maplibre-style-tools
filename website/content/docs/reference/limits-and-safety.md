@@ -1,12 +1,14 @@
 ---
 title: Limits and Safety
-description: Look up byte, count, depth, transport, and resource-policy boundaries.
+description: The exact byte, count, depth, transport, and resource-policy boundaries.
 weight: 50
 ---
 
-The values below are public compatibility boundaries. Byte limits measure UTF-8 data or UTF-8 JSON serialization at the named boundary. “Overrideable default” means a direct API or configured Authority may replace the value with a positive safe integer; it does not bypass a stricter interface schema, negotiated ceiling, or fixed admission maximum.
+Every boundary in this package is explicit and enforced — nothing oversized crosses it silently. The table below is the complete set of published values.
 
-## Default limits {#default-limits}
+"Overrideable default" means a direct API option or a configured authority can replace the value with a positive safe integer. It never bypasses a stricter interface schema, a negotiated ceiling, or a fixed admission maximum. Byte limits measure UTF-8 data or UTF-8 JSON serialization at the named boundary.
+
+## Default limits
 
 | Boundary | Published value | Classification | Configuration and scope |
 | --- | ---: | --- | --- |
@@ -28,28 +30,28 @@ The values below are public compatibility boundaries. Byte limits measure UTF-8 
 | Style session ID | 512 bytes | Fixed admission maximum | The non-empty ID must contain no lone surrogate and remain within 512 UTF-8 bytes; its enclosing resource URI separately remains subject to the 8 KiB URI maximum. Not configurable. |
 | HTTP bearer token | 4 KiB | Fixed admission maximum | A token must be non-empty, contain no ASCII whitespace/control characters, and remain at or below 4 KiB UTF-8; not configurable. |
 
-Style, diff, transaction, GeoJSON, feature-query, and transport limits are enforced before an oversized value crosses its boundary. The effective limit is the strictest applicable configured default, interface cap, negotiated ceiling, or fixed maximum. The classifications above follow the canonical [core transaction limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/transaction.ts), [GeoJSON limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/geojson.ts), [feature-query schemas](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/adapters/maplibre/schemas.ts), [bridge negotiation](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/client.ts), [MCP message policy](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/message-boundary.ts), [session limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/session-store.ts), and [HTTP admission](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/mcp/http.ts).
+The effective limit is always the strictest one that applies: the configured default, the interface cap, the negotiated ceiling, or the fixed maximum. Canonical sources: [core transaction limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/transaction.ts), [GeoJSON limits](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/core/geojson.ts), [feature-query schemas](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/adapters/maplibre/schemas.ts), [bridge negotiation](https://github.com/mapseekai/maplibre-style-tools/blob/main/src/bridge/client.ts).
 
-## Schema and projection safety {#schema-and-projection-safety}
+## Schema and projection safety
 
-Public capability schemas use strict objects and native JSON values. Unknown properties, non-finite numbers, malformed discriminators, and values above declared limits are rejected before authority execution.
+Public capability schemas use strict objects and native JSON values: unknown properties, non-finite numbers, malformed discriminators, and out-of-limit values are rejected before any authority runs.
 
-Inspection projections and feature-query projections report both `returned` and `truncated`. List-form runtime command results expose those fields on their nested `BoundedCollection`. Mutation receipts and `acknowledgement`-form runtime command receipts expose `truncated` but no `returned`. These bounded outputs preserve bounded warnings and keep feature-query serialization within the caller's allowed value and the public maximum.
+Bounded outputs tell you when they trim. Inspection and feature-query projections report `returned` and `truncated`; mutation receipts and acknowledgement-form runtime receipts report `truncated`. Feature-query serialization stays within the value you allowed and the public maximum.
 
-## Transaction and revision safety {#transaction-and-revision-safety}
+## Transaction and revision safety
 
-Core Style transactions are atomic at the document boundary. If an operation or final validation fails, the failure retains the original Style and exposes no partial changed-object lists or semantic diff.
+Core transactions are atomic: a failed operation or a failed final validation returns the original style with no partial lists and no diff.
 
-Live-map application compares the prepared baseline with the current map, and MCP sessions compare `expectedRevision` with the current session revision. A changed baseline produces `REVISION_CONFLICT` instead of overwriting newer state.
+On live maps, application compares the prepared baseline with the map before committing; MCP sessions compare `expectedRevision` with the session revision. Either mismatch returns `REVISION_CONFLICT` instead of overwriting newer state.
 
-## Transport admission {#transport-admission}
+## Transport admission
 
-The bridge server and Streamable HTTP MCP bind to loopback by default. Non-loopback HTTP binding requires explicit opt-in. HTTP MCP requires a bearer token, compares it without leaking token contents, validates the request authority, and rejects an Origin unless it is the bound origin or an explicitly allowed exact HTTP(S) origin. Bridge connections likewise authenticate a protected WebSocket endpoint and validate allowed origins.
+The bridge server and the Streamable HTTP MCP listener bind to loopback by default; leaving loopback requires explicit opt-in. HTTP MCP requires a bearer token, validates the request authority, and rejects a browser `Origin` unless it matches the bound origin or an explicit allowlist entry. Bridge connections authenticate the WebSocket endpoint and validate allowed origins the same way.
 
-MCP validates bounded request IDs, methods, resource URIs, session IDs, total messages, and response envelopes. Resource URI namespaces must be registered before the admission registry freezes, and every inbound URI must be canonical for its registered namespace.
+MCP additionally bounds request IDs, methods, resource URIs, session IDs, message counts, and response envelopes. Resource URI namespaces must be registered before the admission registry freezes, and every inbound URI must be canonical for its namespace.
 
-## Resource policy {#resource-policy}
+## Resource policy
 
-Bridge resource policy admits new network references only when the connection has the additional `network.load` permission and the resolved URL matches the configured origin, prefix, data-URL, or registered custom-protocol policy. `network.load` does not authorize a callable operation by itself; see the [bridge permission-to-operation mapping](../../guides/bridge/#capabilities). Relative Style resource URLs and forbidden protocols are rejected; retained baseline references do not gain new network authority.
+A bridge connection may load new network references only with the `network.load` permission, and the resolved URL must match your configured origin, prefix, data-URL, or registered custom-protocol policy. See the [permission mapping](../../guides/bridge/#capabilities) for what `network.load` does and does not admit. Relative style resource URLs and forbidden protocols are rejected, and resources inherited from the baseline gain no new network authority.
 
-`analyzeGeoJson` does not fetch remote GeoJSON. For a URL input it returns a successful analysis result with `available: false` and reason `remote-url`, allowing the caller to decide whether and where fetching is authorized.
+`analyzeGeoJson` never fetches. Given a URL, it returns `available: false` with reason `remote-url` and lets you decide whether — and through which boundary — fetching should happen.

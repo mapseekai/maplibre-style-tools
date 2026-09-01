@@ -1,32 +1,38 @@
 ---
 title: MapLibre Adapter
-description: Apply prepared changes and run bounded operations against a live map.
+description: Apply validated changes to a live map and query it safely.
 weight: 20
 ---
 
-The `/maplibre` entry point connects the document semantics from `/core` to a live MapLibre `Map`. It is the in-process adapter: use it when your application owns the map instance and needs to apply a Style transaction, issue a bounded runtime operation, or query map features. Review [requirements](../../getting-started/requirements/) before choosing a browser-facing entry point.
+`/maplibre` connects the document semantics of `/core` to a running MapLibre `Map`. Your application owns the map; the adapter makes sure every change is validated, applied against the revision it was prepared from, and confirmed before it reports success.
 
-## Prepare before mutation {#prepare-before-mutation}
+## Preview or one-step, your choice
 
-`prepareTransactionForMap` reads and validates the current Style, computes an immutable prepared transaction, and records the baseline needed for a later apply. It does not call `map.setStyle`. This lets an application inspect `prepared.view.transactionResult` before choosing to mutate. `applyTransactionToMap` performs the same preparation for a one-step flow.
+`prepareTransactionForMap` validates the map's current style and computes an immutable prepared transaction — without calling `map.setStyle`. Inspect `prepared.view.transactionResult` first if you want to show a preview, then commit.
 
-## Apply and await {#apply-and-await}
+`applyTransactionToMap` does the same preparation and applies in one call. Its `diff` option passes through to MapLibre and defaults to `true`; `timeoutMs` defaults to 10,000 ms.
 
-`applyTransactionToMap` validates the current Style, prepares an immutable transaction, detects revision conflicts, calls MapLibre only when the baseline is still current, and waits for Style confirmation before reporting success. Its `diff` option is passed to MapLibre style application and defaults to `true`; `timeoutMs` defaults to 10,000 ms.
+## The result tells you what is trustworthy
 
-The result reports what Style authority is available: `current` when it can return the current Style, `pre-operation` when only the baseline is reliable, or `unavailable` when no validated Style can be supplied. Always branch on the result before treating a mutation as confirmed.
+A completed apply reports which style authority it can vouch for:
 
-## Revision conflicts {#revision-conflicts}
+- `current` — the live map's style, read after load/hash confirmation
+- `pre-operation` — only the baseline you started from is reliable
+- `unavailable` — no validated style can be supplied
 
-Preparation records a canonical baseline. If the live map changes between preparation and mutation, the adapter returns `REVISION_CONFLICT` instead of applying the candidate to a different revision. A failed apply also attempts to restore the baseline; the result authority communicates whether the current map Style, the pre-operation Style, or neither can be reported safely.
+Branch on it before treating the mutation as confirmed.
 
-## Bounded feature queries {#bounded-feature-queries}
+## Conflicts are detected, not overwritten
 
-Use `querySourceFeaturesBounded` or `queryRenderedFeaturesBounded` for feature results. They project and truncate results according to configured limits, and return a `FEATURE_QUERY_TRUNCATED` warning when a limit is reached. Do not use an unbounded feature query as an application data export.
+Preparation records a canonical baseline. If the live style changed between preparation and commit — another tab, another tool, the user — you get `REVISION_CONFLICT` instead of silently clobbering the newer state. A failed apply also attempts to restore the baseline; the result authority tells you which state is actually reportable.
 
-## Incremental GeoJSON {#incremental-geojson}
+## Feature queries that cannot run away
 
-Validate incremental GeoJSON source changes with the runtime schema before calling MapLibre's `updateData`. The schema accepts one or more effective `removeAll`, `remove`, `add`, or `update` actions. IDs must be unique within `remove` and within `update`, and property keys must be unique within each update; IDs may be reused across `remove`, `add`, and `update`, and `add` does not require unique IDs.
+`querySourceFeaturesBounded` and `queryRenderedFeaturesBounded` project features into plain JSON snapshots and truncate at configured limits — telling you so with a `FEATURE_QUERY_TRUNCATED` warning. Use them, not MapLibre's raw queries, whenever results feed application logic or a model.
+
+## Incremental GeoJSON updates, validated
+
+For `GeoJSONSource.updateData`, validate the diff before calling MapLibre. The runtime schema accepts `removeAll`, `remove`, `add`, and `update` actions; IDs must be unique within `remove` and within `update`, property keys unique per update, and IDs may be reused across actions.
 
 ```ts
 import { runtimeGeoJsonSourceDiffSchema } from 'maplibre-style-tools/maplibre';
@@ -43,4 +49,8 @@ if (parsed.success) {
 }
 ```
 
-The schema validates data shape; `updateData` remains a MapLibre call against a compatible GeoJSON source. Use full Style replacement when the intended change is not an incremental source diff.
+The schema checks shape; `updateData` stays your call against a compatible source. If the change is not an incremental source diff, apply a full [transaction](../core/) instead.
+
+## Next
+
+Exposing these operations to a model? The [AI SDK guide](../ai-sdk/) wraps them as five tools.

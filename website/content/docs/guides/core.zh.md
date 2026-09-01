@@ -1,44 +1,57 @@
 ---
 title: Core 事务
-description: 在不依赖浏览器或传输层的情况下验证和转换样式文档。
+description: 在纯 TypeScript 里校验和转换样式文档 —— 不用浏览器，不用地图。
 weight: 10
 ---
 
-`/core` 入口是处理样式文档的 ES-only 基础层。它验证严格的 JSON 输入，在内存中转换文档，并返回结构化结果；不需要浏览器、MapLibre 地图或传输层。若需要选择集成边界，请先阅读[架构](../../introduction/architecture/)。
+`/core` 是其他入口共同的地基：严格的校验、结构化的事务、GeoJSON 处理与分析，全部作用于纯 JSON 样式文档。如果你的工具面向样式文件或文档，从这里开始。
 
-## 验证文档 {#validate-a-document}
+## 先校验，再信任
 
-在存储样式文档或将其交给另一个边界前，请使用 `validateStyleDocument`。成功时它返回规范化且已验证的样式；失败时返回有界的错误与警告列表。默认样式大小上限为 5 MiB UTF-8 JSON；只有当边界需要不同上限时，才传入正数的 `maxStyleBytes` 选项。
+`validateStyleDocument` 按样式规范检查文档。成功返回规范化后的样式；失败返回一个有界的错误与警告列表，而不是抛异常。默认最多读取 5 MiB UTF-8 JSON —— 只有你的边界需要不同上限时才传 `maxStyleBytes`。
 
-## 应用事务 {#apply-a-transaction}
+## 应用事务
 
-`applyStyleTransaction` 会验证输入样式、验证事务、将操作应用到内存中的候选文档，并在成功返回前验证完整候选文档。
+事务是一个带 `operations` 数组的对象，每个操作携带 `op` 判别字段。整体先校验，再应用到候选样式，候选样式再校验一次，然后你才拿到结果。
 
 ```ts
 import { applyStyleTransaction } from 'maplibre-style-tools/core';
 
-const result = applyStyleTransaction(
-  { version: 8, sources: {}, layers: [] },
-  {
-    operations: [{
+const result = applyStyleTransaction(style, {
+  operations: [
+    {
+      op: 'setLayerFilter',
+      layerId: 'roads',
+      mode: 'and',
+      filter: ['==', ['get', 'surface'], 'paved'],
+    },
+    {
       op: 'setLayerProperties',
       layerId: 'roads',
-      paint: { 'line-color': '#ffffff' },
-    }],
-  },
-);
+      paint: { 'line-color': '#4c78a8' },
+    },
+  ],
+});
 ```
 
-每项操作都需要 `op` 判别字段。默认限制为 5 MiB 样式、1 MiB diff 和 100 项操作。成功的 diff 使用 [RFC 6901 JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901)，因此调用方可以定位每个已变更的值。
+成功结果包含可重放的 [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) diff 和精确的变更图层/源 ID，调用方可以记录或重放发生了什么。
 
-## 过滤器组合 {#filter-composition}
+**原子性是核心承诺。** 任何一个操作失败 —— 或最终候选样式校验失败 —— 你拿回的是原封不动的原始样式、空的变更 ID 列表和空 diff。不存在需要回滚的中间状态。
 
-构建组合的 MapLibre 表达式过滤器时使用 `composeFilter`；当过滤器应成为原子修改的一部分时，使用 `setLayerFilter` 和 `setGeoJsonSourceFilter` 事务操作。过滤器是 JSON 值，而不是 JSON 编码的字符串；请直接传入如 `['==', ['get', 'kind'], 'road']` 的表达式。
+两个细节值得知道：核心层失败用 `ok: false` 表示，与能力层的 `success: false` 信封不同（见[核心层与能力层的失败](../../reference/results-and-errors/#core-capability-failures)）；默认上限为样式 5 MiB、diff 1 MiB、每事务 100 个操作，你可以通过 `StyleTransactionOptions` 覆盖 —— 前提是你拥有这个边界。
 
-## 内联 GeoJSON {#inline-geojson}
+## 过滤器是表达式，不是字符串
 
-`validateInlineGeoJson` 会在内联 GeoJSON 值嵌入样式操作前验证它。它应用软件包的 GeoJSON 安全限制，并返回已验证的值或结构化错误。请将其用于应用程序提供的要素；它不是网络获取器，也不能替代你的源数据管道。
+过滤器使用 MapLibre 表达式语法，按原生 JSON 传值。用 `composeFilter` 组装一个；或作为原子变更的一部分，使用 `setLayerFilter` 与 `setGeoJsonSourceFilter` 操作 —— 图层过滤器支持 `replace`、`and`、`or`、`clear`，GeoJSON 源过滤器支持 `replace` 和 `clear`。
 
-## 原子失败 {#atomic-failure}
+`setStyleRootProperties` 对允许的根字段执行 RFC 7396 merge-patch 语义：对象键合并、`null` 删除、数组和标量整体替换。它改不了 `version`、`sources` 和 `layers`。
 
-事务在文档边界上是原子的。任何操作失败，或最终候选文档未通过样式验证时，`applyStyleTransaction` 都会以原始样式、空的变更图层/源列表和空 diff 返回 `ok: false`。不会返回部分转换的候选文档。这个直接 core 判别字段与 capability 层的 `success: false` 封装不同；参见 [Core 与 capability 失败层](../../reference/results-and-errors/#core-capability-failures)。成功准备后如需修改实时地图，请使用 [MapLibre 适配器](../maplibre/)。
+## 内联 GeoJSON，先过闸门
+
+`validateInlineGeoJson` 在内联 GeoJSON 进入样式之前做检查 —— 覆盖全部 RFC 7946 几何、Feature 与集合，默认上限：序列化 5 MiB、100,000 个 feature、1,000,000 个坐标位置、几何深度 16、属性深度 32。`analyzeGeoJson` 在此之上给出数量、范围和属性统计；传入 URL 时返回 `available: false`，绝不发起请求。
+
+无需联网的 source-layer 发现用 `listSourceLayers`，它直接读样式元数据和图层引用。`duplicateLayer` 和 `addLayerFromSource` 覆盖常见的图层操作；`addGeoJsonLayer` 把内联源和图层放在一个原子步骤里校验并添加 —— 要么都提交，要么都不提交。
+
+## 下一步
+
+手上有实时地图？[MapLibre 适配器](../maplibre/)把制备好的事务应用到地图上。

@@ -1,44 +1,57 @@
 ---
 title: Core Transactions
-description: Validate and transform Style documents without a browser or transport.
+description: Validate and transform style documents in plain TypeScript — no browser, no map.
 weight: 10
 ---
 
-The `/core` entry point is the ES-only foundation for Style-document work. It validates strict JSON inputs, transforms a document in memory, and returns a structured result; it does not need a browser, a MapLibre map, or a transport. Start with the [architecture](../../introduction/architecture/) when you need to choose an integration boundary.
+`/core` is the foundation the other entry points build on: strict validation, structured transactions, GeoJSON handling, and analysis on plain JSON style documents. If your tooling works on style files or documents, start here.
 
-## Validate a document {#validate-a-document}
+## Validate before you trust
 
-Use `validateStyleDocument` before storing or handing a Style document to another boundary. It returns a normalized, validated Style on success and a bounded list of errors and warnings on failure. The default maximum Style size is 5 MiB of UTF-8 JSON; pass a positive `maxStyleBytes` option only when your boundary needs a different limit.
+`validateStyleDocument` checks a style against the MapLibre style spec. On success you get the normalized style back; on failure you get a bounded list of errors and warnings instead of an exception. Validation reads at most 5 MiB of UTF-8 JSON by default — pass `maxStyleBytes` only when your boundary needs a different cap.
 
-## Apply a transaction {#apply-a-transaction}
+## Apply a transaction
 
-`applyStyleTransaction` validates the input Style, validates the transaction, applies its operations to an in-memory candidate, and validates the completed candidate before it returns success.
+A transaction is one object with an `operations` array. Each operation carries an `op` discriminator. The whole thing is validated, applied to a candidate, and the candidate is re-validated before you see a result.
 
 ```ts
 import { applyStyleTransaction } from 'maplibre-style-tools/core';
 
-const result = applyStyleTransaction(
-  { version: 8, sources: {}, layers: [] },
-  {
-    operations: [{
+const result = applyStyleTransaction(style, {
+  operations: [
+    {
+      op: 'setLayerFilter',
+      layerId: 'roads',
+      mode: 'and',
+      filter: ['==', ['get', 'surface'], 'paved'],
+    },
+    {
       op: 'setLayerProperties',
       layerId: 'roads',
-      paint: { 'line-color': '#ffffff' },
-    }],
-  },
-);
+      paint: { 'line-color': '#4c78a8' },
+    },
+  ],
+});
 ```
 
-Every operation needs its `op` discriminator. The default limits are a 5 MiB Style, a 1 MiB diff, and 100 operations. Successful diffs use [RFC 6901 JSON Pointers](https://www.rfc-editor.org/rfc/rfc6901) so a caller can locate each changed value.
+Successful results include replayable [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) diffs and the exact changed layer and source IDs, so callers can record or replay what happened.
 
-## Filter composition {#filter-composition}
+**Atomicity is the deal.** If any operation fails — or the final candidate fails validation — you get the original style back untouched, with empty changed-ID lists and an empty diff. There is no partial state to unwind.
 
-Use `composeFilter` when building a combined MapLibre expression filter, or use the `setLayerFilter` and `setGeoJsonSourceFilter` transaction operations when the filter is part of an atomic change. Filters are JSON values, not JSON-encoded strings; pass expressions such as `['==', ['get', 'kind'], 'road']` directly.
+Two details worth knowing: the core result uses `ok: false` for failure, which differs from the capability-level `success: false` envelope (see [core and capability failure layers](../../reference/results-and-errors/#core-capability-failures)); and the defaults are a 5 MiB style, a 1 MiB diff, and 100 operations per transaction, overridable through `StyleTransactionOptions` when you own the boundary.
 
-## Inline GeoJSON {#inline-geojson}
+## Filters are expressions, not strings
 
-`validateInlineGeoJson` validates an inline GeoJSON value before it is embedded in a Style operation. It applies the package's GeoJSON safety limits and returns the validated value or a structured error. Use it for application-provided features; it is not a network fetcher or a replacement for your source-data pipeline.
+Filters use MapLibre expression syntax as native JSON values. Compose one with `composeFilter`, or make it part of an atomic change with the `setLayerFilter` and `setGeoJsonSourceFilter` operations — `replace`, `and`, `or`, and `clear` for layer filters; `replace` and `clear` for GeoJSON source filters.
 
-## Atomic failure {#atomic-failure}
+`setStyleRootProperties` applies RFC 7396 merge-patch semantics to the allowed root fields: object keys merge, `null` deletes, arrays and scalars replace. It cannot touch `version`, `sources`, or `layers`.
 
-Transactions are atomic at the document boundary. If any operation fails, or the final candidate fails Style validation, `applyStyleTransaction` returns `ok: false` with the original Style, empty changed-layer/source lists, and an empty diff. No partially transformed candidate is returned. This direct core discriminator is distinct from the capability-layer `success: false` envelope; see [Core and capability failure layers](../../reference/results-and-errors/#core-capability-failures). For a live-map mutation after a successful preparation, use the [MapLibre adapter](../maplibre/).
+## Inline GeoJSON, gated
+
+`validateInlineGeoJson` checks an inline GeoJSON value before it enters a style — all RFC 7946 geometries, features, and collections, with defaults of 5 MiB serialized, 100,000 features, 1,000,000 coordinate positions, and depth caps of 16 (geometry) and 32 (properties). `analyzeGeoJson` adds counts, bounds, and property statistics; handed a URL, it reports `available: false` and never fetches.
+
+For source-layer discovery without a network, `listSourceLayers` reads usage straight from style metadata and layer references. `duplicateLayer` and `addLayerFromSource` cover common layer surgery, and `addGeoJsonLayer` validates and adds its inline source and layer in one atomic step — both commit or neither does.
+
+## Next
+
+Have a live map? The [MapLibre adapter](../maplibre/) applies prepared transactions to it.

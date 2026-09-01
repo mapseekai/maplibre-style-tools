@@ -1,21 +1,22 @@
 ---
 title: 环境要求
-description: 了解运行时、Peer Dependency 与各接口的具体要求。
+description: 安装前，你的运行环境需要满足什么。
 weight: 10
 ---
 
-请先了解这些要求，再选择接口。有关共享术语，请阅读[概览](../introduction/overview/)和[能力](../introduction/capabilities/)。
+安装前确认两件事：
 
-## 运行时 {#runtime}
+- **Node.js 22.13 或更新。** 本包只提供 ESM。在受支持的 Node 版本上，CommonJS 项目可以直接 `require()` 加载。
+- **`maplibre-gl` 6.3 或更新 —— 只在需要操作地图时。** 它是对等依赖，版本由你的应用决定，本包不会自带一份。
 
-`maplibre-style-tools` 仅提供 ESM，并要求 Node.js `>=22.13.0`。导入软件包时，请使用支持 ESM 的工具链。
+## 各接口的额外要求
 
-## Peer Dependency {#peer-dependencies}
+| 你使用 | 还需要 |
+| --- | --- |
+| `/ai` | AI SDK 6 宿主（`ai` `^6.0.141`）和进程内的 `map` |
+| `/webmcp` | 暴露 `document.modelContext` 的浏览器 |
+| `/maplibre`、`/bridge` | 浏览器或 MapLibre 宿主环境 |
+| `/mcp`、CLI | 只需要 Node.js |
+| `/core`、`/capabilities` | 提供样式的宿主即可，无需地图 |
 
-使用 MapLibre 集成的项目需要安装 `maplibre-gl` `^6.3.0`。软件包将它声明为 Peer Dependency，因此应用程序负责选择 MapLibre 运行时版本。
-
-## 各接口的具体要求 {#interface-specific-requirements}
-
-面向浏览器的 `/maplibre`、`/bridge` 和 `/webmcp` 入口应在浏览器或 MapLibre 宿主中使用。`/webmcp` 还要求演进中的 `document.modelContext` 浏览器表面；该表面不可用时，注册返回 `supported: false`。请查看 [WebMCP 指南](../../guides/webmcp/)、权威的 [draft](https://webmachinelearning.github.io/webmcp/)与当前 [Web Platform Test 结果](https://wpt.fyi/results/webmcp)，不要依赖固定的浏览器版本列表。面向 Node 的 `/ai` 和 `/mcp` 入口可以使用 Node 类型；CLI 同样运行于 Node.js。AI SDK 接口需要支持 Node 的 AI SDK 6 宿主以及 AI SDK `^6.0.141`。
-
-请选择与任务 Authority 相符的接口：宿主应用拥有进程内地图时使用 `/ai`；使用浏览器中介的页面工具时使用 `/webmcp`；独立的 loopback MCP host 必须访问该浏览器地图时使用 `/bridge`；本地 Style 文件使用 CLI。
+`document.modelContext` 在注册时做特性检测：浏览器不支持时，注册以 `supported: false` 正常结束，不会报错。WebMCP 仍是草案，请查看[规范草案](https://webmachinelearning.github.io/webmcp/)和 [Web Platform Tests 结果](https://wpt.fyi/results/webmcp)，不要依赖浏览器版本号判断。
