@@ -16,8 +16,8 @@ export const APPLY_STYLE_DOCUMENT_DESCRIPTION =
   'Apply a validated MapLibre style document or absolute style URL to the current map.';
 
 const EMPTY_TRANSACTION_MESSAGE = 'Style transaction completed without changes.';
-const TRANSACTION_MESSAGE = 'Style transaction completed.';
-const DOCUMENT_MESSAGE = 'Style document completed.';
+export const TRANSACTION_MESSAGE = 'Style transaction completed.';
+export const DOCUMENT_MESSAGE = 'Style document completed.';
 
 const transactionIssuePath = (path: PropertyKey[]): string =>
   `/transaction${path.length === 0 ? '' : `/${path.map((part) => String(part).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`}`;
@@ -31,7 +31,7 @@ type MutationResult = {
   styleAuthority: 'current' | 'not-checked';
 };
 
-const receipt = (
+export const receipt = (
   message: string,
   result: MutationResult,
   diff: boolean,

@@ -9,6 +9,7 @@ export default defineConfig([
     'node_modules',
     '.worktrees',
     'examples/browser-bridge/dist',
+    'website/public',
     'playwright-report',
     'test-results',
   ]),

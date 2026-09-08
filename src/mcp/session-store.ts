@@ -161,6 +161,12 @@ interface InternalStoreCapability {
     request: ApplyStyleSessionRequest,
     finalizer: (result: ApplySessionTransactionResult) => Result,
   ) => Promise<Result>;
+  readonly replace: <Result>(
+    sessionId: string,
+    expectedRevision: number,
+    style: unknown,
+    finalizer: (result: ApplySessionTransactionResult) => Result,
+  ) => Promise<Result>;
 }
 
 const factoryStoreCapabilities = new WeakMap<StyleSessionStore, InternalStoreCapability>();
@@ -325,6 +331,16 @@ export const applyStyleSessionTransactionResult = async <Result>(
   sessionId,
   request,
   finalizer,
+);
+
+export const replaceStyleSessionResult = async <Result>(
+  store: StyleSessionStore,
+  sessionId: string,
+  expectedRevision: number,
+  style: unknown,
+  finalizer: (result: ApplySessionTransactionResult) => Result,
+): Promise<Result> => requireFactoryStoreCapability(store).replace(
+  sessionId, expectedRevision, style, finalizer,
 );
 
 export function createStyleSessionStoreWithDependencies(
@@ -667,11 +683,12 @@ export function createStyleSessionStoreWithDependencies(
   );
 
 
-  const replace = async (
+  const replaceFinalized = <Result>(
     sessionId: string,
     expectedRevision: number,
     style: unknown,
-  ): Promise<ApplySessionTransactionResult> => {
+    finalizer: (result: ApplySessionTransactionResult) => Result,
+  ): Promise<Result> => {
     const session = captureSession(sessionId);
     return enqueue(session, 'apply', () => {
       const now = clock.now();
@@ -692,6 +709,18 @@ export function createStyleSessionStoreWithDependencies(
       const nextRevision = session.current.revision + 1;
       const nextStyle = cloneKnownJson(result.style);
       const nextDiff = cloneKnownJson(result.diff);
+      const publicResult: ApplySessionTransactionResult = cloneKnownJson({
+        revision: nextRevision,
+        dryRun: false,
+        style: nextStyle,
+        diff: nextDiff,
+        changedLayers: result.changedLayers,
+        changedSources: result.changedSources,
+        warnings: result.warnings,
+      });
+      const finalized = finalizer(publicResult);
+      if (isThenable(finalized)) rejectAsyncProjection();
+      const finalizedClone = cloneProjectionResult(finalized);
       session.history.push(session.current);
       while (session.history.length > limits.maxHistory) session.history.shift();
       session.current = Object.freeze({
@@ -701,17 +730,16 @@ export function createStyleSessionStoreWithDependencies(
         committedAt: now,
       });
       touch(session, clock.now());
-      return cloneKnownJson({
-        revision: nextRevision,
-        dryRun: false,
-        style: nextStyle,
-        diff: nextDiff,
-        changedLayers: result.changedLayers,
-        changedSources: result.changedSources,
-        warnings: result.warnings,
-      });
+      return finalizedClone;
     });
   };
+  const replace = async (
+    sessionId: string,
+    expectedRevision: number,
+    style: unknown,
+  ): Promise<ApplySessionTransactionResult> => replaceFinalized(
+    sessionId, expectedRevision, style, (result) => result,
+  );
   const close = async (sessionId: string): Promise<CloseStyleSessionResult> => {
     const session = captureSession(sessionId);
     session.closing = true;
@@ -752,6 +780,7 @@ export function createStyleSessionStoreWithDependencies(
     project,
     projectRevision,
     apply: applyFinalized,
+    replace: replaceFinalized,
   };
   factoryStoreCapabilities.set(store, capability);
   return store;

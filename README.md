@@ -175,6 +175,23 @@ if (parsed.success) {
 
 Rendered/source feature queries are adapter-only and bounded by both feature count and serialized bytes. Returned feature objects are projected into JSON snapshots with an optional property allowlist; truncation is explicit rather than returning an unbounded MapLibre object graph.
 
+`createMapRuntimeCommands(map).addSprite(input, execution?)` is asynchronous.
+Await its result to confirm loading or handle a load failure. The optional
+execution object accepts an `AbortSignal`:
+
+```ts
+const commands = createMapRuntimeCommands(map);
+const controller = new AbortController();
+const result = await commands.addSprite(
+  { spriteId: 'icons', url: 'https://example.com/sprites/icons', overwrite: true },
+  { signal: controller.signal },
+);
+```
+
+`renameSource` also updates `terrain.source`. `removeSource` rejects a source
+that terrain still references, including with `cascadeLayers: true`; clear
+terrain explicitly earlier in the same transaction before removing its source.
+
 ### Capability result contract
 
 Every capability returns one discriminated envelope, identical across the AI

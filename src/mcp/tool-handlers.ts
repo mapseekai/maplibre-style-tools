@@ -96,16 +96,19 @@ export const createMcpToolHandlers = (
       const expectedRevision = sessionTarget.expectedRevision ?? snapshot.revision;
       const authority = new SessionStyleAuthority(
         store, sessionTarget.sessionId, expectedRevision, snapshot.style,
+        (executed, revision) => result(executed.success
+          ? { ...executed, data: { ...executed.data, revision } }
+          : executed),
       );
       const executed = await capabilityRegistry[name].execute(
         () => authority,
         parsed.input,
         signal === undefined ? undefined : { abortSignal: signal },
       ) as CapabilityResult<JsonValue>;
+      if (authority.mutationResponse !== undefined) return authority.mutationResponse;
       if (executed.success && (name === 'applyStyleTransaction' || name === 'applyStyleDocument')
         && typeof executed.data === 'object' && executed.data !== null && !Array.isArray(executed.data)) {
-        const exported = await store.export(sessionTarget.sessionId);
-        return result({ ...executed, data: { ...executed.data, revision: exported.revision } });
+        return result({ ...executed, data: { ...executed.data, revision: snapshot.revision } });
       }
       return result(executed);
     } catch (error) { return result(failure(error)); }

@@ -11,6 +11,7 @@ import type {
   RemoveImageInput,
   RemoveSpriteInput,
   RenderedFeatureQueryInput,
+  RuntimeCommandExecution,
   RuntimeGeoJsonDiffUpdate,
   RuntimeListInput,
   SourceFeatureQueryInput,
@@ -307,7 +308,14 @@ export class BridgeMapAuthority implements StyleAuthority, RuntimeAuthority {
           };
         } catch (error) { return { ok: false as const, error: asToolError(error) }; }
       },
-      addSprite: (input: AddSpriteInput) => execute({ type: 'addSprite', ...input }),
+      addSprite: async (input: AddSpriteInput, execution?: RuntimeCommandExecution) => {
+        if (execution?.signal?.aborted === true) {
+          return { ok: false as const, error: createStyleToolError(
+            'TIMEOUT', 'Live bridge operation was aborted.', '', { reason: 'aborted' },
+          ) };
+        }
+        return execute({ type: 'addSprite', ...input });
+      },
       removeSprite: (input: RemoveSpriteInput) => execute({ type: 'removeSprite', ...input }),
     } as unknown as MapRuntimeCommands;
   }

@@ -63,11 +63,14 @@ export const executeRunMapCommand = async (
         case 'listSprites':
           return commands.listSprites({ limit: input.limit ?? 100 });
         case 'addSprite':
-          return commands.addSprite({
-            spriteId: input.spriteId,
-            url: input.url,
-            ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
-          });
+          return commands.addSprite(
+            {
+              spriteId: input.spriteId,
+              url: input.url,
+              ...(input.overwrite === undefined ? {} : { overwrite: input.overwrite }),
+            },
+            ...(execution.abortSignal === undefined ? [] : [{ signal: execution.abortSignal }]),
+          );
         case 'removeSprite':
           return commands.removeSprite({ spriteId: input.spriteId });
       }

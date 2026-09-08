@@ -126,6 +126,9 @@ function renameSource(
     layer.source = operation.newSourceId;
     rewrittenLayerIds.push(layer.id);
   }
+  if (style.terrain?.source === operation.sourceId) {
+    style.terrain.source = operation.newSourceId;
+  }
   context.changedSourceIds.add(operation.sourceId);
   context.changedSourceIds.add(operation.newSourceId);
   for (const layerId of rewrittenLayerIds) context.changedLayerIds.add(layerId);
@@ -138,6 +141,17 @@ function removeSource(
   context: OperationContext,
 ): OperationApplyResult {
   if (!Object.hasOwn(style.sources, operation.sourceId)) return notFound(operation.sourceId);
+  if (style.terrain?.source === operation.sourceId) {
+    return {
+      ok: false,
+      error: createStyleToolError(
+        'DEPENDENCY_CONFLICT',
+        `Source "${operation.sourceId}" is referenced by terrain.`,
+        '/sourceId',
+        { sourceId: operation.sourceId, dependentRootProperties: ['terrain'] },
+      ),
+    };
+  }
   const dependentIndexes: number[] = [];
   for (let index = 0; index < style.layers.length; index += 1) {
     if (style.layers[index]!.source === operation.sourceId) dependentIndexes.push(index);

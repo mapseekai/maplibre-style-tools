@@ -65,7 +65,7 @@ class FakeMap {
   }
 
   getStyle(): StyleSpecification {
-    return this.style;
+    return structuredClone(this.style);
   }
 
   isStyleLoaded(): boolean {
@@ -173,6 +173,14 @@ class FakeMap {
   }
 
   asMap(): MapLibreMap {
+    // Keep the fake Style's callback API outside its serializable style document.
+    Object.defineProperty(this.style, 'addSprite', {
+      configurable: true,
+      value: (id: string, url: string, _options: unknown, complete: (error?: Error) => void) => {
+        this.addSprite(id, url);
+        queueMicrotask(() => complete());
+      },
+    });
     return this as unknown as MapLibreMap;
   }
 }
@@ -383,6 +391,8 @@ test('binds inline authority when the Map changes during final re-observation ha
   })), hasCode('REVISION_CONFLICT'));
 
   assert.equal(map.setStyleCalls, 0);
+  assert.throws(() => runtime.snapshot(), hasCode('MAP_NOT_READY'));
+  await runtime.noteExternalStyle();
   assert.equal(runtime.snapshot().revision, 1);
   assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#00ff00');
 });
@@ -597,6 +607,7 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
       expectedCalls: [
         { method: 'listSprites', args: [] },
         { method: 'addSprite', args: ['added', 'https://images.example/sprites/added'] },
+        { method: 'listSprites', args: [] },
       ],
       expectedResult: { type: 'ack', accepted: true },
     },
@@ -611,6 +622,7 @@ test('executes remaining SDK runtime actions with exact adapter arguments', asyn
         { method: 'listSprites', args: [] },
         { method: 'removeSprite', args: ['base'] },
         { method: 'addSprite', args: ['base', 'https://images.example/sprites/replacement'] },
+        { method: 'listSprites', args: [] },
       ],
       expectedResult: { type: 'ack', accepted: true },
     },
@@ -646,6 +658,7 @@ test('admits addSprite URLs through the shared resource policy before adapter wo
       method: 'addSprite',
       args: ['marker/a~b', 'https://images.example/app/sprites/marker.json'],
     },
+    { method: 'listSprites', args: [] },
   ]);
 
   const deniedCases: ReadonlyArray<{
@@ -962,4 +975,129 @@ test('returns authentic TIMEOUT after synchronous abortable Map work crosses its
   }
 
   assert.deepEqual(outcomes, cases.map(() => 'TIMEOUT'));
+});
+
+
+for (const cancellation of ['timeout', 'abort'] as const) {
+  test(`ends authority recovery wait on ${cancellation} without publishing a stale snapshot`, { timeout: 2_000 }, async () => {
+    const map = new FakeMap(rawStyle());
+    let readable = true;
+    let markUnknown!: () => void;
+    const unknown = new Promise<void>((resolve) => { markUnknown = resolve; });
+    map.getStyle = () => { if (!readable) throw new Error('style unavailable'); return structuredClone(map.style); };
+    map.setStyle = () => { map.setStyleCalls += 1; readable = false; throw new Error('setStyle failed'); };
+    const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+      timeoutMs: cancellation === 'timeout' ? 50 : 1_500,
+      onSyncStateChange: () => markUnknown(),
+    }));
+    const controller = new AbortController();
+    const execution = runtime.execute(applyStyleCommand(runtime.snapshot(), {
+      kind: 'style', style: rawStyle('#ff0000') as unknown as StyleDocument,
+    }), { signal: controller.signal });
+    const rejected = assert.rejects(execution, (error: unknown) => {
+      assert.ok(isStyleToolError(error));
+      assert.equal(error.code, 'TIMEOUT');
+      assert.equal(error.details?.currentSnapshot, undefined);
+      return true;
+    });
+    await unknown;
+    if (cancellation === 'abort') controller.abort();
+    await rejected;
+    assert.equal(map.setStyleCalls, 2);
+    assert.throws(() => runtime.snapshot(), hasCode('MAP_NOT_READY'));
+    await assert.rejects(runtime.execute({ type: 'getStyle' }), hasCode('MAP_NOT_READY'));
+    readable = true;
+    await runtime.noteExternalStyle();
+    assert.equal((await runtime.execute({ type: 'getStyle' })).type, 'style');
+  });
+}
+
+
+test('keeps sprite execution and queued commands pending until rollback finishes after abort', { timeout: 2_000 }, async () => {
+  const map = new FakeMap(rawStyle());
+  map.sprites.set('base', 'https://images.example/original');
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const completions: Array<() => void> = [];
+  let markStarted!: () => void;
+  let markRestoring!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  const restoring = new Promise<void>((resolve) => { markRestoring = resolve; });
+  let spriteRequest: AbortController | undefined;
+  Object.defineProperties(map.style, {
+    _spriteRequest: { get: () => spriteRequest },
+    addSprite: {
+      value: (id: string, url: string, _options: unknown, complete: () => void) => {
+        map.addSprite(id, url);
+        spriteRequest = new AbortController();
+        completions.push(complete);
+        if (completions.length === 1) markStarted();
+        else markRestoring();
+      },
+    },
+  });
+  const controller = new AbortController();
+  let mutationSettled = false;
+  let queuedSettled = false;
+  const mutation = runtime.execute({
+    type: 'addSprite', spriteId: 'base', url: 'https://images.example/replacement', overwrite: true,
+  }, { signal: controller.signal });
+  const rejected = assert.rejects(mutation, hasCode('TIMEOUT')).finally(() => { mutationSettled = true; });
+  const queued = runtime.execute({ type: 'getStyle' }).then((result) => { queuedSettled = true; return result; });
+  await started;
+  assert.equal(completions.length, 1);
+  assert.equal(mutationSettled, false);
+  controller.abort();
+  await restoring;
+  assert.equal(completions.length, 2);
+  assert.equal(mutationSettled, false);
+  assert.equal(queuedSettled, false);
+  completions[1]!();
+  await rejected;
+  assert.equal((await queued).type, 'style');
+  assert.equal(map.sprites.get('base'), 'https://images.example/original');
+});
+
+
+test('reports timeout when completed sprite loading crosses its deadline synchronously', async (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const map = new FakeMap(rawStyle());
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions());
+  const deadlineAt = now + 5_000;
+  Object.defineProperty(map.style, 'addSprite', {
+    value: (id: string, url: string, _options: unknown, complete: () => void) => {
+      map.addSprite(id, url);
+      now = deadlineAt;
+      complete();
+    },
+  });
+  await assert.rejects(runtime.execute({
+    type: 'addSprite', spriteId: 'base', url: 'https://images.example/sprite',
+  }, { deadlineAt }), hasCode('TIMEOUT'));
+});
+
+
+test('does not publish a snapshot whose style changed while its hash was pending', async (t) => {
+  const map = new FakeMap(rawStyle());
+  const published: string[] = [];
+  const runtime = await createBrowserMapRuntime(map.asMap(), runtimeOptions({
+    onExternalStyleChange: (snapshot) => published.push(snapshot.styleHash),
+  }));
+  map.external(rawStyle('#ff0000'));
+  const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+  let changeDuringHash = true;
+  t.mock.method(globalThis.crypto.subtle, 'digest', (algorithm: AlgorithmIdentifier, data: BufferSource) => {
+    if (changeDuringHash) {
+      changeDuringHash = false;
+      map.external(rawStyle('#00ff00'));
+    }
+    return digest(algorithm, data);
+  });
+  await assert.rejects(runtime.noteExternalStyle(), hasCode('REVISION_CONFLICT'));
+  assert.throws(() => runtime.snapshot(), hasCode('MAP_NOT_READY'));
+  assert.deepEqual(published, []);
+  await runtime.noteExternalStyle();
+  assert.equal(runtime.snapshot().revision, 1);
+  assert.equal(runtime.snapshot().style.layers[0]?.paint?.['line-color'], '#00ff00');
+  assert.equal(published.length, 1);
 });

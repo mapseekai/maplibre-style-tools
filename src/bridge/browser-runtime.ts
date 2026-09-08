@@ -16,6 +16,7 @@ import {
   type RuntimeImageLoader,
 } from '../adapters/maplibre/index.js';
 import {
+  canonicalizeJson,
   createStyleToolError,
   DEFAULT_MAX_DIFF_BYTES,
   DEFAULT_MAX_OPERATIONS,
@@ -540,11 +541,25 @@ export async function createBrowserMapRuntime(
     }
   };
 
-  const waitForRecovery = (reason: SyncReason): Promise<void> =>
-    new Promise<void>((resolve) => {
-      pendingRecovery = { resolve };
-      setUnknown(reason);
-    });
+  const waitForRecovery = (
+    reason: SyncReason,
+    deadline: MapOperationDeadline,
+  ): Promise<void> => new Promise<void>((resolve, reject) => {
+    // Map application and rollback have finished. Only authority observation remains.
+    const finish = (recovered: boolean): void => {
+      if (pendingRecovery !== recovery) return;
+      pendingRecovery = undefined;
+      deadline.signal?.removeEventListener('abort', onAbort);
+      if (recovered) resolve();
+      else reject(timeoutError());
+    };
+    const onAbort = (): void => finish(false);
+    const recovery = { resolve: () => finish(true) };
+    pendingRecovery = recovery;
+    deadline.signal?.addEventListener('abort', onAbort, { once: true });
+    setUnknown(reason);
+    if (deadlineExpired(deadline)) onAbort();
+  });
 
   const observe = async (
     publishExternal: boolean,
@@ -567,6 +582,17 @@ export async function createBrowserMapRuntime(
       setUnknown('invalid-map-style');
       throw publicFailure('Map style hashing failed.', error);
     }
+    if (deadline !== undefined && deadlineExpired(deadline)) throw timeoutError();
+    try {
+      const current = readValidatedMapStyle(map, limits.maxStyleBytes);
+      if (canonicalizeJson(current) !== canonicalizeJson(observed)) {
+        throw createStyleToolError('REVISION_CONFLICT', 'Map style changed during observation.');
+      }
+    } catch (error) {
+      setUnknown('invalid-map-style');
+      throw error;
+    }
+    if (deadline !== undefined && deadlineExpired(deadline)) throw timeoutError();
     const changed = observedHash !== state.styleHash;
     if (changed) {
       state = { revision: state.revision + 1, styleHash: observedHash, style: observed };
@@ -583,7 +609,6 @@ export async function createBrowserMapRuntime(
     }
     if (pendingRecovery !== undefined) {
       const recovery = pendingRecovery;
-      pendingRecovery = undefined;
       recovery.resolve();
     }
     return cloneState(state);
@@ -596,7 +621,7 @@ export async function createBrowserMapRuntime(
     deadline: MapOperationDeadline,
   ): Promise<BridgeTransactionResult> => {
     if (result.styleAuthority !== 'current') {
-      await waitForRecovery('adapter-authority-unavailable');
+      await waitForRecovery('adapter-authority-unavailable', deadline);
       const primary = deadline.signal?.aborted === true || Date.now() >= deadline.expiresAt
         ? timeoutError()
         : result.error;
@@ -608,7 +633,7 @@ export async function createBrowserMapRuntime(
       currentStyle = firstValidationError(result.style, limits.maxStyleBytes);
       currentHash = await hashWithDeadline(currentStyle, deadline);
     } catch {
-      await waitForRecovery('invalid-map-style');
+      await waitForRecovery('invalid-map-style', deadline);
       const primary = deadline.signal?.aborted === true || Date.now() >= deadline.expiresAt
         ? timeoutError()
         : createStyleToolError('INTERNAL', 'Map returned invalid current Style.');
@@ -803,7 +828,7 @@ export async function createBrowserMapRuntime(
             expectedBaselineStyle: resolvedStyle,
           });
           if (!restored.ok || restored.styleAuthority !== 'current') {
-            await waitForRecovery('adapter-authority-unavailable');
+            await waitForRecovery('adapter-authority-unavailable', sharedDeadline);
             const primary = deadlineExpired(sharedDeadline) ? timeoutError() : policyError;
             const failedRestore: MapStyleApplyResult = {
               ...restored,
@@ -976,11 +1001,13 @@ export async function createBrowserMapRuntime(
           if (isStyleToolError(error)) throw error;
           throw createStyleToolError('INVALID_INPUT', 'Runtime sprite URL is invalid.');
         }
-        mapRuntimeError(runtimeCommands.addSprite({
+        executionState.nonAbortableMapWorkStarted = true;
+        mapRuntimeError(await runtimeCommands.addSprite({
           spriteId: command.spriteId,
           url: approved.resolvedUrl,
           ...(command.overwrite === undefined ? {} : { overwrite: command.overwrite }),
-        }));
+        }, { signal: sharedDeadline.signal }));
+        if (deadlineExpired(sharedDeadline)) throw timeoutError();
         return { type: 'ack', accepted: true } as BrowserRuntimeResult<C>;
       }
       case 'removeSprite':

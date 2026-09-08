@@ -36,6 +36,15 @@ class FakeMap {
   readonly calls: Array<{ method: string; args: unknown[] }> = [];
   readonly images = new Set<string>();
   readonly sprites: Array<{ id: string; url: string }> = [];
+  readonly listeners = new Map<string, Set<(event: { type: string; error?: Error }) => void>>();
+  readonly style = {
+    _spriteRequest: undefined as AbortController | undefined,
+    addSprite: (id: string, url: string, _options: unknown, completion: (error?: Error) => void) => {
+      this.addSprite(id, url);
+      this.style._spriteRequest = new AbortController();
+      queueMicrotask(() => completion());
+    },
+  };
   source: unknown = { type: 'geojson', updateData: async () => {} };
   sourceFeatures: unknown[] = [];
   renderedFeatures: unknown[] = [];
@@ -44,6 +53,15 @@ class FakeMap {
   private record(method: string, args: unknown[]): void {
     this.calls.push({ method, args });
     if (this.failMethod === method) throw new Error(`${method} failed`);
+  }
+
+  on(type: string, listener: (event: { type: string; error?: Error }) => void) {
+    (this.listeners.get(type) ?? this.listeners.set(type, new Set()).get(type)!).add(listener);
+    return this;
+  }
+  off(type: string, listener: (event: { type: string; error?: Error }) => void) {
+    this.listeners.get(type)?.delete(listener);
+    return this;
   }
 
   getSource(sourceId: string): unknown { this.record('getSource', [sourceId]); return this.source; }
@@ -215,7 +233,7 @@ describe('runtime AI tools', () => {
       assert.equal(response.error.path, '/maxSerializedBytes');
     }
   });
-  it('forwards SDK abort signals only to URL image commands', async () => {
+  it('forwards SDK abort signals to URL image commands', async () => {
     const map = new FakeMap();
     const controller = new AbortController();
     controller.abort();
@@ -242,5 +260,22 @@ describe('runtime AI tools', () => {
     assert.equal(loaderCalled, false);
     assert.equal(map.calls.some((call) => call.method === 'addImage'), false);
   });
-});
 
+  it('forwards an already aborted signal to addSprite before map mutation', async () => {
+    const map = new FakeMap();
+    const controller = new AbortController();
+    controller.abort();
+    const response = await createRunMapCommandTool({ getMap: () => map.asMap() }).execute(
+      { action: 'addSprite', spriteId: 'pin', url: 'https://example.test/pin' },
+      { abortSignal: controller.signal },
+    );
+    assert.equal(response.success, false);
+    if (!response.success) {
+      assert.equal(response.error.code, 'TIMEOUT');
+      assert.equal(response.error.details?.reason, 'aborted');
+    }
+    assert.deepEqual(map.sprites, []);
+    assert.deepEqual(map.calls, []);
+    assert.equal(map.style._spriteRequest, undefined);
+  });
+});

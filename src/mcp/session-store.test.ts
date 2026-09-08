@@ -18,6 +18,7 @@ import {
   createStyleSessionStoreWithDependencies,
   projectStyleSession,
   projectStyleSessionRevision,
+  replaceStyleSessionResult,
   type FrozenSessionSnapshot,
 } from './session-store.js';
 import { MIN_MCP_MESSAGE_BYTES } from './types.js';
@@ -609,3 +610,29 @@ const assertFrozenSnapshotTypes = (snapshot: FrozenSessionSnapshot): void => {
   snapshot.style.view.layers.length = 0;
 };
 void assertFrozenSnapshotTypes;
+
+test('replacement finalizers reject throws, async results and invalid JSON before committing or touching TTL', async () => {
+  for (const finalizer of [
+    () => { throw createStyleToolError('INVALID_INPUT', 'Receipt rejected.'); },
+    () => Promise.resolve({ success: true }),
+    () => ({ invalid: undefined }),
+  ]) {
+    const clock = createFakeClock();
+    const store = createStyleSessionStore({ clock, limits: { ttlMs: 100 } });
+    try {
+      const { sessionId } = await store.open(validStyle);
+      clock.value = 99;
+      await assert.rejects(() => replaceStyleSessionResult<unknown>(
+        store, sessionId, 0, { ...validStyle, name: 'changed' }, finalizer,
+      ));
+      const snapshot = await projectStyleSession(store, sessionId, (current) => ({
+        revision: current.revision, expiresAt: current.expiresAt,
+        style: current.style.view, history: current.history,
+      }));
+      assert.equal(snapshot.revision, 0);
+      assert.equal(snapshot.expiresAt, 100);
+      assert.deepEqual(snapshot.style, validStyle);
+      assert.deepEqual(snapshot.history, []);
+    } finally { store.dispose(); }
+  }
+});

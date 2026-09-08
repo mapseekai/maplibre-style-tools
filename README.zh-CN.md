@@ -195,6 +195,21 @@ MapLibre 的渲染行为 —— 语义核心 diff 和变更 ID 仍保留在结�
 对象被投影为 JSON 快照,可选属性白名单;截断是显式的,而不是返回无界的
 MapLibre 对象图。
 
+`createMapRuntimeCommands(map).addSprite(input, execution?)` 是异步方法。
+请等待结果后再确认加载成功或处理加载失败；可选执行参数接受 `AbortSignal`：
+
+```ts
+const commands = createMapRuntimeCommands(map);
+const controller = new AbortController();
+const result = await commands.addSprite(
+  { spriteId: 'icons', url: 'https://example.com/sprites/icons', overwrite: true },
+  { signal: controller.signal },
+);
+```
+
+`renameSource` 同时更新 `terrain.source`。`removeSource` 会拒绝删除仍被地形引用的
+源，即使设置 `cascadeLayers: true`；需要先在同一事务中显式清除 terrain，再删除源。
+
 ### 能力结果契约
 
 每个能力都返回同一个判别信封,在 AI SDK、MCP 和 CLI 接口间完全一致:

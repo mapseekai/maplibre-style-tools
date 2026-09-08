@@ -263,6 +263,9 @@ export interface MapRuntimeCommands {
   ): Promise<RuntimeCommandResult>;
   removeImage(input: RemoveImageInput): RuntimeCommandResult;
   listSprites(input?: RuntimeListInput): RuntimeCommandResult<RuntimeListData<JsonObject>>;
-  addSprite(input: AddSpriteInput): RuntimeCommandResult;
+  addSprite(
+    input: AddSpriteInput,
+    execution?: RuntimeCommandExecution,
+  ): Promise<RuntimeCommandResult>;
   removeSprite(input: RemoveSpriteInput): RuntimeCommandResult;
 }

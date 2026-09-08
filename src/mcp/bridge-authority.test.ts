@@ -313,3 +313,44 @@ test('bridge runtime forwards removeSprite commands', async () => {
   assert.equal((await commands.removeSprite({ spriteId: 'terrain' })).ok, true);
   assert.deepEqual(registry.commands, [{ type: 'removeSprite', spriteId: 'terrain' }]);
 });
+
+
+test('does not send a sprite command when its signal is already aborted', async () => {
+  const registry = transactionRegistry({ type: 'ack', accepted: true });
+  const commands = new BridgeMapAuthority(registry as never, 'map-1').runtimeCommands();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await commands.addSprite({
+    spriteId: 'terrain', url: 'https://assets.example/sprite',
+  }, { signal: controller.signal });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, 'TIMEOUT');
+    assert.deepEqual(result.error.details, { reason: 'aborted' });
+  }
+  assert.deepEqual(registry.commands, []);
+});
+
+test('waits for a dispatched bridge sprite result when its signal aborts later', async () => {
+  let finish!: () => void;
+  const response = new Promise<void>((resolve) => { finish = resolve; });
+  const sent: string[] = [];
+  const commands = new BridgeMapAuthority({
+    execute: async (_mapId: string, command: { type: string }) => {
+      sent.push(command.type);
+      await response;
+      return { type: 'ack', accepted: true };
+    },
+  } as never, 'map-1').runtimeCommands();
+  const controller = new AbortController();
+  let settled = false;
+  const result = commands.addSprite({
+    spriteId: 'terrain', url: 'https://assets.example/sprite',
+  }, { signal: controller.signal }).then((value) => { settled = true; return value; });
+  controller.abort();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, ['addSprite']);
+  assert.equal(settled, false);
+  finish();
+  assert.equal((await result).ok, true);
+});

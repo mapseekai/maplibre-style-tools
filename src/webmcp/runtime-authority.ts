@@ -361,7 +361,9 @@ export class WebMcpMapAuthority implements StyleAuthority, RuntimeAuthority {
           return { ok: false as const, error: asToolError(error) };
         }
       },
-      addSprite: (input: AddSpriteInput) => acknowledge({ type: 'addSprite', ...input }),
+      addSprite: (input: AddSpriteInput, execution?: RuntimeCommandExecution) => acknowledge(
+        { type: 'addSprite', ...input }, execution,
+      ),
       removeSprite: (input: RemoveSpriteInput) => acknowledge({ type: 'removeSprite', ...input }),
     } as unknown as MapRuntimeCommands;
   }

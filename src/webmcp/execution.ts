@@ -214,6 +214,8 @@ export function createWebMcpExecutionBoundary(
   let activeMap: MapLibreMap | null = null;
   let activeRuntime: BrowserMapRuntime | undefined;
   let closed = false;
+  let stopRecovery: (() => void) | undefined;
+  let recoveryObservation = Promise.resolve();
 
   const emit = (event: WebMcpInvocationEvent): void => {
     try {
@@ -238,6 +240,45 @@ export function createWebMcpExecutionBoundary(
     return run;
   };
 
+  const startRecovery = (): void => {
+    if (closed || stopRecovery !== undefined || activeMap === null || activeRuntime === undefined) return;
+    const map = activeMap;
+    const runtime = activeRuntime;
+    let stopped = false;
+    let observing = false;
+    let dirty = false;
+    const stop = (): void => {
+      stopped = true;
+      map.off('style.load', observeRecovery);
+      map.off('styledata', observeRecovery);
+      map.off('error', observeRecovery);
+      if (stopRecovery === stop) stopRecovery = undefined;
+    };
+    const observeRecovery = (): void => {
+      if (stopped) return;
+      dirty = true;
+      if (observing) return;
+      observing = true;
+      recoveryObservation = (async () => {
+        while (dirty && !stopped) {
+          dirty = false;
+          try {
+            await runtime.noteExternalStyle();
+            if (!dirty) stop();
+          } catch {
+            // Retry when another style event announces possible recovery.
+          }
+        }
+        observing = false;
+      })();
+    };
+    stopRecovery = stop;
+    map.on('style.load', observeRecovery);
+    map.on('styledata', observeRecovery);
+    map.on('error', observeRecovery);
+    observeRecovery();
+  };
+
   const resolveAuthority = async (
     signal: AbortSignal,
   ): Promise<WebMcpMapAuthority | null> => {
@@ -249,15 +290,26 @@ export function createWebMcpExecutionBoundary(
     }
     if (map === null) return null;
     if (map !== activeMap || activeRuntime === undefined) {
+      stopRecovery?.();
       const runtime = await awaitPreDispatch(
-        resolvedDependencies.createRuntime(map, runtimeOptions),
+        resolvedDependencies.createRuntime(map, {
+          ...runtimeOptions,
+          onSyncStateChange: startRecovery,
+        }),
         signal,
       );
       activeMap = map;
       activeRuntime = runtime;
     }
+    await awaitPreDispatch(recoveryObservation, signal);
+    stopRecovery?.();
     throwIfAborted(signal);
-    await awaitPreDispatch(activeRuntime.noteExternalStyle(), signal);
+    try {
+      await awaitPreDispatch(activeRuntime.noteExternalStyle(), signal);
+    } catch (error) {
+      startRecovery();
+      throw error;
+    }
     return new WebMcpMapAuthority(activeRuntime, options.getContext);
   };
 
@@ -308,10 +360,17 @@ export function createWebMcpExecutionBoundary(
       }
 
       throwIfAborted(signal);
-      const authority = await awaitPreDispatch(resolveAuthority(signal), signal);
-      const result = authority === null
-        ? mapNotReady()
-        : await resolvedDependencies.dispatchCapability(name, authority, input, signal);
+      const authorityFree = name === 'inspectStyle' && (
+        action === 'validateDocument' || action === 'validateTransaction' || action === 'analyzeGeoJson'
+      );
+      const authority = authorityFree
+        ? null
+        : await awaitPreDispatch(resolveAuthority(signal), signal);
+      const result = authorityFree
+        ? capabilityRegistry.inspectStyle.execute(() => null, input)
+        : authority === null
+          ? mapNotReady()
+          : await resolvedDependencies.dispatchCapability(name, authority, input, signal);
       throwIfAborted(signal);
       if (result.success) {
         emit({
@@ -352,6 +411,7 @@ export function createWebMcpExecutionBoundary(
     ),
     close: () => {
       closed = true;
+      stopRecovery?.();
     },
   };
 }

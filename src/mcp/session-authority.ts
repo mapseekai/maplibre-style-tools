@@ -1,7 +1,14 @@
 import type { MapStyleApplyResult } from '../adapters/maplibre/types.js';
 import { createStyleToolError, isStyleToolError, type StyleDocument, type StyleTransaction } from '../core/index.js';
 import type { StyleAuthority } from '../capabilities/authority.js';
-import type { StyleSessionStore } from './session-store.js';
+import { DOCUMENT_MESSAGE, receipt, TRANSACTION_MESSAGE } from '../capabilities/mutate.js';
+import {
+  applyStyleSessionTransactionResult,
+  replaceStyleSessionResult,
+  type StyleSessionStore,
+} from './session-store.js';
+import type { ApplySessionTransactionResult, McpTextToolResult } from './types.js';
+import type { CapabilityResult, StyleMutationReceipt } from '../capabilities/contracts.js';
 
 /** Style authority pinned to a session snapshot for one MCP tool call. */
 const abortedSessionMutation = (): Extract<MapStyleApplyResult, { ok: false }> => ({
@@ -13,12 +20,36 @@ const abortedSessionMutation = (): Extract<MapStyleApplyResult, { ok: false }> =
 });
 
 export class SessionStyleAuthority implements StyleAuthority {
+  mutationResponse: McpTextToolResult | undefined;
+
   constructor(
     private readonly store: StyleSessionStore,
     private readonly sessionId: string,
     private readonly expectedRevision: number,
     private readonly snapshot: StyleDocument,
+    private readonly finalizeMutation?: (
+      result: CapabilityResult<StyleMutationReceipt>, revision: number,
+    ) => McpTextToolResult,
   ) {}
+
+  private finalize(result: ApplySessionTransactionResult, diff: boolean, message: string) {
+    const applied = {
+      ok: true as const,
+      style: result.style,
+      applied: true,
+      changedLayers: [...result.changedLayers],
+      changedSources: [...result.changedSources],
+      diff: diff ? [...result.diff] : [],
+      warnings: [...result.warnings],
+      styleAuthority: 'current' as const,
+    };
+    return {
+      applied,
+      response: structuredClone(
+        this.finalizeMutation?.(receipt(message, applied, diff), result.revision) ?? null,
+      ),
+    };
+  }
 
   readStyle() {
     return { ok: true as const, style: this.snapshot, warnings: [] };
@@ -32,20 +63,12 @@ export class SessionStyleAuthority implements StyleAuthority {
   ): Promise<MapStyleApplyResult> {
     if (options.signal?.aborted === true) return abortedSessionMutation();
     try {
-      const result = await this.store.apply(this.sessionId, {
+      const result = await applyStyleSessionTransactionResult(this.store, this.sessionId, {
         expectedRevision: this.expectedRevision,
         transaction,
-      });
-      return {
-        ok: true,
-        style: result.style,
-        applied: true,
-        changedLayers: [...result.changedLayers],
-        changedSources: [...result.changedSources],
-        diff: options.diff ? [...result.diff] : [],
-        warnings: [...result.warnings],
-        styleAuthority: 'current',
-      };
+      }, (candidate) => this.finalize(candidate, options.diff, TRANSACTION_MESSAGE));
+      this.mutationResponse = result.response ?? undefined;
+      return result.applied;
     } catch (error) {
       return {
         ok: false, styleAuthority: 'unavailable', applied: false,
@@ -72,17 +95,12 @@ export class SessionStyleAuthority implements StyleAuthority {
       };
     }
     try {
-      const result = await this.store.replace(this.sessionId, this.expectedRevision, source);
-      return {
-        ok: true,
-        style: result.style,
-        applied: true,
-        changedLayers: [...result.changedLayers],
-        changedSources: [...result.changedSources],
-        diff: options.diff ? [...result.diff] : [],
-        warnings: [...result.warnings],
-        styleAuthority: 'current',
-      };
+      const result = await replaceStyleSessionResult(
+        this.store, this.sessionId, this.expectedRevision, source,
+        (candidate) => this.finalize(candidate, options.diff, DOCUMENT_MESSAGE),
+      );
+      this.mutationResponse = result.response ?? undefined;
+      return result.applied;
     } catch (error) {
       return {
         ok: false, styleAuthority: 'unavailable', applied: false,

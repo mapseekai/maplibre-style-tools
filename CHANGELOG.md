@@ -3,10 +3,30 @@
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-The project is pre-release (0.x) and not yet published to npm; breaking changes
-may occur in any version.
+The project is pre-release (0.x); breaking changes may occur in any version.
 
-## [Unreleased]
+## [0.4.0] - 2026-09-08
+
+### Changed
+
+- `MapRuntimeCommands.addSprite` now returns `Promise<RuntimeCommandResult>`
+  and accepts an optional execution signal. Direct callers must await the
+  result, which confirms sprite loading instead of only starting a request.
+
+### Fixed
+
+- MCP session mutation responses are checked against the message budget before
+  committing and retain the revision of their own commit under concurrency.
+- WebMCP recovers outside the invocation queue after failed style application
+  and rollback; authority recovery waits respect cancellation and deadlines.
+- WebMCP document/transaction validation and GeoJSON analysis no longer require
+  a ready map.
+- Feature-state commands report MapLibre error events as failures. Sprite
+  overwrites handle asynchronous load failures and restore the prior sprite.
+- Source renames update terrain references; source removal rejects terrain
+  dependencies even when `cascadeLayers` is enabled. Remove terrain explicitly
+  earlier in the transaction to delete its source.
+- ESLint ignores generated documentation-site output in `website/public`.
 
 ## [0.3.0] - 2026-08-22
 
@@ -173,7 +193,8 @@ Initial standalone release, extracted from the ai-style-editor project.
   `examples/ai-chat` (LLM tool-calling chat against a live map).
 - Read-only MCP Builder evaluation fixture under `evals/`.
 
-[Unreleased]: https://github.com/zwishing/maplibre-style-tools/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mapseekai/maplibre-style-tools/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mapseekai/maplibre-style-tools/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/zwishing/maplibre-style-tools/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/zwishing/maplibre-style-tools/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/zwishing/maplibre-style-tools/compare/v0.1.0...v0.2.0

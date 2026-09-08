@@ -134,6 +134,22 @@ function normalizeFailure(error: unknown, message: string): StyleToolError {
     ?? createStyleToolError('INTERNAL', message);
 }
 
+function captureSynchronousMapErrors(map: Map, action: () => void): void {
+  let emitted = false;
+  let error: unknown;
+  const onError = (event: { error: unknown }): void => {
+    emitted = true;
+    error = event.error;
+  };
+  map.on('error', onError);
+  try {
+    action();
+    if (emitted) throw error;
+  } finally {
+    map.off('error', onError);
+  }
+}
+
 function rollbackFailure(
   primary: StyleToolError,
   rollback: StyleToolError,
@@ -599,6 +615,75 @@ function defaultImageLoader(map: Map): RuntimeImageLoader {
   };
 }
 
+// MapLibre 6.3 exposes completion on Style.addSprite, while Map.addSprite returns Map.
+// Style's data event already schedules the same Map render update. Capture only this
+// load's controller: looking it up at cancellation time could abort another load.
+function loadSprite(map: Map, id: string, url: string, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const style = map.style;
+    let request: AbortController | undefined;
+    let settled = false;
+    let failed = false;
+    let subscribed = false;
+    const finish = (error?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      failed = error !== undefined && error !== null;
+      clearTimeout(timer);
+      if (subscribed && signal !== undefined) removeIntrinsicAbortListener(signal, onAbort);
+      map.off('remove', onRemove);
+      if (error === undefined || error === null) resolve();
+      else reject(error);
+    };
+    const cancel = (error: StyleToolError): void => {
+      if (settled) return;
+      finish(error);
+      request?.abort();
+    };
+    const onAbort = (): void => cancel(createStyleToolError(
+      'TIMEOUT', 'Runtime sprite loading was aborted.', '', { reason: 'aborted' },
+    ));
+    const onRemove = (): void => cancel(createStyleToolError(
+      'MAP_NOT_READY', 'Map was removed during sprite loading.', '', { reason: 'removed' },
+    ));
+    const timer = setTimeout(() => cancel(createStyleToolError(
+      'TIMEOUT', 'Runtime sprite loading timed out.',
+    )), 10_000);
+    map.on('remove', onRemove);
+    try {
+      if (signal !== undefined) {
+        const before = currentSignalFailure(signal);
+        if (before !== undefined) { finish(before); return; }
+        subscribed = addIntrinsicAbortListener(signal, onAbort);
+        if (!subscribed) { finish(invalidRuntimeExecution()); return; }
+      }
+      const previousRequest = style._spriteRequest;
+      try {
+        captureSynchronousMapErrors(map, () => {
+          style.addSprite(id, url, {}, (error) => {
+            if (map.style !== style) {
+              finish(createStyleToolError('MAP_NOT_READY', 'Map style changed during sprite loading.'));
+            } else {
+              finish(error);
+            }
+          });
+        });
+      } finally {
+        if (style._spriteRequest !== previousRequest) request = style._spriteRequest ?? undefined;
+        if (failed) request?.abort();
+      }
+      // A synchronous listener may abort while addSprite is starting its request.
+      if (signal !== undefined && readAbortState(signal) === true) {
+        request?.abort();
+        onAbort();
+      }
+    } catch (error) {
+      finish(error);
+      request?.abort();
+    }
+  });
+}
+
 export function createMapRuntimeCommands(
   map: Map,
   options?: { imageLoader?: RuntimeImageLoader },
@@ -667,7 +752,9 @@ export function createMapRuntimeCommands(
       const parsed = parseInput(featureStateInputSchema, input);
       if (!parsed.ok) return failure(parsed.error);
       try {
-        map.setFeatureState(parsed.value.target, parsed.value.state);
+        captureSynchronousMapErrors(map, () => {
+          map.setFeatureState(parsed.value.target, parsed.value.state);
+        });
         return acknowledgement();
       } catch (error) {
         return failure(normalizeFailure(error, 'MapLibre feature-state update failed.'));
@@ -678,7 +765,9 @@ export function createMapRuntimeCommands(
       const parsed = parseInput(removeFeatureStateInputSchema, input);
       if (!parsed.ok) return failure(parsed.error);
       try {
-        map.removeFeatureState(parsed.value.target, parsed.value.key);
+        captureSynchronousMapErrors(map, () => {
+          map.removeFeatureState(parsed.value.target, parsed.value.key);
+        });
         return acknowledgement();
       } catch (error) {
         return failure(normalizeFailure(error, 'MapLibre feature-state removal failed.'));
@@ -839,9 +928,14 @@ export function createMapRuntimeCommands(
       return listResult(items, queried.length);
     },
 
-    addSprite(input: AddSpriteInput) {
+    async addSprite(input: AddSpriteInput, execution: RuntimeCommandExecution = {}) {
       const parsed = parseInput(addSpriteInputSchema, input);
       if (!parsed.ok) return failure(parsed.error);
+      const parsedExecution = parseRuntimeExecution(execution);
+      if (!parsedExecution.ok) return failure(parsedExecution.error);
+      const signal = parsedExecution.value;
+      const before = currentSignalFailure(signal);
+      if (before !== undefined) return failure(before);
       const queried = readSprites(map);
       if (!queried.ok) return failure(queried.error);
       const existing = findSprite(queried.sprites, queried.length, parsed.value.spriteId);
@@ -849,23 +943,60 @@ export function createMapRuntimeCommands(
       if (existing.sprite !== undefined && parsed.value.overwrite !== true) {
         return failure(conflict('Sprite', parsed.value.spriteId));
       }
+      const originalStyle = map.style;
       let removedExisting = false;
+      let attempted = false;
       try {
+        const beforeMutation = currentSignalFailure(signal);
+        if (beforeMutation !== undefined) throw beforeMutation;
         if (existing.sprite !== undefined) {
-          map.removeSprite(parsed.value.spriteId);
+          captureSynchronousMapErrors(map, () => map.removeSprite(parsed.value.spriteId));
           removedExisting = true;
         }
-        map.addSprite(parsed.value.spriteId, parsed.value.url);
+        const afterRemoval = currentSignalFailure(signal);
+        if (afterRemoval !== undefined) throw afterRemoval;
+        attempted = true;
+        await loadSprite(map, parsed.value.spriteId, parsed.value.url, signal);
+        const afterLoad = currentSignalFailure(signal);
+        if (afterLoad !== undefined) throw afterLoad;
+        if (map.style !== originalStyle) {
+          throw createStyleToolError('CONFLICT', 'Map style changed during sprite loading.');
+        }
+        const current = readSprites(map);
+        if (!current.ok) throw current.error;
+        const loaded = findSprite(current.sprites, current.length, parsed.value.spriteId);
+        if (!loaded.ok) throw loaded.error;
+        if (loaded.sprite?.url !== parsed.value.url) {
+          throw createStyleToolError('CONFLICT', 'Sprite changed during loading.');
+        }
         return acknowledgement();
       } catch (error) {
         const primary = normalizeFailure(error, 'MapLibre sprite update failed.');
-        if (removedExisting && existing.sprite !== undefined) {
-          try {
-            map.addSprite(existing.sprite.id, existing.sprite.url);
-          } catch (error) {
-            const rollback = normalizeFailure(error, 'MapLibre sprite rollback failed.');
-            return failure(rollbackFailure(primary, rollback));
+        if (primary.code === 'MAP_NOT_READY' && primary.details?.reason === 'removed') {
+          return failure(primary);
+        }
+        if (!removedExisting && !attempted) return failure(primary);
+        try {
+          if (map.style !== originalStyle) {
+            throw createStyleToolError('CONFLICT', 'Map style changed before sprite rollback.');
           }
+          const current = readSprites(map);
+          if (!current.ok) throw current.error;
+          const registered = findSprite(current.sprites, current.length, parsed.value.spriteId);
+          if (!registered.ok) throw registered.error;
+          if (registered.sprite !== undefined) {
+            if (registered.sprite.url !== parsed.value.url) {
+              throw createStyleToolError('CONFLICT', 'Sprite changed before rollback.');
+            }
+            captureSynchronousMapErrors(map, () => map.removeSprite(parsed.value.spriteId));
+          }
+          if (removedExisting && existing.sprite !== undefined) {
+            // Restoration has its own bounded budget even if the caller cancelled.
+            await loadSprite(map, existing.sprite.id, existing.sprite.url);
+          }
+        } catch (error) {
+          const rollback = normalizeFailure(error, 'MapLibre sprite rollback failed.');
+          return failure(rollbackFailure(primary, rollback));
         }
         return failure(primary);
       }

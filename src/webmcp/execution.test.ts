@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Map as MapLibreMap } from 'maplibre-gl';
+import { Evented, type Map as MapLibreMap } from 'maplibre-gl';
+import { createBrowserMapRuntime } from '../bridge/browser-runtime.js';
 import type {
   BrowserMapRuntime,
   BrowserRuntimeOptions,
@@ -896,4 +897,227 @@ test('retries runtime creation after a transient same-map failure', async () => 
   assert.equal(result.success, true);
   assert.equal(creationAttempts, 2);
   assert.equal(dispatches, 1);
+});
+
+
+test('runs authority-free inspections without map access while retaining authorization', async () => {
+  const inputs = [
+    { action: 'validateDocument', style: executionStyle },
+    { action: 'validateTransaction', transaction: { operations: [
+      { op: 'setStyleRootProperties', properties: { name: 'validated' } },
+    ] } },
+    { action: 'analyzeGeoJson', data: { type: 'FeatureCollection', features: [] } },
+  ];
+  let authorized = true;
+  let authorizationCalls = 0;
+  let mapCalls = 0;
+  const boundary = createWebMcpExecutionBoundary({
+    ...testOptions(() => { mapCalls += 1; return null; }),
+    authorizeInvocation: () => { authorizationCalls += 1; return authorized; },
+  });
+  try {
+    for (const input of inputs) {
+      assert.equal((await boundary.execute('inspectStyle', input, new AbortController().signal)).success, true);
+    }
+    authorized = false;
+    for (const input of inputs) {
+      const result = await boundary.execute('inspectStyle', input, new AbortController().signal);
+      assert.equal(result.success, false);
+      if (!result.success) assert.equal(result.error.code, 'CAPABILITY_DENIED');
+    }
+    assert.equal(authorizationCalls, 6);
+    assert.equal(mapCalls, 0);
+  } finally {
+    boundary.close();
+  }
+});
+
+for (const recovery of ['event', 'timeout', 'abort'] as const) {
+  test(`releases WebMCP queue after failed application and rollback: ${recovery}`, { timeout: 2_000 }, async () => {
+    let readable = true;
+    let setCalls = 0;
+    const unknown = deferred<void>();
+    const map = Object.assign(new class extends Evented {}(), {
+      getStyle() { if (!readable) throw new Error('style unavailable'); return executionStyle; },
+      isStyleLoaded() { return readable; },
+      setStyle() { setCalls += 1; readable = false; throw new Error('setStyle failed'); },
+    });
+    const boundary = createWebMcpExecutionBoundary(testOptions(() => map as unknown as MapLibreMap), {
+      createRuntime: (target, options) => createBrowserMapRuntime(target, {
+        ...options,
+        timeoutMs: recovery === 'timeout' ? 50 : 1_500,
+        onSyncStateChange: (event) => { options.onSyncStateChange?.(event); unknown.resolve(); },
+      }),
+    });
+    const controller = new AbortController();
+    try {
+      const mutation = boundary.execute('applyStyleTransaction', {
+        transaction: { operations: [{ op: 'setStyleRootProperties', properties: { name: 'changed' } }] },
+      }, controller.signal);
+      const outcome = mutation.then((result) => result, (error: unknown) => error);
+      await unknown.promise;
+      assert.equal(setCalls, 2);
+      if (recovery === 'event') {
+        readable = true;
+        map.fire('styledata');
+      } else if (recovery === 'abort') {
+        controller.abort();
+      }
+      await outcome;
+      readable = true;
+      const inspected = await boundary.execute('inspectStyle', { action: 'getRoot' }, new AbortController().signal);
+      assert.equal(inspected.success, true);
+    } finally {
+      boundary.close();
+      assert.equal(map.listens('styledata'), false);
+      assert.equal(map.listens('style.load'), false);
+      assert.equal(map.listens('error'), false);
+    }
+  });
+}
+
+
+test('removes recovery listeners when replacing the map and closing the boundary', async () => {
+  const maps = [new class extends Evented {}(), new class extends Evented {}()];
+  let currentMap = maps[0]!;
+  let triggerRecovery: (() => void) | undefined;
+  let failObservation = false;
+  const boundary = createWebMcpExecutionBoundary(testOptions(() => currentMap as unknown as MapLibreMap), {
+    createRuntime: async (_map, options) => {
+      triggerRecovery = () => options.onSyncStateChange?.({
+        syncState: 'unknown', reason: 'invalid-map-style',
+      });
+      return {
+        ...runtime(),
+        noteExternalStyle: async () => {
+          if (failObservation) throw new Error('unavailable');
+          return runtime().snapshot();
+        },
+      };
+    },
+  });
+  await boundary.execute('inspectStyle', { action: 'getRoot' }, new AbortController().signal);
+  failObservation = true;
+  triggerRecovery?.();
+  assert.equal(currentMap.listens('styledata'), true);
+  currentMap = maps[1]!;
+  failObservation = false;
+  await boundary.execute('inspectStyle', { action: 'getRoot' }, new AbortController().signal);
+  assert.equal(maps[0]!.listens('styledata'), false);
+  failObservation = true;
+  triggerRecovery?.();
+  assert.equal(currentMap.listens('styledata'), true);
+  boundary.close();
+  for (const map of maps) {
+    for (const event of ['styledata', 'style.load', 'error']) assert.equal(map.listens(event), false);
+  }
+});
+
+
+test('finishes an active recovery observation before the next invocation reconciles authority', async () => {
+  const map = new class extends Evented {}();
+  const observation = deferred<ReturnType<BrowserMapRuntime['snapshot']>>();
+  let triggerRecovery: (() => void) | undefined;
+  let observations = 0;
+  let dispatches = 0;
+  const boundary = createWebMcpExecutionBoundary(testOptions(() => map as unknown as MapLibreMap), {
+    createRuntime: async (_map, options) => {
+      triggerRecovery = () => options.onSyncStateChange?.({
+        syncState: 'unknown', reason: 'invalid-map-style',
+      });
+      return {
+        ...runtime(),
+        noteExternalStyle: async () => {
+          observations += 1;
+          return observations === 2 ? observation.promise : runtime().snapshot();
+        },
+      };
+    },
+    dispatchCapability: async () => {
+      dispatches += 1;
+      return { success: true, message: 'ok', data: null };
+    },
+  });
+  try {
+    await boundary.execute('inspectStyle', { action: 'getRoot' }, new AbortController().signal);
+    triggerRecovery?.();
+    const next = boundary.execute('inspectStyle', { action: 'getRoot' }, new AbortController().signal);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(observations, 2);
+    assert.equal(dispatches, 1);
+    observation.resolve(runtime().snapshot());
+    await next;
+    assert.equal(observations, 3);
+    assert.equal(dispatches, 2);
+  } finally {
+    observation.resolve(runtime().snapshot());
+    boundary.close();
+  }
+});
+
+
+test('keeps recovery unknown when a style event invalidates the map during hashing', { timeout: 2_000 }, async (t) => {
+  let readable = true;
+  const unknown = deferred<void>();
+  const hashing = deferred<void>();
+  const releaseHash = deferred<void>();
+  let holdNextDigest = false;
+  const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+  t.mock.method(globalThis.crypto.subtle, 'digest', async (algorithm: AlgorithmIdentifier, data: BufferSource) => {
+    const held = holdNextDigest;
+    holdNextDigest = false;
+    const result = await digest(algorithm, data);
+    if (held) {
+      hashing.resolve();
+      await releaseHash.promise;
+    }
+    return result;
+  });
+  const map = Object.assign(new class extends Evented {}(), {
+    getStyle() { if (!readable) throw new Error('unavailable'); return executionStyle; },
+    isStyleLoaded() { return readable; },
+    setStyle() { readable = false; throw new Error('setStyle failed'); },
+  });
+  let actualRuntime!: BrowserMapRuntime;
+  const boundary = createWebMcpExecutionBoundary(testOptions(() => map as unknown as MapLibreMap), {
+    createRuntime: async (target, options) => {
+      actualRuntime = await createBrowserMapRuntime(target, {
+        ...options,
+        timeoutMs: 1_500,
+        onSyncStateChange: (event) => { options.onSyncStateChange?.(event); unknown.resolve(); },
+      });
+      return actualRuntime;
+    },
+  });
+  const controller = new AbortController();
+  let settled = false;
+  const mutation = boundary.execute('applyStyleTransaction', {
+    transaction: { operations: [{ op: 'setStyleRootProperties', properties: { name: 'changed' } }] },
+  }, controller.signal).finally(() => { settled = true; });
+  const outcome = mutation.catch(() => undefined);
+  try {
+    await unknown.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    readable = true;
+    holdNextDigest = true;
+    map.fire('styledata');
+    await hashing.promise;
+    readable = false;
+    map.fire('styledata');
+    releaseHash.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.throws(() => actualRuntime.snapshot(), { code: 'MAP_NOT_READY' });
+    assert.equal(settled, false);
+    assert.equal(map.listens('styledata'), true);
+    readable = true;
+    map.fire('styledata');
+    await outcome;
+    assert.deepEqual(actualRuntime.snapshot().style, executionStyle);
+    assert.equal(map.listens('styledata'), false);
+  } finally {
+    releaseHash.resolve();
+    controller.abort();
+    await outcome;
+    boundary.close();
+  }
 });

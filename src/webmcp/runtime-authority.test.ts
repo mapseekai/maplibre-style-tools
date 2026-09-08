@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Evented, type Map as MapLibreMap } from 'maplibre-gl';
+import { createBrowserMapRuntime } from '../bridge/browser-runtime.js';
 
 import type { BrowserMapRuntime, BrowserMapState } from '../bridge/browser-runtime.js';
 import type { BridgeCommand, BridgeResultFor } from '../bridge/protocol.js';
@@ -355,4 +357,58 @@ test('preserves successful rollback metadata on a current Style failure', async 
     path: '/sources/base',
     details: { reason: 'transient-network' },
   });
+});
+
+
+test('forwards sprite cancellation to the browser runtime and its active load', { timeout: 2_000 }, async () => {
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let complete: (() => void) | undefined;
+  const spriteRequest = new AbortController();
+  const sprites = new Map<string, string>();
+  const map = Object.assign(new class extends Evented {}(), {
+    getStyle: () => baseStyle,
+    getSprite: () => [...sprites].map(([id, url]) => ({ id, url })),
+    removeSprite: (id: string) => { sprites.delete(id); },
+    style: {
+      _spriteRequest: undefined as AbortController | undefined,
+      addSprite: (id: string, url: string, _options: unknown, done: () => void) => {
+        sprites.set(id, url);
+        map.style._spriteRequest = spriteRequest;
+        complete = done;
+        markStarted();
+      },
+    },
+  });
+  const runtime = await createBrowserMapRuntime(map as unknown as MapLibreMap, {
+    capabilities: ['style.read', 'assets.write', 'network.load'],
+    timeoutMs: 1_500,
+    resourcePolicy: { baseUrl: 'https://assets.example/', allowedResourceOrigins: ['https://assets.example'] },
+  });
+  let receivedSignal: AbortSignal | undefined;
+  const authority = new WebMcpMapAuthority({
+    ...runtime,
+    execute: (command, execution) => {
+      receivedSignal = execution?.signal;
+      return runtime.execute(command, execution);
+    },
+  });
+  const controller = new AbortController();
+  const resultPromise = authority.runtimeCommands().addSprite({
+    spriteId: 'base', url: 'https://assets.example/sprite',
+  }, { signal: controller.signal });
+  try {
+    await started;
+    assert.equal(receivedSignal, controller.signal);
+    controller.abort();
+    const result = await resultPromise;
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, 'TIMEOUT');
+    assert.equal(spriteRequest.signal.aborted, true);
+    assert.equal(sprites.size, 0);
+  } finally {
+    controller.abort();
+    complete?.();
+    await resultPromise;
+  }
 });

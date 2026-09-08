@@ -520,6 +520,58 @@ test('renameSource rejects missing inputs and destination collisions atomically'
   if (!collision.ok) assert.equal(collision.error.path, '/newSourceId');
 });
 
+test('renameSource rewrites terrain references and preserves terrain settings', () => {
+  const style: StyleDocument = {
+    version: 8,
+    sources: { dem: { type: 'raster-dem', tiles: ['https://example.test/{z}/{x}/{y}.png'] } },
+    layers: [{ id: 'relief', type: 'hillshade', source: 'dem' }],
+    terrain: { source: 'dem', exaggeration: 1.5 },
+  };
+  const result = applyStyleTransaction(style, { operations: [{
+    op: 'renameSource', sourceId: 'dem', newSourceId: 'elevation',
+  }] });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.style.terrain, { source: 'elevation', exaggeration: 1.5 });
+  assert.equal(result.style.layers[0]!.source, 'elevation');
+  assert.deepEqual(result.changedSources, ['dem', 'elevation']);
+  assert.equal(style.terrain?.source, 'dem');
+  assertReplay(style, result);
+});
+
+test('removeSource rejects terrain dependencies even when cascading layers', () => {
+  for (const cascadeLayers of [false, true]) {
+    const style: StyleDocument = {
+      version: 8,
+      sources: { dem: { type: 'raster-dem', tiles: ['https://example.test/{z}/{x}/{y}.png'] } },
+      layers: [],
+      terrain: { source: 'dem' },
+    };
+    const result = assertAtomicFailure(style, {
+      op: 'removeSource', sourceId: 'dem', cascadeLayers,
+    }, 'DEPENDENCY_CONFLICT');
+    if (result.ok) assert.fail('expected terrain dependency conflict');
+    assert.deepEqual(result.error.details?.dependentRootProperties, ['terrain']);
+  }
+});
+
+test('removeSource permits explicit removal of terrain earlier in a transaction', () => {
+  const style: StyleDocument = {
+    version: 8,
+    sources: { dem: { type: 'raster-dem', tiles: ['https://example.test/{z}/{x}/{y}.png'] } },
+    layers: [],
+    terrain: { source: 'dem' },
+  };
+  const result = applyStyleTransaction(style, { operations: [
+    { op: 'setStyleRootProperties', properties: { terrain: null } },
+    { op: 'removeSource', sourceId: 'dem' },
+  ] });
+  assert.equal(result.ok, true);
+  assert.equal(result.style.terrain, undefined);
+  assert.equal(Object.hasOwn(result.style.sources, 'dem'), false);
+  assertReplay(style, result);
+});
+
 test('removeSource reports JSON-safe dependency details without exposing partial edits', () => {
   const style = makeStyle();
   const failure = assertAtomicFailure(style, {

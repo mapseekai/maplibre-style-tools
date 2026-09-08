@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ErrorEvent, Evented, Map as MapLibreMapClass, MapStyleDataEvent, Style } from 'maplibre-gl';
 import type {
   GeoJSONSource,
   GeoJSONSourceDiff,
@@ -49,10 +50,22 @@ void compileOnlyUpdateDataContract;
 
 type MapCall = { method: string; args: unknown[] };
 
-class FakeMap {
+class FakeMap extends Evented {
   readonly calls: MapCall[] = [];
   readonly errors = new globalThis.Map<string, unknown>();
   readonly spriteAddErrors = new globalThis.Map<string, unknown>();
+  readonly spriteLoadErrors = new globalThis.Map<string, Error>();
+  readonly style = {
+    _spriteRequest: undefined as AbortController | undefined,
+    addSprite: (id: string, url: string, _options: unknown, completion: (error?: Error) => void): void => {
+      this.addSprite(id, url);
+      const request = new AbortController();
+      this.style._spriteRequest = request;
+      queueMicrotask(() => {
+        if (!request.signal.aborted) completion(this.spriteLoadErrors.get(url));
+      });
+    },
+  };
   readonly images = new Set<string>();
   source: unknown;
   imageListResult: unknown;
@@ -166,6 +179,225 @@ function assertFailureCode(result: RuntimeCommandResult, code: string): void {
   if (!result.ok) assert.equal(result.error.code, code);
   assert.equal(Object.hasOwn(result, 'data'), false);
 }
+
+test('real MapLibre feature-state target validation errors produce failures and clean listeners', () => {
+  for (const type of [undefined, 'vector', 'geojson']) {
+    const map = Object.create(MapLibreMapClass.prototype) as MapLibreMap;
+    const style = Object.assign(Object.create(Style.prototype) as Style, {
+      _loaded: true,
+      tileManagers: type === undefined ? {} : {
+        roads: { getSource: () => ({ type }) },
+      },
+    });
+    map.style = style;
+    map._update = () => map;
+    style.setEventedParent(map as unknown as Evented);
+    const commands = createMapRuntimeCommands(map);
+    const target = {
+      source: 'roads', id: 1,
+      ...(type === 'geojson' ? { sourceLayer: 'invalid' } : {}),
+    };
+    assertFailureCode(commands.setFeatureState({ target, state: {} }), 'INTERNAL');
+    assert.equal(map.listens('error'), false);
+    if (type !== 'geojson') {
+      assertFailureCode(commands.removeFeatureState({ target }), 'INTERNAL');
+      assert.equal(map.listens('error'), false);
+    }
+  }
+});
+
+test('feature-state catches synchronous MapLibre error events without swallowing existing listeners', () => {
+  const map = new FakeMap();
+  const commands = createMapRuntimeCommands(map.asMap());
+  let observed = 0;
+  map.on('error', () => { observed += 1; });
+  map.setFeatureState = () => { map.fire(new ErrorEvent(new Error('invalid state'))); };
+  map.removeFeatureState = () => { map.fire(new ErrorEvent(new Error('invalid target'))); };
+  assertFailureCode(commands.setFeatureState({ target: { source: 'roads', id: 1 }, state: {} }), 'INTERNAL');
+  assertFailureCode(commands.removeFeatureState({ target: { source: 'roads', id: 1 } }), 'INTERNAL');
+  assert.equal(observed, 2);
+});
+
+test('sprite overwrite awaits async failure and restoration, ignoring unrelated source errors', async () => {
+  const map = new FakeMap();
+  map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+  map.spriteLoadErrors.set('sprite://missing', new Error('404'));
+  const commands = createMapRuntimeCommands(map.asMap());
+  const pending = commands.addSprite({ spriteId: 'base', url: 'sprite://missing', overwrite: true });
+  const result = await pending;
+  assertFailureCode(result, 'INTERNAL');
+  assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://old' }]);
+  assert.equal(map.listens('error'), false);
+  assert.equal(map.listens('remove'), false);
+  map.on('error', () => {});
+  const successful = commands.addSprite({ spriteId: 'other', url: 'sprite://other' });
+  map.fire(new ErrorEvent(new Error('unrelated source failed'), { sourceId: 'other' }));
+  assertSuccessDataIsJson(await successful);
+});
+
+test('real Style sprite methods restore an async 404 and emit rendering data events', async () => {
+  const map = Object.create(MapLibreMapClass.prototype) as MapLibreMap;
+  const style = Object.assign(Object.create(Style.prototype) as Style, {
+    _loaded: true,
+    stylesheet: { version: 8, sources: {}, layers: [], sprite: [{ id: 'base', url: 'sprite://old' }] },
+    _spritesImagesIds: {},
+    imageManager: { listImages: () => [] },
+    _validate: () => false,
+  });
+  map.style = style;
+  map._update = () => map;
+  style.setEventedParent(map as unknown as Evented);
+  let dataEvents = 0;
+  map.on('data', (event) => { if (event.dataType === 'style') dataEvents += 1; });
+  map.on('error', () => {});
+  style._loadSprite = (sprites, _isUpdate, completion) => {
+    const controller = new AbortController();
+    style._spriteRequest = controller;
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      const error = Array.isArray(sprites) && sprites[0]?.url === 'sprite://404'
+        ? new Error('404 Not Found') : undefined;
+      if (error !== undefined) style.fire(new ErrorEvent(error));
+      style.fire(new MapStyleDataEvent('data'));
+      completion?.(error!);
+    });
+  };
+  const result = await createMapRuntimeCommands(map).addSprite({
+    spriteId: 'base', url: 'sprite://404', overwrite: true,
+  });
+  assertFailureCode(result, 'INTERNAL');
+  assert.deepEqual(map.getSprite(), [{ id: 'base', url: 'sprite://old' }]);
+  assert.equal(dataEvents, 4, 'remove, failed load, failed registration removal, restored load');
+  assert.equal(map.listens('remove'), false);
+});
+
+test('sprite cancellation aborts only its captured request and awaits independent restoration', async () => {
+  const map = new FakeMap();
+  map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+  const originalAdd = map.style.addSprite;
+  let replacement: AbortController | undefined;
+  let restore: (() => void) | undefined;
+  map.style.addSprite = (id, url, options, completion) => {
+    if (url === 'sprite://new') {
+      map.addSprite(id, url);
+      replacement = new AbortController();
+      map.style._spriteRequest = replacement;
+    } else {
+      restore = () => originalAdd(id, url, options, completion);
+    }
+  };
+  const controller = new AbortController();
+  let settled = false;
+  const pending = createMapRuntimeCommands(map.asMap()).addSprite({
+    spriteId: 'base', url: 'sprite://new', overwrite: true,
+  }, { signal: controller.signal }).then((result) => { settled = true; return result; });
+  const unrelated = new AbortController();
+  map.style._spriteRequest = unrelated;
+  controller.abort();
+  await Promise.resolve();
+  assert.equal(replacement?.signal.aborted, true);
+  assert.equal(unrelated.signal.aborted, false);
+  assert.equal(settled, false);
+  assert.ok(restore);
+  restore();
+  assertFailureCode(await pending, 'TIMEOUT');
+  assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://old' }]);
+  assert.equal(map.listens('remove'), false);
+  assert.equal(map.listens('error'), false);
+});
+
+test('sprite load and rollback each have bounded timeouts with no listeners left', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const map = new FakeMap();
+  map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+  const requests: AbortController[] = [];
+  map.style.addSprite = (id, url) => {
+    map.addSprite(id, url);
+    const controller = new AbortController();
+    requests.push(controller);
+    map.style._spriteRequest = controller;
+  };
+  const pending = createMapRuntimeCommands(map.asMap()).addSprite({
+    spriteId: 'base', url: 'sprite://new', overwrite: true,
+  });
+  context.mock.timers.tick(10_000);
+  await Promise.resolve();
+  assert.equal(requests.length, 2);
+  context.mock.timers.tick(10_000);
+  const result = await pending;
+  assertFailureCode(result, 'TIMEOUT');
+  if (!result.ok) assert.equal(result.error.details?.rollbackFailed, true);
+  assert.equal(requests.every((request) => request.signal.aborted), true);
+  assert.equal(map.listens('remove'), false);
+  assert.equal(map.listens('error'), false);
+});
+
+test('failed sprite loads never overwrite an externally changed sprite or style', async () => {
+  for (const changeStyle of [false, true]) {
+    const map = new FakeMap();
+    map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
+    let complete: ((error?: Error) => void) | undefined;
+    map.style.addSprite = (id, url, _options, completion) => {
+      map.addSprite(id, url);
+      complete = completion;
+    };
+    const pending = createMapRuntimeCommands(map.asMap()).addSprite({
+      spriteId: 'base', url: 'sprite://new', overwrite: true,
+    });
+    map.spriteListResult = [{ id: 'base', url: 'sprite://external' }];
+    if (changeStyle) Object.defineProperty(map, 'style', { value: { ...map.style } });
+    assert.ok(complete);
+    complete(new Error('failed load'));
+    const result = await pending;
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.details?.rollbackFailed, true);
+    assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://external' }]);
+    assert.equal(map.calls.filter((call) => call.method === 'removeSprite').length, 1);
+    assert.equal(map.listens('remove'), false);
+  }
+});
+
+test('sprite completion cannot acknowledge a different URL installed while loading', async () => {
+  const map = new FakeMap();
+  let complete: ((error?: Error) => void) | undefined;
+  map.style.addSprite = (id, url, _options, completion) => {
+    map.addSprite(id, url);
+    complete = completion;
+  };
+  const pending = createMapRuntimeCommands(map.asMap()).addSprite({ spriteId: 'base', url: 'sprite://new' });
+  map.spriteListResult = [{ id: 'base', url: 'sprite://external' }];
+  assert.ok(complete);
+  complete();
+  assertFailureCode(await pending, 'CONFLICT');
+  assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://external' }]);
+});
+
+test('synchronous map removal cancels a newly started sprite request and skips rollback', async () => {
+  const map = new FakeMap();
+  const request = new AbortController();
+  map.style.addSprite = (id, url) => {
+    map.addSprite(id, url);
+    map.style._spriteRequest = request;
+    map.fire('remove');
+  };
+  const result = await createMapRuntimeCommands(map.asMap()).addSprite({ spriteId: 'base', url: 'sprite://new' });
+  assertFailureCode(result, 'MAP_NOT_READY');
+  assert.equal(request.signal.aborted, true);
+  assert.equal(map.calls.filter((call) => call.method === 'removeSprite').length, 0);
+  assert.equal(map.listens('remove'), false);
+});
+
+test('synchronous sprite validation failure does not abort a previously active request', async () => {
+  const map = new FakeMap();
+  const prior = new AbortController();
+  map.style._spriteRequest = prior;
+  map.style.addSprite = () => { map.fire(new ErrorEvent(new Error('invalid sprite'))); };
+  const result = await createMapRuntimeCommands(map.asMap()).addSprite({ spriteId: 'base', url: 'sprite://new' });
+  assertFailureCode(result, 'INTERNAL');
+  assert.equal(prior.signal.aborted, false);
+  assert.equal(map.listens('error'), false);
+  assert.equal(map.listens('remove'), false);
+});
 
 test('all exported runtime input schemas accept valid closed values', () => {
   const pixels = new Uint8Array([0, 1, 2, 3]);
@@ -303,7 +535,7 @@ test('invalid command inputs fail before source, loader, or Map access', async (
     await commands.addImageFromUrl({ imageId: '', url: 'custom://marker' }),
     commands.removeImage({ imageId: '' }),
     commands.listSprites({ limit: 0 }),
-    commands.addSprite({ spriteId: '', url: 'sprite://base' }),
+    await commands.addSprite({ spriteId: '', url: 'sprite://base' }),
     commands.removeSprite({ spriteId: '' }),
   ];
   for (const result of results) assertFailureCode(result, 'INVALID_INPUT');
@@ -795,7 +1027,7 @@ test('image lists apply configured limits before reading output and remain JSON-
   assert.equal(MAX_RUNTIME_LIST_LIMIT, 500);
 });
 
-test('sprite list/add/overwrite/remove preserve IDs and URLs with bounded JSON output', () => {
+test('sprite list/add/overwrite/remove preserve IDs and URLs with bounded JSON output', async () => {
   const map = new FakeMap();
   const capped = new Array<unknown>(MAX_RUNTIME_LIST_LIMIT + 1);
   capped[0] = { id: 'base', url: 'sprite://base' };
@@ -819,17 +1051,17 @@ test('sprite list/add/overwrite/remove preserve IDs and URLs with bounded JSON o
 
   map.spriteListResult = [];
   map.clearCalls();
-  assertSuccessDataIsJson(commands.addSprite({ spriteId: 'new', url: 'sprite://new' }));
-  assert.deepEqual(map.calls.map((call) => call.method), ['getSprite', 'addSprite']);
+  assertSuccessDataIsJson(await commands.addSprite({ spriteId: 'new', url: 'sprite://new' }));
+  assert.deepEqual(map.calls.map((call) => call.method), ['getSprite', 'addSprite', 'getSprite']);
   map.clearCalls();
-  assertFailureCode(commands.addSprite({ spriteId: 'new', url: 'sprite://other' }), 'CONFLICT');
+  assertFailureCode(await commands.addSprite({ spriteId: 'new', url: 'sprite://other' }), 'CONFLICT');
   assert.deepEqual(map.calls.map((call) => call.method), ['getSprite']);
   map.clearCalls();
-  assertSuccessDataIsJson(commands.addSprite({
+  assertSuccessDataIsJson(await commands.addSprite({
     spriteId: 'new', url: 'sprite://replacement', overwrite: true,
   }));
   assert.deepEqual(map.calls.map((call) => call.method), [
-    'getSprite', 'removeSprite', 'addSprite',
+    'getSprite', 'removeSprite', 'addSprite', 'getSprite',
   ]);
   map.clearCalls();
   assertSuccessDataIsJson(commands.removeSprite({ spriteId: 'new' }));
@@ -838,11 +1070,11 @@ test('sprite list/add/overwrite/remove preserve IDs and URLs with bounded JSON o
   assertFailureCode(commands.removeSprite({ spriteId: 'missing' }), 'NOT_FOUND');
 });
 
-test('failed sprite overwrite restores the original sprite and returns the primary failure', () => {
+test('failed sprite overwrite restores the original sprite and returns the primary failure', async () => {
   const map = new FakeMap();
   map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
   map.spriteAddErrors.set('sprite://new', new Error('replacement failed'));
-  const result = createMapRuntimeCommands(map.asMap()).addSprite({
+  const result = await createMapRuntimeCommands(map.asMap()).addSprite({
     spriteId: 'base', url: 'sprite://new', overwrite: true,
   });
   assertFailureCode(result, 'INTERNAL');
@@ -850,12 +1082,13 @@ test('failed sprite overwrite restores the original sprite and returns the prima
     { method: 'getSprite', args: [] },
     { method: 'removeSprite', args: ['base'] },
     { method: 'addSprite', args: ['base', 'sprite://new'] },
+    { method: 'getSprite', args: [] },
     { method: 'addSprite', args: ['base', 'sprite://old'] },
   ]);
   assert.deepEqual(map.spriteListResult, [{ id: 'base', url: 'sprite://old' }]);
 });
 
-test('sprite restore failure preserves safe authentic primary and rollback snapshots', () => {
+test('sprite restore failure preserves safe authentic primary and rollback snapshots', async () => {
   const map = new FakeMap();
   map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
   const primary = createStyleToolError(
@@ -866,7 +1099,7 @@ test('sprite restore failure preserves safe authentic primary and rollback snaps
   );
   map.spriteAddErrors.set('sprite://new', primary);
   map.spriteAddErrors.set('sprite://old', rollback);
-  const result = createMapRuntimeCommands(map.asMap()).addSprite({
+  const result = await createMapRuntimeCommands(map.asMap()).addSprite({
     spriteId: 'base', url: 'sprite://new', overwrite: true,
   });
   assert.equal(result.ok, false);
@@ -898,12 +1131,12 @@ test('sprite restore failure preserves safe authentic primary and rollback snaps
     });
   }
   assert.deepEqual(map.calls.map((call) => call.method), [
-    'getSprite', 'removeSprite', 'addSprite', 'addSprite',
+    'getSprite', 'removeSprite', 'addSprite', 'getSprite', 'addSprite',
   ]);
   assert.deepEqual(map.spriteListResult, []);
 });
 
-test('mutated authentic sprite failures never invoke accessors or escape the result envelope', () => {
+test('mutated authentic sprite failures never invoke accessors or escape the result envelope', async () => {
   const map = new FakeMap();
   map.spriteListResult = [{ id: 'base', url: 'sprite://old' }];
   let getterCalls = 0;
@@ -924,8 +1157,8 @@ test('mutated authentic sprite failures never invoke accessors or escape the res
   map.spriteAddErrors.set('sprite://new', primary);
   map.spriteAddErrors.set('sprite://old', rollback);
   let result: RuntimeCommandResult | undefined;
-  assert.doesNotThrow(() => {
-    result = createMapRuntimeCommands(map.asMap()).addSprite({
+  await assert.doesNotReject(async () => {
+    result = await createMapRuntimeCommands(map.asMap()).addSprite({
       spriteId: 'base', url: 'sprite://new', overwrite: true,
     });
   });
@@ -972,7 +1205,7 @@ test('Map exceptions and authentic StyleToolErrors become structured failures', 
   map.errors.delete('listImages');
   map.errors.set('getSprite', new Error('sprite unavailable'));
   assertFailureCode(commands.listSprites(), 'INTERNAL');
-  assertFailureCode(commands.addSprite({ spriteId: 'base', url: 'sprite://base' }), 'INTERNAL');
+  assertFailureCode(await commands.addSprite({ spriteId: 'base', url: 'sprite://base' }), 'INTERNAL');
 
   const rejectedLoader: RuntimeImageLoader = {
     async load() { throw new Error('decode failed'); },
