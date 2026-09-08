@@ -89,7 +89,7 @@
     "pretest:e2e:webmcp": "node --input-type=module --eval \"import { rmSync } from 'node:fs'; for (const path of ['.tmp/playwright-output/webmcp', '.tmp/playwright-report/webmcp']) rmSync(path, { recursive: true, force: true });\"",
     "typecheck:e2e:webmcp": "tsc -p examples/webmcp/tsconfig.e2e.json",
     "test:e2e:webmcp": "pnpm run build && pnpm run build:example:webmcp && pnpm run typecheck:e2e:webmcp && playwright test --config examples/webmcp/playwright.config.ts",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run test:example:ai-chat && pnpm run test:example:bridge && pnpm run check:package",
+    "verify": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run test:example:ai-chat && pnpm run test:example:bridge && pnpm run check:package",
     "verify:e2e": "pnpm run test:e2e:bridge && pnpm run test:e2e:webmcp",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "typecheck:browser": "tsc -p tsconfig.browser.json",
