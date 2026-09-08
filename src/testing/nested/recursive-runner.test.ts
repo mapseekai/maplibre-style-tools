@@ -34,7 +34,10 @@ test('recursive test runner discovers nested tests', async () => {
     );
     const passed = runRunner();
     assert.equal(passed.status, 0, passed.stderr);
-    assert.match(passed.stdout, new RegExp(`# Subtest: ${fixtureName}`));
+    // Node 22 prints a `# Subtest:` heading, while newer Node versions may
+    // emit only the successful test line. The fixture name is the stable
+    // discovery signal across both reporters.
+    assert.match(passed.stdout, new RegExp(fixtureName));
     await writeFile(
       fixturePath,
       `import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest(${JSON.stringify(fixtureName)}, () => { assert.fail('fixture failure'); });\n`,
